@@ -42,8 +42,9 @@ and the work queue are in [`road-map.md`](road-map.md) (in Russian).
 | Area | State |
 |---|---|
 | Scaffold, config, secret redaction, pre-commit hook | ✅ |
-| ACP over WebSocket with TLS pinning, verified on goose 1.53.0 | ✅ spike |
-| Agent client, core (sessions, jobs, approvals) | 🔜 `P1` |
+| ACP over WebSocket with TLS pinning, verified on goose 1.53.0 | ✅ |
+| Agent client (`acp_gateway.agents`) and recorded-traffic mock agent | ✅ `P1.1`, `P1.2` |
+| Core (sessions, jobs, approvals) | 🔜 `P1.3`, `P1.4` |
 | Daemon, local API, approvals from the CLI | 🔜 `P1.5` |
 | Hermes (MCP), then Telegram | 🔜 `P2` |
 | Snikket/XMPP, e-mail, web UI | 🗓 `P4` |
@@ -142,10 +143,11 @@ uv run pytest                            # unit + integration tests
 uv run ruff check && uv run ruff format --check
 ```
 
-Integration tests start a fake goose (`tests/fakes/fake_goose.py`) covering
-TLS, the secret, modes, approvals, cancellation and session loading. Real
-goose 1.53.0 traffic is recorded in `tests/fixtures/acp/`; new recordings are
-cleaned with `scripts/sanitize_fixture.py` before committing.
+Integration tests start a mock goose (`tests/fakes/fake_goose.py`) whose
+messages come from real goose 1.53.0 recordings in `tests/fixtures/acp/`; it
+covers TLS, the secret, session modes, approvals, cancellation, session
+loading and restarts. New recordings are cleaned with
+`scripts/sanitize_fixture.py` before committing.
 
 The development plan lives in [`road-map.md`](road-map.md) (statuses and
 queue) and [`road-notes.md`](road-notes.md) (decisions and findings); both are
@@ -154,7 +156,7 @@ kept in Russian.
 ## Layout
 
 ```text
-src/acp_gateway/   gateway code: config, log, paths, cli
+src/acp_gateway/   gateway code: agents (ACP client), config, log, paths, cli
 scripts/           spike_acp.py (agent check), check_secrets.py (hook), sanitize_fixture.py
 tests/             unit, integration, fakes, fixtures/acp
 docs/              architecture.md, setup/, archive/

@@ -20,6 +20,9 @@ agents:
     # Empty means trust-on-first-use.
     tls_fingerprint: ""
     default_cwd: /home/user/work
+    # goose starts ACP sessions in "auto" (no approvals); the gateway switches
+    # them to this mode. Default for goose profiles: smart_approve.
+    session_mode: smart_approve
 
   # Topology "co-located": gateway on the same machine as goose serve.
   # - alias: work

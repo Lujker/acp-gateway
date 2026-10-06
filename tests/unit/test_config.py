@@ -188,3 +188,27 @@ def test_example_config_is_valid(monkeypatch):
     example = Path(__file__).parents[2] / "config.example.yaml"
     cfg = load_config(config_path=example)
     assert [a.alias for a in cfg.settings.agents] == ["work"]
+
+
+@pytest.mark.parametrize(
+    ("url", "endpoint"),
+    [
+        ("https://work.lan:3284", "wss://work.lan:3284/acp"),
+        ("https://work.lan:3284/", "wss://work.lan:3284/acp"),
+        ("wss://work.lan:3284/acp", "wss://work.lan:3284/acp"),
+        ("http://127.0.0.1:3284", "ws://127.0.0.1:3284/acp"),
+        ("ws://127.0.0.1:3284/custom", "ws://127.0.0.1:3284/custom"),
+    ],
+)
+def test_goose_acp_endpoint(url, endpoint):
+    assert agent(url=url, kind="goose").acp_endpoint == endpoint
+
+
+def test_generic_endpoint_keeps_empty_path():
+    assert agent(url="ws://127.0.0.1:9000").acp_endpoint == "ws://127.0.0.1:9000"
+
+
+def test_goose_session_mode_defaults_to_smart_approve():
+    assert agent(kind="goose").session_mode == "smart_approve"
+    assert agent(kind="goose", session_mode="approve").session_mode == "approve"
+    assert agent().session_mode is None

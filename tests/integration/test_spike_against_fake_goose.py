@@ -5,12 +5,12 @@ permission handling, cancel, load) before it is pointed at the real Work Goose.
 """
 
 import json
-import subprocess
 from pathlib import Path
 
 import pytest
 
 import spike_acp
+from fakes.certs import fingerprint, make_cert
 from fakes.fake_goose import FakeGooseServer
 
 SECRET = "fake-goose-" + "secret-0042"
@@ -19,31 +19,6 @@ SECRET = "fake-goose-" + "secret-0042"
 @pytest.fixture(autouse=True)
 def _data_dir(tmp_path, monkeypatch):
     monkeypatch.setattr("acp_gateway.paths.data_dir", lambda: tmp_path / "data")
-
-
-def make_cert(tmp_path: Path, *, ca: bool) -> tuple[str, str]:
-    cert, key = tmp_path / f"cert-{ca}.pem", tmp_path / f"key-{ca}.pem"
-    constraints = "critical,CA:TRUE" if ca else "critical,CA:FALSE"
-    subprocess.run(
-        [
-            "openssl", "req", "-x509", "-newkey", "rsa:2048", "-nodes", "-days", "1",
-            "-subj", "/CN=fake-goose", "-addext", f"basicConstraints={constraints}",
-            "-keyout", str(key), "-out", str(cert),
-        ],
-        check=True,
-        capture_output=True,
-    )  # fmt: skip
-    return str(cert), str(key)
-
-
-def fingerprint(cert_path: str) -> str:
-    result = subprocess.run(
-        ["openssl", "x509", "-in", cert_path, "-noout", "-fingerprint", "-sha256"],
-        check=True,
-        capture_output=True,
-        text=True,
-    )
-    return result.stdout.strip().split("=", 1)[1]
 
 
 def write_config(tmp_path: Path, url: str, fp: str = "", secret: str = SECRET) -> list[str]:
@@ -62,7 +37,7 @@ def write_config(tmp_path: Path, url: str, fp: str = "", secret: str = SECRET) -
 
 def run_spike(*args: str) -> tuple[int, dict, str]:
     code = spike_acp.main(list(args))
-    run_dir = sorted(Path("spike-runs").iterdir())[-1]
+    run_dir = max(Path("spike-runs").iterdir(), key=lambda p: p.stat().st_mtime_ns)
     summary = json.loads((run_dir / "summary.json").read_text())
     traffic = (
         (run_dir / "traffic.jsonl").read_text() if (run_dir / "traffic.jsonl").exists() else ""
@@ -70,38 +45,50 @@ def run_spike(*args: str) -> tuple[int, dict, str]:
     return code, summary, traffic
 
 
-@pytest.mark.parametrize("transport", ["ws", "http"])
-def test_all_scenarios_plaintext_loopback(tmp_path, transport):
+def test_http_transport_ping_works_but_load_breaks(tmp_path):
+    """Why WebSocket is the only transport (docs/architecture.md, section 4).
+
+    acp 0.12 Streamable HTTP binds a session to the connection only when a result
+    carries sessionId; session/load results don't, so prompting a loaded session
+    gets 404 (real goose hangs instead). Cancel over HTTP is flaky too, so only
+    ping and load are checked here.
+    """
     with FakeGooseServer(SECRET) as server:
         opts = write_config(tmp_path, server.url("ws"))
-        code, summary, traffic = run_spike("all", "--transport", transport, *opts)
+        code, ping, _ = run_spike("ping", "--transport", "http", *opts)
+        assert code == 0
+        assert ping["ping"]["text"] == "pong"
+        code, load, _ = run_spike("load", "--transport", "http", *opts)
+    assert code == 1
+    assert "404" in load["errors"]["load"]
 
-    if transport == "http":
-        # acp 0.12 Streamable HTTP binds a session to the connection only when a result
-        # carries sessionId; session/load results don't, so prompting a loaded session
-        # gets 404. WebSocket is unaffected. Recorded in road-notes (P0.2).
-        assert code == 1
-        assert set(summary["errors"]) == {"load"}
-        assert "404" in summary["errors"]["load"]
-    else:
-        assert code == 0, summary.get("errors")
+
+def test_all_scenarios_plaintext_loopback(tmp_path):
+    with FakeGooseServer(SECRET) as server:
+        opts = write_config(tmp_path, server.url("ws"))
+        code, summary, traffic = run_spike("all", "--mode", "approve", *opts)
+
+    assert code == 0, summary.get("errors")
     assert summary["tls"] is None
     assert summary["initialize"]["agentCapabilities"]["loadSession"] is True
-    assert [m["id"] for m in summary["modes"]["modes"]["availableModes"]] == [
+    modes = summary["modes"]["modes"]
+    assert modes["currentModeId"] == "auto"  # like real goose
+    assert [m["id"] for m in modes["availableModes"]] == [
         "auto",
         "approve",
+        "smart_approve",
         "chat",
     ]
     assert summary["ping"]["text"] == "pong"
     assert summary["permission"]["command_ran"] is False
-    assert summary["permission"]["requests"][0]["options"][0]["kind"] == "allow_once"
+    kinds = [o["kind"] for o in summary["permission"]["requests"][0]["options"]]
+    assert kinds == ["allow_always", "allow_once", "reject_once", "reject_always"]  # goose order
     assert summary["cancel_allow"]["stop_reason"] == "cancelled"
-    if transport == "ws":
-        assert summary["load"]["remembered"] is True
-        assert summary["load"]["replayed_update_kinds"] == {
-            "user_message_chunk": 1,
-            "agent_message_chunk": 1,
-        }
+    assert summary["load"]["remembered"] is True
+    assert summary["load"]["replayed_update_kinds"] == {
+        "user_message_chunk": 1,
+        "agent_message_chunk": 1,
+    }
     # Invariants: no client capabilities advertised, no MCP servers passed, secret not recorded.
     assert all(a.client_capabilities.fs.read_text_file is False for a in server.agents)
     assert all(a.client_capabilities.terminal is False for a in server.agents)
@@ -113,7 +100,9 @@ def test_permission_allow_runs_command(tmp_path):
     with FakeGooseServer(SECRET) as server:
         # Base URL without /acp, as entered in Goose Desktop settings.
         opts = write_config(tmp_path, server.url("ws").removesuffix("/acp"))
-        code, summary, _ = run_spike("permission", "--permission", "allow", *opts)
+        code, summary, _ = run_spike(
+            "permission", "--mode", "approve", "--permission", "allow", *opts
+        )
     assert code == 0
     assert summary["permission"]["command_ran"] is True
 
@@ -121,7 +110,7 @@ def test_permission_allow_runs_command(tmp_path):
 def test_cancel_while_permission_pending(tmp_path):
     with FakeGooseServer(SECRET) as server:
         opts = write_config(tmp_path, server.url("ws"))
-        code, summary, _ = run_spike("cancel", "--permission", "hold", *opts)
+        code, summary, _ = run_spike("cancel", "--mode", "approve", "--permission", "hold", *opts)
     assert code == 0
     assert summary["cancel_hold"]["stop_reason"] == "cancelled"
     assert summary["cancel_hold"]["permission_requests"] == 1

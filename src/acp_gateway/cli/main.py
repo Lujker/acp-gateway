@@ -52,6 +52,7 @@ def _cmd_config_check(cfg: AppConfig) -> int:
         print(f"  - {agent.alias} [{agent.kind}/{agent.backend}] {agent.display_name}")
         print(f"    url: {agent.url}  tls: {tls}")
         print(f"    secret: {secret}  cwd: {agent.default_cwd}")
+        print(f"    endpoint: {agent.acp_endpoint}  session mode: {agent.session_mode or '-'}")
 
     missing = cfg.missing_agent_secrets()
     if missing:

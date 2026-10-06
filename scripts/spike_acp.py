@@ -25,10 +25,8 @@ from __future__ import annotations
 import argparse
 import asyncio
 import contextlib
-import hashlib
 import json
 import secrets
-import ssl
 import sys
 import time
 from collections import Counter
@@ -52,136 +50,22 @@ from acp.schema import (
     TextContentBlock,
     ToolCallUpdate,
 )
-from websockets.asyncio.client import connect as ws_connect
-from websockets.exceptions import ConnectionClosed
 
 from acp_gateway import __version__, paths
+from acp_gateway.agents.tls import TlsPin, pin_certificate
+from acp_gateway.agents.transport import PinnedWebSocketTransport
 from acp_gateway.config import AgentProfile, load_config
 from acp_gateway.log import redact_text
 
 RUNS_DIR = Path("spike-runs")
-MAX_MESSAGE_BYTES = 64 * 1024 * 1024
 
 
 def out(text: str = "") -> None:
     print(redact_text(text), flush=True)
 
 
-# --------------------------------------------------------------------------- TLS
-
-
-def fingerprint_of(der: bytes) -> str:
-    digest = hashlib.sha256(der).hexdigest().upper()
-    return ":".join(digest[i : i + 2] for i in range(0, len(digest), 2))
-
-
-async def fetch_peer_certificate(host: str, port: int) -> bytes:
-    """Read the server certificate without trusting it. Sends no credentials."""
-    probe = ssl.create_default_context()
-    probe.check_hostname = False
-    probe.verify_mode = ssl.CERT_NONE
-    _, writer = await asyncio.wait_for(
-        asyncio.open_connection(host, port, ssl=probe, server_hostname=host), timeout=10
-    )
-    try:
-        der = writer.get_extra_info("ssl_object").getpeercert(binary_form=True)
-    finally:
-        writer.close()
-        with contextlib.suppress(Exception):
-            await writer.wait_closed()
-    if not der:
-        raise RuntimeError("server presented no certificate")
-    return der
-
-
-@dataclass
-class TlsPin:
-    fingerprint: str
-    context: ssl.SSLContext
-    source: str  # "config" | "tofu-new" | "tofu-saved"
-
-
-async def pin_certificate(profile: AgentProfile) -> TlsPin:
-    """Verify the server certificate against the pin and build a context trusting only it.
-
-    The secret is sent only over a TLS session whose handshake already verified
-    the pinned certificate, so a man-in-the-middle never sees it.
-    """
-    parts = urlsplit(profile.url)
-    host, port = parts.hostname or "", parts.port or 443
-    der = await fetch_peer_certificate(host, port)
-    actual = fingerprint_of(der)
-
-    pin_dir = paths.data_dir() / "pins"
-    pin_file = pin_dir / f"{profile.alias}.sha256"
-    if profile.tls_fingerprint:
-        expected, source = profile.tls_fingerprint, "config"
-    elif pin_file.is_file():
-        expected, source = pin_file.read_text().strip(), "tofu-saved"
-    else:
-        pin_dir.mkdir(parents=True, exist_ok=True)
-        pin_file.write_text(actual + "\n")
-        expected, source = actual, "tofu-new"
-    if actual != expected:
-        raise RuntimeError(
-            f"TLS fingerprint mismatch for {host}:{port}: expected {expected}, got {actual}"
-        )
-
-    context = ssl.create_default_context(cadata=ssl.DER_cert_to_PEM_cert(der))
-    context.check_hostname = False  # goose uses a self-signed certificate; the pin is the identity
-    context.verify_flags |= ssl.VERIFY_X509_PARTIAL_CHAIN
-    context.verify_flags &= ~getattr(ssl, "VERIFY_X509_STRICT", 0)
-    return TlsPin(actual, context, source)
-
-
 # --------------------------------------------------------------------- transport
-
-
-class PinnedWebSocketTransport:
-    """ACP message transport over WebSocket with auth header and pinned TLS.
-
-    The SDK's ``create_websocket_stream`` cannot take an SSL context (acp 0.12),
-    hence this minimal replacement implementing the same ``Transport`` protocol.
-    """
-
-    def __init__(self, connection: Any) -> None:
-        self._ws = connection
-
-    @classmethod
-    async def connect(
-        cls, url: str, headers: dict[str, str], pin: TlsPin | None
-    ) -> PinnedWebSocketTransport:
-        connection = await ws_connect(
-            url,
-            additional_headers=headers,
-            ssl=pin.context if pin else None,
-            max_size=MAX_MESSAGE_BYTES,
-            open_timeout=15,
-        )
-        if pin is not None:
-            der = connection.transport.get_extra_info("ssl_object").getpeercert(binary_form=True)
-            if fingerprint_of(der) != pin.fingerprint:  # defence in depth
-                await connection.close()
-                raise RuntimeError("TLS fingerprint changed between probe and connect")
-        return cls(connection)
-
-    async def send(self, message: dict[str, Any]) -> None:
-        await self._ws.send(json.dumps(message, separators=(",", ":")))
-
-    async def receive(self) -> dict[str, Any] | None:
-        while True:
-            try:
-                frame = await self._ws.recv()
-            except ConnectionClosed:
-                return None
-            if isinstance(frame, bytes):
-                continue
-            with contextlib.suppress(json.JSONDecodeError):
-                return json.loads(frame)
-
-    async def close(self) -> None:
-        with contextlib.suppress(Exception):
-            await self._ws.close()
+# TLS pinning and the WebSocket transport live in acp_gateway.agents (P1.1).
 
 
 class RecordingTransport:
@@ -358,7 +242,13 @@ class Spike:
 
     async def prepare_tls(self) -> None:
         if self.profile.uses_tls and self.pin is None:
-            self.pin = await pin_certificate(self.profile)
+            parts = urlsplit(self.profile.acp_endpoint)
+            self.pin = await pin_certificate(
+                parts.hostname or "",
+                parts.port or 443,
+                configured=self.profile.tls_fingerprint,
+                pin_file=paths.data_dir() / "pins" / f"{self.profile.alias}.sha256",
+            )
             out(f"TLS: fingerprint {self.pin.fingerprint} ({self.pin.source})")
             self.results["tls"] = {"fingerprint": self.pin.fingerprint, "source": self.pin.source}
 
@@ -366,13 +256,9 @@ class Spike:
         await self.prepare_tls()
         self.connections += 1
         headers = {"X-Secret-Key": self.secret} if self.secret else {}
-        url = self.profile.url
-        if urlsplit(url).path in ("", "/"):
-            # Goose Desktop takes the server base URL; the ACP endpoint of goose serve is /acp.
-            url = url.rstrip("/") + "/acp"
+        url = self.profile.acp_endpoint  # ws(s)://host:port/acp
         if self.transport_kind == "ws":
-            url = url.replace("https://", "wss://").replace("http://", "ws://")
-            inner: Any = await PinnedWebSocketTransport.connect(url, headers, self.pin)
+            inner: Any = await PinnedWebSocketTransport.connect(url, headers=headers, pin=self.pin)
         else:
             url = url.replace("wss://", "https://").replace("ws://", "http://")
             http_client = httpx.AsyncClient(

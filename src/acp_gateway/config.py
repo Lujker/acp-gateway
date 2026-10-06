@@ -19,7 +19,7 @@ from contextvars import ContextVar
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal
-from urllib.parse import urlsplit
+from urllib.parse import urlsplit, urlunsplit
 
 from dotenv import dotenv_values
 from pydantic import BaseModel, ConfigDict, Field, SecretStr, field_validator, model_validator
@@ -84,6 +84,9 @@ class AgentProfile(_Section):
     tls_fingerprint: str | None = None
     allow_insecure_transport: bool = False
     default_cwd: str
+    # Session mode applied after session/new and session/load. Goose starts ACP
+    # sessions in "auto" (no approvals), so goose profiles default to smart_approve.
+    session_mode: str | None = None
 
     @property
     def display_name(self) -> str:
@@ -92,6 +95,20 @@ class AgentProfile(_Section):
     @property
     def uses_tls(self) -> bool:
         return urlsplit(self.url).scheme in ("wss", "https")
+
+    @property
+    def acp_endpoint(self) -> str:
+        """WebSocket URL of the ACP endpoint.
+
+        ``http(s)`` becomes ``ws(s)``. Goose Desktop takes a base URL, so for goose
+        profiles an empty path means ``/acp``.
+        """
+        parts = urlsplit(self.url)
+        scheme = {"http": "ws", "https": "wss"}.get(parts.scheme, parts.scheme)
+        path = parts.path
+        if self.kind == "goose" and path in ("", "/"):
+            path = "/acp"
+        return urlunsplit((scheme, parts.netloc, path, parts.query, ""))
 
     @field_validator("secret_env")
     @classmethod
@@ -107,6 +124,12 @@ class AgentProfile(_Section):
         if not _HEX_FINGERPRINT.match(hex_digits):
             raise ValueError("tls_fingerprint must be a SHA-256 fingerprint (64 hex digits)")
         return ":".join(hex_digits[i : i + 2] for i in range(0, 64, 2))
+
+    @model_validator(mode="after")
+    def _default_session_mode(self) -> AgentProfile:
+        if self.session_mode is None and self.kind == "goose":
+            self.session_mode = "smart_approve"
+        return self
 
     @model_validator(mode="after")
     def _check_transport(self) -> AgentProfile:

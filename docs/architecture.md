@@ -152,10 +152,20 @@ Semantics the design must respect:
                  └──────────────────────────────────────────────────────────────────────┘
 ```
 
-- **`agents/` — AgentClient.** A wrapper over the `acp` SDK: backends per
-  profile (`remote`, later `stdio`), auth, TLS pinning, normalization of
-  `session/update` into `AgentEvent`, normalized errors, reconnect with backoff
-  (1, 2, 5, 10, 30 s, capped), `load_session` with history replay suppressed.
+- **`agents/` — AgentClient** (implemented in `P1.1`). One ACP connection per
+  agent profile over our WebSocket transport (`transport.py`) with TLS pinning
+  (`tls.py`), the `X-Secret-Key` header for goose (a bearer token for generic
+  profiles) and `initialize` with every client capability disabled.
+  `ensure_connected()` retries with backoff (1, 2, 5, 10, 30 s; auth and pin
+  errors are not retried). `new_session()` / `load_session()` apply the
+  profile's `session_mode`; a session not yet attached to the current
+  connection (after a reconnect or in a new process) is loaded automatically,
+  with its history replay dropped. `prompt()` is an async stream of normalized
+  events (`events.py`) that always ends with `TurnFinished`; closing it early
+  cancels the turn; one running turn per session (`SessionBusy`). Permission
+  requests go to a caller-supplied async handler that returns an option id —
+  the default rejects everything; `cancel()` answers pending requests
+  `cancelled`. Errors are normalized (`errors.py`).
 - **`core/` — GatewayCore.** An in-process service used by every channel:
   - *sessions* — `(channel, conversation_key) → (agent, acp_session_id)`; one
     key may own several sessions with a pointer to the active one (`/new`,
@@ -316,7 +326,7 @@ acp-gateway/
 ├── pyproject.toml · .env.example · config.example.yaml
 ├── src/acp_gateway/
 │   ├── config.py · log.py · paths.py · daemon.py
-│   ├── agents/     client.py · profiles.py · transport.py · tls.py · events.py · errors.py
+│   ├── agents/     client.py · transport.py · tls.py · events.py · errors.py
 │   ├── core/       sessions.py · turns.py · jobs.py · approvals.py · policy.py · bus.py
 │   ├── storage/    db.py · migrations/
 │   ├── channels/   base.py · mcp/ · telegram/ · (xmpp/ · email/ later)
@@ -329,6 +339,11 @@ acp-gateway/
 └── docs/           architecture.md · setup/ · archive/
 ```
 
-Test bench: a mock ACP agent built on the same SDK (agent side) that replays
-real Work Goose traffic recorded in `P0.2`; recordings are cleaned with
-`scripts/sanitize_fixture.py` before they are committed.
+Test bench (`P1.2`): `tests/fakes/fake_goose.py` is a mock goose built on the
+SDK's agent side and served by uvicorn; every payload it sends (initialize
+result, modes and config options, `tool_call` / `request_permission` /
+`tool_call_update`, turn usage and session info updates) is taken from real
+goose 1.53.0 recordings in `tests/fixtures/acp/` via `tests/fakes/recordings.py`.
+`tests/unit/test_recorded_contract.py` checks that every recorded agent
+message parses with the SDK schema and maps to a known gateway event.
+Recordings are cleaned with `scripts/sanitize_fixture.py` before committing.
