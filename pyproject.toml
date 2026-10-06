@@ -5,6 +5,18 @@ description = "Local gateway that routes messages from external channels (Hermes
 readme = "README.md"
 requires-python = ">=3.12"
 license = "MIT"
+authors = [{ name = "Lujker" }]
+keywords = ["acp", "agent-client-protocol", "goose", "gateway", "mcp", "hermes", "telegram"]
+classifiers = [
+    "Development Status :: 2 - Pre-Alpha",
+    "Environment :: Console",
+    "Intended Audience :: Developers",
+    "Operating System :: POSIX :: Linux",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Communications :: Chat",
+    "Topic :: Software Development",
+]
 dependencies = [
     "agent-client-protocol[http]>=0.12",
     "platformdirs>=4.3",
@@ -13,6 +25,11 @@ dependencies = [
     "python-dotenv>=1.0",
     "structlog>=25.1",
 ]
+
+[project.urls]
+Homepage = "https://github.com/Lujker/acp-gateway"
+Repository = "https://github.com/Lujker/acp-gateway"
+Issues = "https://github.com/Lujker/acp-gateway/issues"
 
 [project.scripts]
 acpgw = "acp_gateway.cli.main:main"
