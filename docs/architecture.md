@@ -70,14 +70,17 @@ native — поддерживаемый, macOS — в будущем. Отсюд
 
 ## 4. ACP: как на самом деле устроен протокол
 
-Подтверждено по документации goose и `agent-client-protocol` SDK
-(2026-10-06); детали поведения конкретной версии goose уточняет spike `P0.2`.
+Подтверждено spike `P0.2` против реального goose 1.53.0 по LAN (2026-10-06);
+записанный трафик — `tests/fixtures/acp/goose-1.53.0/`, подробности —
+`road-notes.md`.
 
-Используем официальный Python SDK `agent-client-protocol` (`import acp`),
-протокол руками не пишем. Его web-транспорты (Streamable HTTP — нужен HTTP/2,
-и WebSocket) помечены experimental; если они не позволяют передать свой
-заголовок и SSL-контекст — пишем тонкий WS-транспорт на `websockets` под тот
-же интерфейс `Transport`.
+Используем официальный Python SDK `agent-client-protocol` (`import acp`,
+0.12.x): схема, `ClientSideConnection`, `connect_to_agent`. Транспорт —
+**только WebSocket, свой** (`websockets` + SSL-контекст с пиннингом), потому что
+SDK-шный `create_websocket_stream` не принимает SSL-контекст. Streamable HTTP
+не используем: после `session/load` ответ не доходит до клиента (у реального
+goose — зависание, у эталонного сервера SDK — 404), т. к. в результате
+`session/load` нет `sessionId` для привязки session-scoped потока.
 
 ### 4.1. Профили агентов
 
@@ -87,7 +90,7 @@ native — поддерживаемый, macOS — в будущем. Отсюд
 
 | Бэкенд | Подключение | Когда | Статус |
 |---|---|---|---|
-| `remote` (WS / Streamable HTTP) | агент уже слушает сеть, как `goose serve` | Work Goose в LAN и co-located | MVP |
+| `remote` (WebSocket) | агент уже слушает сеть, как `goose serve` | Work Goose в LAN и co-located | MVP |
 | `stdio` | Gateway сам запускает агента как процесс (`goose acp`, Gemini CLI, адаптеры Claude Code / Codex, Kiro…) | только co-located: агент на той же машине | `P4.7`, CONDITIONAL |
 
 Почти все ACP-агенты, кроме goose, говорят только по stdio, поэтому удалённо
@@ -96,24 +99,39 @@ native — поддерживаемый, macOS — в будущем. Отсюд
 Специфика профиля `goose` (бэкенд `remote`):
 
 - `goose serve` отдаёт ACP на `/acp`; по умолчанию `127.0.0.1:3284`,
-  `--host/--port` меняют адрес;
+  `--host/--port` меняют адрес. В Goose Desktop вводится базовый URL без пути,
+  поэтому Gateway дописывает `/acp`, если путь пустой; схема `https://`
+  трактуется как `wss://`;
 - аутентификация — заголовок `X-Secret-Key` (`GOOSE_SERVER__SECRET_KEY`);
   вариант `?token=` для браузеров не используем: секрет попадает в URL и логи;
 - `--tls` поднимает self-signed сертификат и печатает
-  `GOOSED_CERT_FINGERPRINT=...`; Gateway пинит его по SHA-256 (как Desktop);
-- режим подтверждений goose (`auto` / `approve` / `smart_approve`) — см.
-  таблицу ниже.
+  `GOOSED_CERT_FINGERPRINT=...` — это SHA-256 от DER сертификата (совпало с
+  вычисленным). Пиннинг: сертификат читается без учётных данных, сверяется с
+  пином, затем рукопожатие идёт в SSL-контексте, доверяющем только ему, и лишь
+  в нём отправляется `X-Secret-Key`; без пина в конфиге — TOFU с сохранением в
+  `<data_dir>/pins/<alias>.sha256`;
+- **новые сессии goose создаются в режиме `auto`** (подтверждений нет);
+  режимы сессии: `auto`, `approve`, `smart_approve`, `chat`. Gateway сразу после
+  `session/new` и `session/load` выставляет режим из профиля
+  (`session/set_mode`) — см. таблицу ниже;
+- `configOptions` сессии: `provider`, `mode`, `model`, `thinking_effort` —
+  потенциально управляемы из каналов (позже);
+- id сессий вида `YYYYMMDD_N`; сессии хранятся в goose и видны через
+  `session/list` (есть также `delete` и `close`);
+- базовая стоимость одного prompt ≈ 25 тыс. входных токенов (системный
+  промпт и инструменты goose) — учитывать при частых коротких запросах.
 
 Семантика, которую должен учитывать дизайн:
 
 | Операция | Как в ACP | Следствие для Gateway |
 |---|---|---|
 | Ответ агента | `prompt()` возвращает только `stopReason`; текст и события приходят уведомлениями `session/update` (`agent_message_chunk`, `tool_call`, `tool_call_update`, `plan`, …) | streaming — базовый механизм с первого дня; «финальный ответ» = собранные чанки |
-| Подтверждение | агент шлёт **запрос** `session/request_permission` с вариантами (`allow_once`, `allow_always`, `reject_once`, `reject_always`) и ждёт ответа | Approval Manager держит открытый RPC как `Future`; кнопка в канале завершает его выбранным `optionId` |
-| Отмена | **уведомление** `session/cancel`; `prompt()` завершается со `stopReason=cancelled` | все висящие permission-запросы сессии закрываются исходом `cancelled` |
-| Восстановление | `session/load` (если агент объявил `loadSession`) переигрывает историю через `session/update` | при восстановлении после рестарта повтор истории не отправляется в каналы |
+| Подтверждение | агент шлёт `tool_call`, затем **запрос** `session/request_permission` с вариантами (`allow_always`, `allow_once`, `reject_once`, `reject_always`) и ждёт ответа; у goose `title` = `shell · <команда>`, `rawInput` = `{command, timeout_secs}` | Approval Manager держит открытый RPC как `Future`; кнопка в канале завершает его выбранным `optionId`. Показывать человеку `rawInput` — goose может переписать команду (у Work Goose — префикс `rtk`) |
+| Отмена | **уведомление** `session/cancel`; `prompt()` завершается со `stopReason=cancelled` (у goose — за 0,01–0,1 с на любой стадии: генерация, ожидание подтверждения, выполнение команды) | все висящие permission-запросы сессии закрываются исходом `cancelled` |
+| Восстановление | `session/load` (goose объявляет `loadSession`) переигрывает историю через `session/update` (`user_message_chunk`, `agent_message_chunk`) до ответа на `session/load`; контекст модели сохраняется | всё, что пришло до ответа на `session/load`, — повтор истории, в каналы не отправляется |
 | Новая сессия | `session/new` требует `cwd` и `mcp_servers` | `cwd` — путь на машине Work Goose (`default_cwd` в конфиге); `mcp_servers=[]` всегда |
-| Режим подтверждений | если Work Goose в режиме `auto`, permission-запросов не будет | режим `approve`/`smart_approve` на рабочей стороне или `session/set_mode`; проверяется в `P0.2` |
+| Режим подтверждений | сессии goose стартуют в `auto` — permission-запросов не будет | профиль задаёт `session_mode` (по умолчанию `smart_approve` — решение владельца 2026-10-06; `approve` — по желанию), Gateway ставит его через `session/set_mode` после `session/new`/`session/load`; не удалось — сессия не используется |
+| Прочие события | `usage_update`, `session_info_update` (заголовок сессии, `activeRunId`), `available_commands_update` (slash-команды и skills goose), `current_mode_update` | в каналы не идут; `usage` — в аудит/статус |
 
 ## 5. Компоненты
 

@@ -5,7 +5,8 @@
 > ([`docs/archive/2026-10-06-initial-plan.md`](docs/archive/2026-10-06-initial-plan.md))
 > с поправками по фактической семантике ACP и решениями владельца; проект
 > переименован из «Work Goose Bridge» в **ACP Gateway** и обобщён до любого
-> ACP-агента (первый агент — Work Goose); готов каркас репозитория (`P0.3`).
+> ACP-агента (первый агент — Work Goose); фундамент `P0` закрыт: каркас,
+> сеть и протокол проверены против реального Work Goose.
 > Целевая архитектура — [`docs/architecture.md`](docs/architecture.md).
 > Актуальная очередь дальнейшей разработки — последний раздел.
 > Журнал решений и находок — [`road-notes.md`](road-notes.md); пункты с большой
@@ -41,17 +42,24 @@
 ## 2. Подтверждённая база
 
 - Исходный план и цели — `docs/archive/2026-10-06-initial-plan.md`.
-- По документации (2026-10-06) подтверждено: `goose serve` отдаёт ACP по
-  HTTP/WebSocket на `/acp` с `X-Secret-Key` и TLS + fingerprint; есть
-  официальный Python SDK `agent-client-protocol` с HTTP/WS-транспортами;
-  Hermes подключает MCP-серверы по URL с заголовками. Подробности —
-  `road-notes.md`, запись 2026-10-06. На реальном Work Goose ещё не проверено.
+- **READY `P0.3`:** каркас репозитория, конфиг с инвариантами безопасности,
+  маскирование секретов в логах, CLI `acpgw`, pre-commit-хук.
+- **READY `P0.1`, `P0.2`:** Work Goose (goose 1.53.0) доступен по LAN с
+  домашнего ПК; ACP по WebSocket с TLS-пиннингом и `X-Secret-Key`, сессии,
+  подтверждения, отмена и восстановление сессий проверены на реальном агенте
+  (`scripts/spike_acp.py`, `tests/fixtures/acp/goose-1.53.0/`).
+- Hermes подключает MCP-серверы по URL с заголовками — по документации, на
+  практике не проверялось.
 
 ## 3. P0 — Фундамент
 
 ### P0.1. Среда Work Goose и сеть в LAN
 
-**Статус:** OPEN — первый пункт; от него зависит всё в топологии LAN.
+**Статус:** READY — 2026-10-06: `goose serve` 1.53.0 работает сервисом в WSL
+рабочего ноутбука, порт 3284 открыт правилом Hyper-V firewall; с домашнего ПК
+(WSL) по LAN проходят TLS с пиннингом и все сценарии spike; Goose Desktop
+подключён к тому же серверу. Runbook — [`docs/setup/work-goose.md`](docs/setup/work-goose.md)
+(детали сервиса goose и режим сети WSL — дописать со слов владельца).
 **Репозиторий:** — (настройка рабочего ноутбука) + `docs/setup/work-goose.md`
 
 - `goose serve --tls` с `GOOSE_SERVER__SECRET_KEY` в WSL рабочего ноутбука,
@@ -65,8 +73,12 @@
 
 ### P0.2. ACP spike против реального Work Goose
 
-**Статус:** OPEN — можно начать до `P0.1` в топологии co-located (loopback на
-рабочем ноутбуке).
+**Статус:** READY — 2026-10-06 spike прогнан против реального goose 1.53.0:
+WS + TLS-пиннинг + `X-Secret-Key`, `initialize`, режимы, `ping`, permission
+(reject), cancel на трёх стадиях, `load` с повтором истории — работают;
+Streamable HTTP ломает `load`; сессии Gateway видны в Goose Desktop
+(подтвердил владелец). Трафик — `tests/fixtures/acp/goose-1.53.0/`, выводы —
+`road-notes.md` и `docs/architecture.md` §4.
 **Репозиторий:** `acp-gateway` (`scripts/spike_acp.py`)
 
 Короткий скрипт на `acp` SDK, весь трафик пишется в JSONL. Ответить на
@@ -102,9 +114,12 @@ pre-commit-хук (проверка секретов + ruff). `uv run pytest` �
 **Статус:** OPEN — после `P0.2`.
 **Репозиторий:** `acp-gateway` (`src/acp_gateway/agents/`)
 
-Обёртка над `acp` SDK (или свой WS-транспорт, если так решит `P0.2`):
+Обёртка над `acp` SDK со своим WS-транспортом (решено в `P0.2`; основа —
+`PinnedWebSocketTransport` и `pin_certificate` из `scripts/spike_acp.py`):
 профили агентов в конфиге (`agents:`), бэкенд `remote` (loopback/LAN),
-профиль `goose` (`X-Secret-Key`, TLS pinning, режим подтверждений), выключенные client capabilities,
+профиль `goose` (`X-Secret-Key`, TLS-пиннинг/TOFU, дописывание `/acp`,
+`session_mode` — по умолчанию `smart_approve` (решение владельца) — через
+`session/set_mode` после `new`/`load`), выключенные client capabilities,
 `mcp_servers=[]`, нормализация `session/update` → `AgentEvent`,
 нормализованные ошибки, reconnect с backoff, `load_session` с подавлением
 повтора истории. Критерий: 20 последовательных prompts подряд, reconnect после
@@ -288,24 +303,19 @@ launchd-агент; ядро уже кроссплатформенное (см. 
 
 ## 8. Очередь дальнейшей разработки
 
-1. **P0.2 — ACP spike (co-located).** Запустить на рабочем ноутбуке по
-   loopback, не дожидаясь сети; снимает главные неизвестные протокола и
-   SDK-транспорта, которые определяют `P1.1`. Добавит зависимость
-   `agent-client-protocol`.
-2. **P0.1 — сеть в LAN.** Параллельно со spike; повторить spike уже с
-   домашнего хоста по TLS с pinning.
-3. **P1.2 + P1.1 — mock-агент и AgentClient.** Вместе: mock строится из
-   дампов spike и сразу тестирует клиент.
-4. **P1.3 — GatewayCore.** Сессии, jobs, шина, контракт канала — основа для
+1. **P1.2 + P1.1 — mock-агент и AgentClient.** Вместе: mock воспроизводит
+   записанный трафик goose 1.53.0, клиент выносится из spike в
+   `src/acp_gateway/agents/`.
+2. **P1.3 — GatewayCore.** Сессии, jobs, шина, контракт канала — основа для
    всех каналов.
-5. **P1.4 — approvals и политика** (включая reject без подтверждающего
+3. **P1.4 — approvals и политика** (включая reject без подтверждающего
    канала из `P2.2`).
-6. **P1.5 — демон, HTTP API, CLI `acpgw`.** Первый человеческий канал и канал
+4. **P1.5 — демон, HTTP API, CLI `acpgw`.** Первый человеческий канал и канал
    подтверждений (`P2.2`).
-7. **P2.1 — Hermes через MCP.** Первый внешний канал по решению владельца.
-8. **P3.1 — автозапуск в WSL.** Чтобы Hermes мог рассчитывать на Gateway.
-9. **P2.3 — Telegram.** Основной канал подтверждений после CLI.
-10. **P3.3 — надёжность и наблюдаемость.**
-11. **P3.2 — Windows native.**
-12. **P4.2 → P4.3 → P4.4 — Snikket, Email, Web UI.**
-13. **P4.1 — DECISION: связность вне LAN.** Когда понадобится.
+5. **P2.1 — Hermes через MCP.** Первый внешний канал по решению владельца.
+6. **P3.1 — автозапуск в WSL.** Чтобы Hermes мог рассчитывать на Gateway.
+7. **P2.3 — Telegram.** Основной канал подтверждений после CLI.
+8. **P3.3 — надёжность и наблюдаемость.**
+9. **P3.2 — Windows native.**
+10. **P4.2 → P4.3 → P4.4 — Snikket, Email, Web UI.**
+11. **P4.1 — DECISION: связность вне LAN.** Когда понадобится.

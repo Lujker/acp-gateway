@@ -196,6 +196,123 @@ check` на `config.example.yaml` — `ok` с секретом и код 1 бе�
 - Пустые пакеты `agents/`, `core/`, `channels/` и т. д. не создавались —
   появятся вместе с кодом своих пунктов.
 
+## 2026-10-06 — P0.2: spike-скрипт и находки по SDK `acp` 0.12.1
+
+Добавлена зависимость `agent-client-protocol[http]` 0.12.1 (тянет `httpx[http2]`
+и `websockets`), в dev — `uvicorn`. Написан `scripts/spike_acp.py`: сценарии
+`tls`, `init`, `modes`, `ping`, `permission`, `cancel`, `load`, `all`; весь
+JSON-RPC-трафик пишется в `spike-runs/<время>-<сценарий>-<транспорт>/traffic.jsonl`
+(каталог в `.gitignore` — там могут быть рабочие данные), итоги — в
+`summary.json`. Данные подключения берутся из обычного `config.yaml` + `.env`.
+
+Находки по исходникам SDK (проверены чтением кода в `.venv`, не по докам):
+
+- **`create_websocket_stream` не принимает SSL-контекст** (только `headers` и
+  cookie store) — с самоподписанным сертификатом goose он не соединится, а
+  пиннинг невозможен. Поэтому в spike свой `PinnedWebSocketTransport`
+  (~30 строк, тот же протокол `Transport`). Это решает вопрос `P1.1`: WS-
+  транспорт — свой.
+- **`create_http_stream` принимает свой `httpx.AsyncClient`** — TLS-контекст
+  передаётся через `verify=`, заголовок — через `headers=`.
+- **Streamable HTTP ломает `session/load`**: и клиент, и эталонный сервер SDK
+  привязывают сессию к соединению, только если в результате есть `sessionId`,
+  а в `LoadSessionResponse` такого поля по схеме нет → prompt в загруженную
+  сессию получает 404. По WS всё работает. Вывод: **основной транспорт — WS**;
+  как поведёт себя HTTP у реального goose — проверить в прогоне.
+- По умолчанию `ClientCapabilities()` уже объявляет `fs` и `terminal`
+  выключенными; spike всё равно передаёт их явно, а методы fs/terminal на
+  стороне клиента фиксируют вызов как нарушение.
+
+Схема TLS-пиннинга (выбрана в spike, кандидат для `P1.1`): сначала сертификат
+читается без доверия и без отправки учётных данных, сверяется SHA-256 с
+`tls_fingerprint` из конфига либо с сохранённым TOFU-пином
+(`<data_dir>/pins/<alias>.sha256`); затем строится SSL-контекст, доверяющий
+только этому сертификату (`VERIFY_X509_PARTIAL_CHAIN`, без проверки имени
+хоста), и уже в нём проходит рукопожатие с `X-Secret-Key`; после соединения
+отпечаток сверяется ещё раз. Так секрет никогда не уходит MITM-узлу — тест
+`test_tls_pin_mismatch_refuses_to_connect` проверяет, что до агента не дошло
+ничего. Работает и с CA-, и с leaf-сертификатом (`CA:FALSE`) — какой
+генерирует goose, неизвестно.
+
+Фейковый агент `tests/fakes/fake_goose.py` (SDK `create_asgi_app` + uvicorn +
+проверка `X-Secret-Key`, режимы `auto/approve/chat`, permission, cancel, load с
+повтором истории) — заготовка для `P1.2`; после записи реального трафика mock
+должен воспроизводить его, а не угадывать.
+
+Проверка: `uv run pytest` — 92 passed (80 unit + 12 integration), `ruff
+check` — чисто.
+
+## 2026-10-06 — P0.2: прогон против реального Work Goose (goose 1.53.0)
+
+Топология LAN: домашний ПК (WSL) → `https://<адрес-ноутбука>:3284`, TLS с
+отпечатком из `GOOSED_CERT_FINGERPRINT` в `config.yaml`, секрет — в `.env`.
+Доступ из LAN владелец уже открыл сам (`P0.1` фактически работает). Трафик —
+`tests/fixtures/acp/goose-1.53.0/*.jsonl` (домашний путь заменён на
+`/home/user`; секрета нет — проверено поиском значения по всем дампам).
+
+Результаты (транспорт WS, если не сказано иное):
+
+- **TLS.** `GOOSED_CERT_FINGERPRINT` = SHA-256 от DER сертификата — пин из
+  конфига совпал с вычисленным; схема пиннинга из spike работает с
+  сертификатом goose.
+- **URL.** В конфиг владелец вписал базовый URL, как в Desktop
+  (`https://…:3284`, без `/acp`). Spike теперь сам дописывает `/acp` при пустом
+  пути и трактует `https` как `wss` — это же нужно в `P1.1`.
+- **`initialize`.** `loadSession: true`, `sessionCapabilities: list, delete,
+  close`, prompt: `image`, `embeddedContext`; MCP по HTTP; `authMethods:
+  goose-provider` (вызывать не требуется — секрет уже аутентифицирует).
+- **Режимы.** Новая сессия создаётся в **`auto`** (Desktop/сервер настроен
+  так), режимы: `auto`, `approve`, `smart_approve`, `chat`; `set_mode`
+  работает и шлёт `current_mode_update`. Вывод: Gateway обязан выставлять
+  режим сам — иначе подтверждений не будет вообще.
+  `configOptions`: `provider` (85 вариантов), `mode`, `model` (6),
+  `thinking_effort` (5).
+- **`ping`.** `stop_reason=end_turn`, текст `pong` одним `agent_message_chunk`;
+  кроме него приходят `usage_update`, `session_info_update`,
+  `available_commands_update`. Стоимость — ≈25 тыс. входных токенов на prompt.
+  Ответ — 6 с.
+- **Permission (режим `approve`, отказ).** `tool_call` →
+  `request_permission` с 4 вариантами (`allow_always`, `allow_once`,
+  `reject_once`, `reject_always`), `title` = `shell · <команда>`,
+  `rawInput` = `{command, timeout_secs}`; на `reject_once` goose сообщил модели
+  об отказе, команда не выполнилась, ответ `DENIED`. **Находка:** Work Goose
+  переписал `sleep 30 && …` в `rtk sleep 30 && …` (его собственный хук RTK) —
+  человеку надо показывать `rawInput`, а не исходную просьбу.
+- **Cancel.** Работает на всех стадиях: во время генерации (через 5 с —
+  `cancelled` за 0,01 с), при висящем `request_permission` (ответили
+  `cancelled` — `cancelled` за 0,05 с), во время выполнения разрешённой
+  команды (`cancelled` за 0,1 с). Убивает ли goose сам процесс команды — по
+  трафику не видно (открытый вопрос, не блокирует).
+- **`load`.** После разрыва и нового соединения `session/load` повторил
+  историю (`user_message_chunk` + `agent_message_chunk`) до ответа на запрос;
+  модель вспомнила кодовое слово.
+- **Streamable HTTP.** `ping` работает, но `session/load` зависает: ответ
+  уходит в session-scoped поток, который клиент SDK не открывает (нет
+  `sessionId` в результате). Подтверждает выбор только WS.
+
+Побочный эффект: spike создал в Work Goose сессии `20261006_5`–`20261006_12`
+(заголовки «ACP spike …», «pong» и т. п.) — они остаются в списке сессий goose.
+
+## 2026-10-06 — P0.1, P0.2: ответы владельца, пункты закрыты
+
+- *Как открыт доступ к `goose serve` из LAN?* — На рабочем ноутбуке
+  добавлено входящее правило Hyper-V firewall для WSL на TCP 3284
+  (`New-NetFirewallHyperVRule … -VMCreatorId '{40E0AC32-46A5-438A-A0B2-2B479E8F2E90}'`),
+  `goose serve` оформлен сервисом внутри WSL. Записано в
+  [`docs/setup/work-goose.md`](docs/setup/work-goose.md); имя unit-файла и
+  режим сети WSL (по правилу Hyper-V firewall — вероятно, mirrored) владелец не
+  уточнял — в runbook помечены TODO.
+- *Режим по умолчанию для сессий Gateway?* — `smart_approve`.
+- *Видны ли сессии Gateway в Goose Desktop?* — Да, видны; удалять тестовые
+  сессии `20261006_5`–`_12` не нужно; по наблюдению владельца всё работало
+  корректно. Одновременная работа Desktop и Gateway отдельно не испытывалась,
+  но проблем не замечено.
+
+Итог: `P0.1` и `P0.2` — READY. Фундамент `P0` закрыт целиком.
+
 ## Незакрытые вопросы
 
-- Нет.
+- **`P0.1`** — дописать в runbook имя и путь unit-файла сервиса goose, где он
+  берёт секрет, как смотреть логи; подтвердить mirrored networking.
+- **`P1.1`** — убивает ли goose процесс команды при `session/cancel` (по
+  трафику не видно; проверить на долгой команде, если понадобится).

@@ -6,6 +6,7 @@ readme = "README.md"
 requires-python = ">=3.12"
 license = "MIT"
 dependencies = [
+    "agent-client-protocol[http]>=0.12",
     "platformdirs>=4.3",
     "pydantic>=2.10",
     "pydantic-settings[yaml]>=2.8",
@@ -21,6 +22,7 @@ dev = [
     "pytest>=8.3",
     "pytest-asyncio>=0.25",
     "ruff>=0.9",
+    "uvicorn>=0.34",
 ]
 
 [build-system]
@@ -43,6 +45,6 @@ select = ["E", "W", "F", "I", "UP", "B", "SIM", "S", "RUF", "PTH"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-pythonpath = ["scripts"]
+pythonpath = ["scripts", "tests"]
 asyncio_mode = "auto"
 addopts = "-ra --strict-markers"
