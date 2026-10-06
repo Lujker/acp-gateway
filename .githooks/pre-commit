@@ -1,0 +1,6 @@
+#!/bin/sh
+# Enabled with: git config core.hooksPath .githooks
+set -e
+uv run --frozen python scripts/check_secrets.py --staged
+uv run --frozen ruff check
+uv run --frozen ruff format --check

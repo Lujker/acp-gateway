@@ -1,0 +1,46 @@
+# ACP Gateway configuration. Copy to config.yaml (ignored by git) or to the
+# platform config dir shown by `acpgw paths`. Secrets do not belong here:
+# profiles name the environment variable (see .env.example) that holds them.
+
+gateway:
+  host: 127.0.0.1          # loopback only, enforced
+  port: 8765
+  api_token_env: ACPGW_API_TOKEN
+  mcp_token_env: ACPGW_MCP_TOKEN
+
+agents:
+  # Topology "LAN": Work Goose on the work laptop, `goose serve --tls`.
+  - alias: work            # prefix of MCP tools (work_ask, ...) and name in channels
+    title: Work Goose
+    kind: goose
+    backend: remote
+    url: wss://work-laptop.lan:3000/acp
+    secret_env: AGENT_WORK_SECRET
+    # SHA-256 from the GOOSED_CERT_FINGERPRINT=... line printed by goose serve.
+    # Empty means trust-on-first-use.
+    tls_fingerprint: ""
+    default_cwd: /home/user/work
+
+  # Topology "co-located": gateway on the same machine as goose serve.
+  # - alias: work
+  #   title: Work Goose
+  #   kind: goose
+  #   url: ws://127.0.0.1:3284/acp
+  #   secret_env: AGENT_WORK_SECRET
+  #   default_cwd: /home/user/work
+
+policy:
+  allow_new_sessions: true
+  allow_cancel: true
+  allow_approvals: true
+  allow_always_approval: false
+  allow_file_upload: false
+  allow_file_download: false
+  max_prompt_length: 50000
+  max_response_length: 100000
+  approval_timeout_seconds: 300
+  approver_channels: [cli]
+
+logging:
+  level: INFO
+  format: auto              # auto | console | json
