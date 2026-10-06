@@ -1,36 +1,38 @@
-# Work Goose: доступ к `goose serve` из LAN
+# Work Goose: reaching `goose serve` from the LAN
 
-> Runbook к пункту `P0.1` ([`road-map.md`](../../road-map.md)). Проверено
-> 2026-10-06: goose 1.53.0 в WSL рабочего ноутбука, Gateway на домашнем ПК в
-> той же LAN (`scripts/spike_acp.py`, записи в [`road-notes.md`](../../road-notes.md)).
+> Runbook for roadmap item `P0.1` ([`road-map.md`](../../road-map.md)).
+> Verified on 2026-10-06: goose 1.53.0 in WSL on the work laptop, ACP Gateway
+> on a home PC in the same LAN (`scripts/spike_acp.py`; details in
+> [`road-notes.md`](../../road-notes.md)).
 
-## Что должно получиться
+## Target state
 
-- `goose serve` в WSL рабочего ноутбука слушает порт `3284` с TLS и общим
-  секретом;
-- порт доступен с других машин LAN;
-- Goose Desktop и ACP Gateway подключаются к `https://<адрес-ноутбука>:3284`
-  с тем же секретом и отпечатком сертификата.
+- `goose serve` runs in WSL on the work laptop, listening on port `3284` with
+  TLS and a shared secret;
+- the port is reachable from other machines in the LAN;
+- Goose Desktop and ACP Gateway connect to `https://<laptop-address>:3284`
+  with the same secret and certificate fingerprint.
 
-## 1. `goose serve` в WSL
+## 1. `goose serve` in WSL
 
-Запуск (вручную, для проверки):
+Manual start, to check that it works:
 
 ```bash
-GOOSE_SERVER__SECRET_KEY='<длинный случайный секрет>' \
+GOOSE_SERVER__SECRET_KEY='<long random secret>' \
 goose serve --host 0.0.0.0 --port 3284 --tls
 ```
 
-При старте goose печатает строку `GOOSED_CERT_FINGERPRINT=AA:BB:...` — это
-SHA-256 сертификата; он меняется, только если сертификат перевыпущен.
+On startup goose prints `GOOSED_CERT_FINGERPRINT=AA:BB:...` — the SHA-256 of
+its certificate. It changes only when the certificate is regenerated.
 
-Постоянный запуск: владелец оформил `goose serve` как сервис внутри WSL.
-<!-- TODO: вписать имя unit-файла, путь к нему, где хранится секрет и как
-     смотреть логи (`journalctl --user -u ...`), — детали у владельца. -->
+Permanent setup: on the reference machine `goose serve` runs as a service
+inside WSL.
+<!-- TODO: add the unit name and path, where the service reads the secret from,
+     and how to read its logs (`journalctl --user -u ...`). -->
 
-## 2. Доступ к порту из LAN (Windows на рабочем ноутбуке)
+## 2. Opening the port to the LAN (Windows on the work laptop)
 
-Входящее правило Hyper-V firewall для WSL (PowerShell от администратора):
+Inbound Hyper-V firewall rule for WSL (PowerShell as administrator):
 
 ```powershell
 New-NetFirewallHyperVRule -Name GooseServe -DisplayName "goose serve (WSL)" `
@@ -38,50 +40,51 @@ New-NetFirewallHyperVRule -Name GooseServe -DisplayName "goose serve (WSL)" `
   -Protocol TCP -LocalPorts 3284
 ```
 
-`{40E0AC32-46A5-438A-A0B2-2B479E8F2E90}` — идентификатор WSL как создателя ВМ.
-Hyper-V firewall управляет входящим трафиком WSL в режиме mirrored
-networking (`.wslconfig`: `[wsl2] networkingMode=mirrored`).
-<!-- TODO: подтвердить у владельца, что включён именно mirrored-режим. -->
+`{40E0AC32-46A5-438A-A0B2-2B479E8F2E90}` is the VM creator id of WSL. The
+Hyper-V firewall governs inbound WSL traffic in mirrored networking mode
+(`.wslconfig`: `[wsl2] networkingMode=mirrored`).
+<!-- TODO: confirm that the reference machine uses mirrored mode. -->
 
-Проверка с другой машины LAN (сертификат самоподписанный, секрет не нужен):
+Check from another machine in the LAN (the certificate is self-signed; no
+secret needed):
 
 ```bash
-openssl s_client -connect <адрес-ноутбука>:3284 </dev/null 2>/dev/null \
+openssl s_client -connect <laptop-address>:3284 </dev/null 2>/dev/null \
   | openssl x509 -noout -fingerprint -sha256
 ```
 
-Отпечаток должен совпасть с `GOOSED_CERT_FINGERPRINT`.
+The fingerprint must match `GOOSED_CERT_FINGERPRINT`.
 
-## 3. Режим подтверждений
+## 3. Approval mode
 
-Сессии, созданные через ACP, у этого goose стартуют в режиме `auto` (без
-подтверждений). Gateway сам переводит свои сессии в `smart_approve` (решение
-владельца 2026-10-06) через `session/set_mode`; настраивать goose для этого не
-нужно.
+Sessions created over ACP on this goose start in `auto` mode (no approvals).
+The gateway switches its own sessions to `smart_approve` with
+`session/set_mode` (owner decision, 2026-10-06); goose needs no extra
+configuration for that.
 
-## 4. Подключение Gateway
+## 4. Connecting the gateway
 
-`config.yaml` на хосте Gateway:
+`config.yaml` on the gateway host:
 
 ```yaml
 agents:
   - alias: work
     title: Work Goose
     kind: goose
-    url: https://<адрес-ноутбука>:3284   # /acp дописывается автоматически
+    url: https://<laptop-address>:3284   # /acp is appended automatically
     secret_env: AGENT_WORK_SECRET
     tls_fingerprint: "<GOOSED_CERT_FINGERPRINT>"
     default_cwd: /home/<user>
 ```
 
-`.env`: `AGENT_WORK_SECRET=<тот же секрет>`, права `600`. Проверка:
-`uv run acpgw config check`, затем
-`uv run python scripts/spike_acp.py init`.
+`.env`: `AGENT_WORK_SECRET=<the same secret>`, mode `600`. Then check:
+`uv run acpgw config check` and `uv run python scripts/spike_acp.py init`.
 
-## Если не подключается
+## Troubleshooting
 
-- `TLS fingerprint mismatch` — goose перевыпустил сертификат: сверить новый
-  `GOOSED_CERT_FINGERPRINT` и обновить конфиг (и Goose Desktop).
-- Таймаут соединения — сервис goose не запущен, порт не открыт в Hyper-V
-  firewall или у ноутбука сменился адрес (стоит закрепить его DHCP-резервацией).
-- Соединение закрывается сразу после рукопожатия — неверный секрет.
+- `TLS fingerprint mismatch` — goose regenerated its certificate: compare the
+  new `GOOSED_CERT_FINGERPRINT` and update the config (and Goose Desktop).
+- Connection timeout — the goose service is down, the port is not open in the
+  Hyper-V firewall, or the laptop's address changed (a DHCP reservation
+  helps).
+- The connection closes right after the handshake — wrong secret.

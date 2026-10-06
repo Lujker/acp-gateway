@@ -5,73 +5,69 @@
 ![Status: early development](https://img.shields.io/badge/status-early%20development-orange.svg)
 [![ACP](https://img.shields.io/badge/protocol-Agent%20Client%20Protocol-6f42c1.svg)](https://agentclientprotocol.com)
 
-> A local gateway that lets chat channels and other agents (Hermes, Telegram,
-> XMPP, e-mail, web) talk to a remote [ACP](https://agentclientprotocol.com)
-> agent such as [goose](https://github.com/aaif-goose/goose) — with
-> human-in-the-loop tool approvals, pinned TLS and no agent credentials leaving
-> the agent's machine.
+**ACP Gateway** is a local gateway that lets chat channels and other agents —
+Hermes, Telegram, later XMPP, e-mail and a web UI — talk to a remote
+[Agent Client Protocol](https://agentclientprotocol.com) agent such as
+[goose](https://github.com/aaif-goose/goose). It delivers messages to the
+agent and returns answers and tool-approval requests to the channels, with a
+human in the loop for every risky action.
 
-**ACP Gateway** — локальная шина между внешними каналами и ACP-агентом. Она
-принимает сообщения из Hermes, Telegram, позже Snikket/XMPP, почты и Web UI,
-доставляет их агенту по [Agent Client Protocol](https://agentclientprotocol.com)
-и возвращает в каналы ответы и запросы подтверждения действий.
-
-Первый целевой агент — **Work Goose**: `goose serve` на рабочем ноутбуке.
-Рабочие MCP, credentials, файлы и модель остаются там; Gateway знает только
-адрес агента, общий секрет и отпечаток его TLS-сертификата.
+The first target is **Work Goose**: `goose serve` on a work laptop. Work MCP
+servers, credentials, files and the model stay on that machine; the gateway
+only knows the agent's address, a shared secret and the fingerprint of its TLS
+certificate.
 
 ```mermaid
 flowchart LR
-    subgraph home["Домашний хост (WSL)"]
+    subgraph home["Home host (WSL)"]
         hermes["Hermes"] -- MCP --> gw
         tg["Telegram"] --> gw
         cli["CLI / Web UI"] -- HTTP --> gw
-        gw["ACP Gateway<br/>сессии · подтверждения · политика · аудит"]
+        gw["ACP Gateway<br/>sessions · approvals · policy · audit"]
     end
-    subgraph work["Рабочий ноутбук (WSL)"]
-        goose["goose serve<br/>MCP · файлы · модель"]
+    subgraph work["Work laptop (WSL)"]
+        goose["goose serve<br/>MCP · files · model"]
     end
     gw -- "ACP over WebSocket<br/>TLS pinning + X-Secret-Key" --> goose
-    desktop["Goose Desktop"] -. напрямую .-> goose
+    desktop["Goose Desktop"] -. direct .-> goose
 ```
 
-## Статус
+## Status
 
-Проект в ранней разработке. Готов фундамент: проверено подключение к
-реальному goose 1.53.0 по LAN, а также сессии, подтверждения, отмена и
-восстановление сессий. Демона и каналов пока нет. План и очередь работ —
-[`road-map.md`](road-map.md).
+Early development. The foundation is done: the connection to a real goose
+1.53.0 over the LAN is verified, along with sessions, approvals, cancellation
+and session restore. The daemon and the channels do not exist yet. The plan
+and the work queue are in [`road-map.md`](road-map.md) (in Russian).
 
-| Что | Состояние |
+| Area | State |
 |---|---|
-| Каркас, конфиг, маскирование секретов, pre-commit-хук | ✅ |
-| ACP по WebSocket с TLS-пиннингом, проверено на goose 1.53.0 | ✅ spike |
-| Клиент агента, ядро (сессии, задачи, подтверждения) | 🔜 `P1` |
-| Демон, локальный API, CLI-подтверждения | 🔜 `P1.5` |
-| Hermes (MCP), затем Telegram | 🔜 `P2` |
-| Snikket/XMPP, e-mail, Web UI | 🗓 `P4` |
+| Scaffold, config, secret redaction, pre-commit hook | ✅ |
+| ACP over WebSocket with TLS pinning, verified on goose 1.53.0 | ✅ spike |
+| Agent client, core (sessions, jobs, approvals) | 🔜 `P1` |
+| Daemon, local API, approvals from the CLI | 🔜 `P1.5` |
+| Hermes (MCP), then Telegram | 🔜 `P2` |
+| Snikket/XMPP, e-mail, web UI | 🗓 `P4` |
 
-## Принципы
+## Principles
 
-- **Агент выполняет, Gateway передаёт.** Gateway не принимает решений за
-  агента и не хранит рабочих MCP-credentials.
-- **Подтверждает человек.** Действия агента подтверждаются в канале с живым
-  человеком (CLI, Telegram). LLM-каналам, включая Hermes, кнопка «разрешить»
-  не выдаётся. Если подтверждающего нет, действие отклоняется.
-- **Безопасность по умолчанию.** Локальный API слушает только loopback.
-  Нешифрованный транспорт разрешён только на loopback. Секрет уходит агенту
-  лишь после проверки закреплённого сертификата. Возможности клиента ACP
-  (`fs`, `terminal`) выключены. Секреты маскируются в логах и не попадают в
-  git.
-- **Каналы — тонкие адаптеры.** Новый канал реализует общий контракт и не
-  трогает ядро.
+- **The agent executes, the gateway relays.** The gateway makes no decisions
+  for the agent and stores no work MCP credentials.
+- **A human approves.** Agent actions are approved in a channel with a live
+  human (CLI, Telegram). LLM channels, Hermes included, never get an "allow"
+  button. With no approver connected, the action is rejected.
+- **Secure by default.** The local API listens on loopback only. Unencrypted
+  transport to an agent is allowed only on loopback. The secret is sent only
+  after the pinned certificate is verified. ACP client capabilities (`fs`,
+  `terminal`) are disabled. Secrets are masked in logs and kept out of git.
+- **Channels are thin adapters.** A new channel implements a shared contract
+  and does not touch the core.
 
-Подробнее — [`docs/architecture.md`](docs/architecture.md).
+More in [`docs/architecture.md`](docs/architecture.md).
 
-## Быстрый старт
+## Quick start
 
-Нужны [uv](https://docs.astral.sh/uv/) и git; Python 3.12 uv поставит сам.
-Основная платформа — Linux/WSL; Windows и macOS запланированы.
+You need [uv](https://docs.astral.sh/uv/) and git; uv installs Python 3.12
+itself. Linux/WSL is the primary platform; Windows and macOS are planned.
 
 ```bash
 git clone git@github.com:Lujker/acp-gateway.git
@@ -79,89 +75,91 @@ cd acp-gateway
 uv sync
 ```
 
-### 1. Подготовить агента
+### 1. Prepare the agent
 
-На машине агента запустите `goose serve` с TLS и секретом и откройте порт в
-LAN. Пошагово, включая правило Hyper-V firewall для WSL, —
+On the agent machine, run `goose serve` with TLS and a secret and open the
+port to the LAN. Step by step, including the Hyper-V firewall rule for WSL:
 [`docs/setup/work-goose.md`](docs/setup/work-goose.md).
 
 ```bash
-GOOSE_SERVER__SECRET_KEY='<длинный случайный секрет>' \
+GOOSE_SERVER__SECRET_KEY='<long random secret>' \
 goose serve --host 0.0.0.0 --port 3284 --tls
-# запомните строку GOOSED_CERT_FINGERPRINT=...
+# note the GOOSED_CERT_FINGERPRINT=... line
 ```
 
-### 2. Настроить Gateway
+### 2. Configure the gateway
 
 ```bash
-cp config.example.yaml config.yaml      # агенты, политика, логирование
-cp .env.example .env && chmod 600 .env  # только секреты
+cp config.example.yaml config.yaml      # agents, policy, logging
+cp .env.example .env && chmod 600 .env  # secrets only
 ```
 
-В `config.yaml` укажите адрес агента и отпечаток сертификата:
+Set the agent address and certificate fingerprint in `config.yaml`:
 
 ```yaml
 agents:
   - alias: work
     title: Work Goose
     kind: goose
-    url: https://<адрес-агента>:3284    # /acp допишется сам
+    url: https://<agent-address>:3284   # /acp is appended automatically
     secret_env: AGENT_WORK_SECRET
-    tls_fingerprint: "<GOOSED_CERT_FINGERPRINT>"   # пусто — trust on first use
+    tls_fingerprint: "<GOOSED_CERT_FINGERPRINT>"   # empty = trust on first use
     default_cwd: /home/<user>
 ```
 
-В `.env` — `AGENT_WORK_SECRET=<тот же секрет>`.
+In `.env`: `AGENT_WORK_SECRET=<the same secret>`.
 
-### 3. Проверить подключение
+### 3. Check the connection
 
 ```bash
-uv run acpgw config check                        # конфиг валиден, секреты на месте
-uv run python scripts/spike_acp.py init          # TLS + рукопожатие ACP
-uv run python scripts/spike_acp.py ping          # короткий запрос к агенту
+uv run acpgw config check                        # config is valid, secrets are present
+uv run python scripts/spike_acp.py init          # TLS + ACP handshake
+uv run python scripts/spike_acp.py ping          # a short request to the agent
 ```
 
-У spike-скрипта есть и другие сценарии: `modes`, `permission`, `cancel`, `load`,
-`all`. Трафик пишется в `spike-runs/` (каталог в `.gitignore`). Сценарии
-`permission --permission allow` и `cancel` выполняют на машине агента
-безвредные `echo` и `sleep`.
+The spike script has more scenarios: `modes`, `permission`, `cancel`, `load`,
+`all`. Traffic is recorded to `spike-runs/` (git-ignored). The scenarios
+`permission --permission allow` and `cancel` run harmless `echo` and `sleep`
+commands on the agent machine.
 
-## Конфигурация
+## Configuration
 
-| Источник | Что содержит |
+| Source | Contents |
 |---|---|
-| `config.yaml` (`--config`, `ACPGW_CONFIG`, `./`, каталог конфига платформы) | структура: `gateway`, `agents`, `policy`, `logging` |
-| переменные `ACPGW_<РАЗДЕЛ>__<ПОЛЕ>` | переопределения, например `ACPGW_LOGGING__LEVEL=DEBUG` |
-| `.env` (`--env-file`, `ACPGW_ENV_FILE`, `./`, каталог конфига) | **только секреты**, на них ссылаются по имени (`secret_env`) |
+| `config.yaml` (`--config`, `ACPGW_CONFIG`, `./`, platform config dir) | structure: `gateway`, `agents`, `policy`, `logging` |
+| `ACPGW_<SECTION>__<FIELD>` variables | overrides, e.g. `ACPGW_LOGGING__LEVEL=DEBUG` |
+| `.env` (`--env-file`, `ACPGW_ENV_FILE`, `./`, config dir) | **secrets only**, referenced by name (`secret_env`) |
 
-`uv run acpgw paths` покажет каталоги конфига, данных и логов на текущей
-платформе.
+`uv run acpgw paths` shows the config, data and log directories on the
+current platform.
 
-## Разработка
+## Development
 
 ```bash
-uv sync                                  # окружение и зависимости
-git config core.hooksPath .githooks      # pre-commit: проверка секретов + ruff
-uv run pytest                            # unit + интеграционные тесты
+uv sync                                  # environment and dependencies
+git config core.hooksPath .githooks      # pre-commit: secret scan + ruff
+uv run pytest                            # unit + integration tests
 uv run ruff check && uv run ruff format --check
 ```
 
-Интеграционные тесты поднимают фейковый goose (`tests/fakes/fake_goose.py`):
-TLS, секрет, режимы, подтверждения, отмену, загрузку сессий. Реальный трафик
-goose 1.53.0 записан в `tests/fixtures/acp/`.
+Integration tests start a fake goose (`tests/fakes/fake_goose.py`) covering
+TLS, the secret, modes, approvals, cancellation and session loading. Real
+goose 1.53.0 traffic is recorded in `tests/fixtures/acp/`; new recordings are
+cleaned with `scripts/sanitize_fixture.py` before committing.
 
-План разработки ведётся в [`road-map.md`](road-map.md) (статусы и очередь) и
-[`road-notes.md`](road-notes.md) (решения и находки).
+The development plan lives in [`road-map.md`](road-map.md) (statuses and
+queue) and [`road-notes.md`](road-notes.md) (decisions and findings); both are
+kept in Russian.
 
-## Структура
+## Layout
 
 ```text
-src/acp_gateway/   код Gateway: config, log, paths, cli
-scripts/           spike_acp.py (проверка агента), check_secrets.py (хук)
+src/acp_gateway/   gateway code: config, log, paths, cli
+scripts/           spike_acp.py (agent check), check_secrets.py (hook), sanitize_fixture.py
 tests/             unit, integration, fakes, fixtures/acp
 docs/              architecture.md, setup/, archive/
 ```
 
-## Лицензия
+## License
 
 [MIT](LICENSE)

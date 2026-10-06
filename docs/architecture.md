@@ -1,216 +1,228 @@
-# ACP Gateway — целевая архитектура
+# ACP Gateway — target architecture
 
-> Статус документа: действующая целевая архитектура. Обновляется, когда
-> решение меняется; хронология решений и находок — в
-> [`road-notes.md`](../road-notes.md), статусы и очередь работ — в
-> [`road-map.md`](../road-map.md).
-> Исходная версия плана (до разбора 2026-10-06) —
-> [`archive/2026-10-06-initial-plan.md`](archive/2026-10-06-initial-plan.md).
+> Document status: the current target architecture, updated whenever a
+> decision changes. The chronology of decisions and findings lives in
+> [`road-notes.md`](../road-notes.md); statuses and the work queue live in
+> [`road-map.md`](../road-map.md) (both kept in Russian).
+> The original plan as it stood before the 2026-10-06 review (historical, in
+> Russian): [`archive/2026-10-06-initial-plan.md`](archive/2026-10-06-initial-plan.md).
 
-## 1. Цель
+## 1. Goal
 
-**ACP Gateway** — локальная шина, которая принимает сообщения из внешних
-каналов (Hermes, Telegram, позже Snikket/XMPP, Email, Web UI и другие) и
-доставляет их ACP-совместимому агенту, а ответы, события и запросы
-подтверждений — обратно в каналы.
+**ACP Gateway** is a local bus that accepts messages from external channels
+(Hermes, Telegram, later Snikket/XMPP, e-mail, a web UI and others), delivers
+them to an ACP-compatible agent, and routes answers, events and approval
+requests back to the channels.
 
-Gateway не привязан к конкретному агенту: он говорит на ACP, а всё
-агент-специфичное (способ подключения, аутентификация, TLS, режимы) живёт в
-**профиле агента** (раздел 4.1). Первый и пока единственный целевой агент —
-**Work Goose** (`goose serve` на рабочем ноутбуке); дальше в документе он
-используется как основной пример.
+The gateway is not tied to a particular agent: it speaks ACP, and everything
+agent-specific (how to connect, authentication, TLS, modes) lives in an
+**agent profile** (section 4.1). The first and so far only target agent is
+**Work Goose** (`goose serve` on a work laptop); the rest of this document
+uses it as the main example.
 
-Gateway не второй AI-агент: он не принимает решений вместо агента, не хранит
-рабочих MCP-credentials и не имеет доступа к рабочей файловой системе.
+The gateway is not a second AI agent: it makes no decisions on the agent's
+behalf, stores no work MCP credentials and has no access to the work file
+system.
 
-## 2. Роли
+## 2. Roles
 
-- **Агент (Work Goose) — execution plane.** Единственный, кто видит рабочие
-  MCP, credentials, файлы и модель и выполняет команды.
-- **Gateway — transport/control plane.** Транспорт, маппинг сессий,
-  авторизация каналов, политика, подтверждения, аудит.
-- **Каналы — frontends.** Тонкие адаптеры поверх ядра Gateway.
+- **Agent (Work Goose) — execution plane.** The only component that sees work
+  MCP servers, credentials, files and the model, and that executes commands.
+- **Gateway — transport/control plane.** Transport, session mapping, channel
+  authorization, policy, approvals, audit.
+- **Channels — frontends.** Thin adapters on top of the gateway core.
 
-Goose Desktop продолжает подключаться к Work Goose напрямую; Gateway его не
-заменяет и от него не зависит.
+Goose Desktop keeps connecting to Work Goose directly; the gateway neither
+replaces it nor depends on it.
 
-## 3. Топологии развёртывания
+## 3. Deployment topologies
 
-Gateway поддерживает три топологии одной и той же программой; различаются
-только конфигурация и профиль безопасности.
+One program supports three topologies; only configuration and security
+profile differ.
 
-| Топология | Где Gateway | Где Work Goose | Транспорт | Статус |
+| Topology | Gateway runs on | Work Goose runs on | Transport | Status |
 |---|---|---|---|---|
-| **LAN** (основная на старте) | домашний хост, WSL | рабочий ноутбук, WSL | `wss://<work-host>:<port>/acp`, TLS + secret + pinning | целевая для MVP |
-| **Co-located** | та же машина, что Work Goose | WSL | `ws://127.0.0.1:3284/acp` (loopback), secret | поддерживается с MVP |
-| **Anywhere** | любой хост | рабочий ноутбук вне LAN | оверлей-сеть или туннель | исследование, см. `P4.1` |
+| **LAN** (initial default) | home host, WSL | work laptop, WSL | `wss://<work-host>:<port>/acp`, TLS + secret + pinning | MVP target |
+| **Co-located** | the same machine as Work Goose | WSL | `ws://127.0.0.1:3284/acp` (loopback), secret | supported from MVP |
+| **Anywhere** | any host | work laptop outside the LAN | overlay network or tunnel | research, see `P4.1` |
 
-Платформы Gateway: **WSL (Linux) — основной и рекомендуемый путь**, Windows
-native — поддерживаемый, macOS — в будущем. Отсюда требования к коду:
-чистый Python без OS-специфичных зависимостей в ядре, пути через
-`platformdirs`, сервис-обёртки (systemd / Task Scheduler / launchd) — отдельные
-файлы в `deploy/`.
+Gateway platforms: **WSL (Linux) is the primary and recommended path**,
+native Windows is supported, macOS is planned. Hence the code requirements:
+plain Python without OS-specific dependencies in the core, paths via
+`platformdirs`, service wrappers (systemd / Task Scheduler / launchd) as
+separate files under `deploy/`.
 
-### 3.1. Сеть в топологии LAN
+### 3.1. Networking in the LAN topology
 
-`goose serve` в WSL за NAT по умолчанию недоступен из LAN. Решается на
-рабочем ноутбуке одним из способов (выбор фиксируется в `P0.1`):
+`goose serve` inside WSL sits behind NAT and is not reachable from the LAN by
+default. On the work laptop this is solved in one of two ways (the choice is
+recorded under `P0.1`):
 
-1. **WSL mirrored networking** (`.wslconfig`: `networkingMode=mirrored`) +
-   входящее правило Hyper-V firewall / Windows Firewall на порт — основной
-   вариант;
-2. `netsh interface portproxy` с Windows на IP WSL + правило firewall —
-   запасной; IP WSL меняется при перезапуске, нужен скрипт при старте.
+1. **WSL mirrored networking** (`.wslconfig`: `networkingMode=mirrored`) plus
+   an inbound Hyper-V firewall / Windows Firewall rule for the port — the
+   primary option; the reference setup opens the port with a Hyper-V firewall
+   rule (see [`setup/work-goose.md`](setup/work-goose.md));
+2. `netsh interface portproxy` from Windows to the WSL IP plus a firewall
+   rule — a fallback; the WSL IP changes on restart, so it needs a startup
+   script.
 
-Плюс стабильный адрес рабочего ноутбука (DHCP-резервация или имя в LAN).
-Возможные ограничения корпоративных политик (GPO на firewall и `.wslconfig`)
-проверяются в `P0.1`.
+Plus a stable address for the work laptop (a DHCP reservation or a LAN host
+name). Corporate policy restrictions (GPO on the firewall and `.wslconfig`)
+are checked under `P0.1`.
 
-Исходящие соединения из домашнего WSL в LAN работают без настройки.
+Outbound connections from the home WSL into the LAN work without any setup.
 
-## 4. ACP: как на самом деле устроен протокол
+## 4. ACP: how the protocol actually behaves
 
-Подтверждено spike `P0.2` против реального goose 1.53.0 по LAN (2026-10-06);
-записанный трафик — `tests/fixtures/acp/goose-1.53.0/`, подробности —
-`road-notes.md`.
+Confirmed by the `P0.2` spike against a real goose 1.53.0 over the LAN
+(2026-10-06); recorded traffic is in `tests/fixtures/acp/goose-1.53.0/`,
+details in `road-notes.md`.
 
-Используем официальный Python SDK `agent-client-protocol` (`import acp`,
-0.12.x): схема, `ClientSideConnection`, `connect_to_agent`. Транспорт —
-**только WebSocket, свой** (`websockets` + SSL-контекст с пиннингом), потому что
-SDK-шный `create_websocket_stream` не принимает SSL-контекст. Streamable HTTP
-не используем: после `session/load` ответ не доходит до клиента (у реального
-goose — зависание, у эталонного сервера SDK — 404), т. к. в результате
-`session/load` нет `sessionId` для привязки session-scoped потока.
+We use the official Python SDK `agent-client-protocol` (`import acp`, 0.12.x):
+schema, `ClientSideConnection`, `connect_to_agent`. The transport is
+**WebSocket only, our own implementation** (`websockets` plus an SSL context
+with pinning), because the SDK's `create_websocket_stream` does not accept an
+SSL context. Streamable HTTP is not used: after `session/load` the response
+never reaches the client (a hang with real goose, a 404 with the SDK reference
+server), because the `session/load` result carries no `sessionId` to bind the
+session-scoped stream to.
 
-### 4.1. Профили агентов
+### 4.1. Agent profiles
 
-Агент описывается профилем в `config.yaml` (`agents:` — список; в MVP один
-профиль). Профиль задаёт алиас (`work`), бэкенд-транспорт, адрес, способ
-аутентификации, TLS, `default_cwd` и агент-специфичные настройки.
+An agent is described by a profile in `config.yaml` (`agents:` is a list; the
+MVP has one profile). A profile sets the alias (`work`), the backend
+transport, the address, authentication, TLS, `default_cwd` and agent-specific
+settings.
 
-| Бэкенд | Подключение | Когда | Статус |
+| Backend | Connection | When | Status |
 |---|---|---|---|
-| `remote` (WebSocket) | агент уже слушает сеть, как `goose serve` | Work Goose в LAN и co-located | MVP |
-| `stdio` | Gateway сам запускает агента как процесс (`goose acp`, Gemini CLI, адаптеры Claude Code / Codex, Kiro…) | только co-located: агент на той же машине | `P4.7`, CONDITIONAL |
+| `remote` (WebSocket) | the agent already listens on the network, like `goose serve` | Work Goose over LAN and co-located | MVP |
+| `stdio` | the gateway spawns the agent as a process (`goose acp`, Gemini CLI, Claude Code / Codex adapters, Kiro…) | co-located only: the agent on the same machine | `P4.7`, CONDITIONAL |
 
-Почти все ACP-агенты, кроме goose, говорят только по stdio, поэтому удалённо
-они доступны лишь через обёртку на их стороне — это вне объёма.
+Almost every ACP agent except goose speaks stdio only, so remotely they are
+reachable only through a wrapper on their side — out of scope.
 
-Специфика профиля `goose` (бэкенд `remote`):
+Specifics of the `goose` profile (`remote` backend):
 
-- `goose serve` отдаёт ACP на `/acp`; по умолчанию `127.0.0.1:3284`,
-  `--host/--port` меняют адрес. В Goose Desktop вводится базовый URL без пути,
-  поэтому Gateway дописывает `/acp`, если путь пустой; схема `https://`
-  трактуется как `wss://`;
-- аутентификация — заголовок `X-Secret-Key` (`GOOSE_SERVER__SECRET_KEY`);
-  вариант `?token=` для браузеров не используем: секрет попадает в URL и логи;
-- `--tls` поднимает self-signed сертификат и печатает
-  `GOOSED_CERT_FINGERPRINT=...` — это SHA-256 от DER сертификата (совпало с
-  вычисленным). Пиннинг: сертификат читается без учётных данных, сверяется с
-  пином, затем рукопожатие идёт в SSL-контексте, доверяющем только ему, и лишь
-  в нём отправляется `X-Secret-Key`; без пина в конфиге — TOFU с сохранением в
-  `<data_dir>/pins/<alias>.sha256`;
-- **новые сессии goose создаются в режиме `auto`** (подтверждений нет);
-  режимы сессии: `auto`, `approve`, `smart_approve`, `chat`. Gateway сразу после
-  `session/new` и `session/load` выставляет режим из профиля
-  (`session/set_mode`) — см. таблицу ниже;
-- `configOptions` сессии: `provider`, `mode`, `model`, `thinking_effort` —
-  потенциально управляемы из каналов (позже);
-- id сессий вида `YYYYMMDD_N`; сессии хранятся в goose и видны через
-  `session/list` (есть также `delete` и `close`);
-- базовая стоимость одного prompt ≈ 25 тыс. входных токенов (системный
-  промпт и инструменты goose) — учитывать при частых коротких запросах.
+- `goose serve` exposes ACP at `/acp`; the default is `127.0.0.1:3284`, and
+  `--host/--port` change it. Goose Desktop takes a base URL without a path, so
+  the gateway appends `/acp` when the path is empty and treats `https://` as
+  `wss://`;
+- authentication is the `X-Secret-Key` header (`GOOSE_SERVER__SECRET_KEY`);
+  the browser-oriented `?token=` variant is not used because it puts the
+  secret into URLs and logs;
+- `--tls` creates a self-signed certificate and prints
+  `GOOSED_CERT_FINGERPRINT=...` — the SHA-256 of the certificate DER (it
+  matched our own computation). Pinning: the certificate is read without
+  sending credentials and compared with the pin; the real handshake then runs
+  in an SSL context that trusts only that certificate, and only there is
+  `X-Secret-Key` sent. Without a pin in the config: trust on first use, saved
+  to `<data_dir>/pins/<alias>.sha256`;
+- **new goose sessions start in `auto` mode** (no approvals); session modes
+  are `auto`, `approve`, `smart_approve`, `chat`. Right after `session/new`
+  and `session/load` the gateway sets the mode from the profile
+  (`session/set_mode`) — see the table below;
+- session `configOptions`: `provider`, `mode`, `model`, `thinking_effort` —
+  potentially controllable from channels later;
+- session ids look like `YYYYMMDD_N`; sessions are stored by goose and listed
+  by `session/list` (`delete` and `close` exist too);
+- a single prompt costs ≈25k input tokens as a baseline (goose system prompt
+  and tools) — worth keeping in mind for frequent short requests.
 
-Семантика, которую должен учитывать дизайн:
+Semantics the design must respect:
 
-| Операция | Как в ACP | Следствие для Gateway |
+| Operation | How ACP does it | Consequence for the gateway |
 |---|---|---|
-| Ответ агента | `prompt()` возвращает только `stopReason`; текст и события приходят уведомлениями `session/update` (`agent_message_chunk`, `tool_call`, `tool_call_update`, `plan`, …) | streaming — базовый механизм с первого дня; «финальный ответ» = собранные чанки |
-| Подтверждение | агент шлёт `tool_call`, затем **запрос** `session/request_permission` с вариантами (`allow_always`, `allow_once`, `reject_once`, `reject_always`) и ждёт ответа; у goose `title` = `shell · <команда>`, `rawInput` = `{command, timeout_secs}` | Approval Manager держит открытый RPC как `Future`; кнопка в канале завершает его выбранным `optionId`. Показывать человеку `rawInput` — goose может переписать команду (у Work Goose — префикс `rtk`) |
-| Отмена | **уведомление** `session/cancel`; `prompt()` завершается со `stopReason=cancelled` (у goose — за 0,01–0,1 с на любой стадии: генерация, ожидание подтверждения, выполнение команды) | все висящие permission-запросы сессии закрываются исходом `cancelled` |
-| Восстановление | `session/load` (goose объявляет `loadSession`) переигрывает историю через `session/update` (`user_message_chunk`, `agent_message_chunk`) до ответа на `session/load`; контекст модели сохраняется | всё, что пришло до ответа на `session/load`, — повтор истории, в каналы не отправляется |
-| Новая сессия | `session/new` требует `cwd` и `mcp_servers` | `cwd` — путь на машине Work Goose (`default_cwd` в конфиге); `mcp_servers=[]` всегда |
-| Режим подтверждений | сессии goose стартуют в `auto` — permission-запросов не будет | профиль задаёт `session_mode` (по умолчанию `smart_approve` — решение владельца 2026-10-06; `approve` — по желанию), Gateway ставит его через `session/set_mode` после `session/new`/`session/load`; не удалось — сессия не используется |
-| Прочие события | `usage_update`, `session_info_update` (заголовок сессии, `activeRunId`), `available_commands_update` (slash-команды и skills goose), `current_mode_update` | в каналы не идут; `usage` — в аудит/статус |
+| Agent reply | `prompt()` returns only `stopReason`; text and events arrive as `session/update` notifications (`agent_message_chunk`, `tool_call`, `tool_call_update`, `plan`, …) | streaming is the base mechanism from day one; the "final answer" is the collected chunks |
+| Approval | the agent sends `tool_call`, then a **request** `session/request_permission` with options (`allow_always`, `allow_once`, `reject_once`, `reject_always`) and waits; goose sets `title` = `shell · <command>`, `rawInput` = `{command, timeout_secs}` | the Approval Manager holds the open RPC as a `Future`; a button in a channel completes it with the chosen `optionId`. Show the human `rawInput` — goose may rewrite the command (Work Goose adds an `rtk` prefix) |
+| Cancel | a `session/cancel` **notification**; `prompt()` ends with `stopReason=cancelled` (goose: within 0.01–0.1 s at any stage — generation, waiting for approval, running a command) | every pending permission request of the session is answered `cancelled` |
+| Restore | `session/load` (goose advertises `loadSession`) replays history as `session/update` (`user_message_chunk`, `agent_message_chunk`) before answering `session/load`; the model keeps its context | everything received before the `session/load` response is replayed history and is not forwarded to channels |
+| New session | `session/new` requires `cwd` and `mcp_servers` | `cwd` is a path on the Work Goose machine (`default_cwd` in the config); `mcp_servers=[]` always |
+| Approval mode | goose sessions start in `auto` — no permission requests at all | the profile sets `session_mode` (default `smart_approve` — owner decision 2026-10-06; `approve` on request); the gateway applies it with `session/set_mode` after `session/new`/`session/load`; if that fails, the session is not used |
+| Other events | `usage_update`, `session_info_update` (session title, `activeRunId`), `available_commands_update` (goose slash commands and skills), `current_mode_update` | not forwarded to channels; `usage` goes to audit/status |
 
-## 5. Компоненты
+## 5. Components
 
 ```text
-                 ┌──────────────────── Gateway daemon (один процесс) ───────────────────┐
+                 ┌────────────────── Gateway daemon (single process) ───────────────────┐
  Hermes ──MCP──▶ │ channels/mcp ─┐                                                      │
- Telegram ─────▶ │ channels/tg  ─┼─▶ core: sessions · turns · jobs · approvals · policy │──ACP──▶ агент (Work Goose)
+ Telegram ─────▶ │ channels/tg  ─┼─▶ core: sessions · turns · jobs · approvals · policy │──ACP──▶ agent (Work Goose)
  CLI / Web ─HTTP▶│ api (HTTP+SSE)┘          │                                           │
                  │                      storage (SQLite) · audit · event bus           │
                  └──────────────────────────────────────────────────────────────────────┘
 ```
 
-- **`agents/` — AgentClient.** Обёртка над `acp` SDK: бэкенды по профилю
-  (`remote`, позже `stdio`), auth, TLS pinning, нормализация `session/update` в
-  `AgentEvent`, нормализованные ошибки, reconnect с backoff (1, 2, 5, 10, 30 с,
-  с потолком), `load_session` с подавлением повтора истории.
-- **`core/` — GatewayCore.** In-process сервис, через который работают все
-  каналы:
-  - *sessions* — `(channel, conversation_key) → (agent, acp_session_id)`; у одного
-    ключа может быть несколько сессий и указатель на активную (`/new`,
+- **`agents/` — AgentClient.** A wrapper over the `acp` SDK: backends per
+  profile (`remote`, later `stdio`), auth, TLS pinning, normalization of
+  `session/update` into `AgentEvent`, normalized errors, reconnect with backoff
+  (1, 2, 5, 10, 30 s, capped), `load_session` with history replay suppressed.
+- **`core/` — GatewayCore.** An in-process service used by every channel:
+  - *sessions* — `(channel, conversation_key) → (agent, acp_session_id)`; one
+    key may own several sessions with a pointer to the active one (`/new`,
     `/sessions`);
-  - *turns* — одна активная задача на сессию; новое сообщение в занятую
-    сессию — отказ «занят, /stop» (очередь — позже, если понадобится);
-  - *jobs* — асинхронная модель для долгих задач: `ask → job_id`, затем
-    `result(job_id, wait)`; нужна для MCP-канала с его таймаутами;
-  - *approvals* — см. раздел 6;
-  - *policy* — раздел 7;
-  - *event bus* — подписка каналов на события сессии и на approvals.
-- **`channels/` — контракт канала** (`base.py`) и адаптеры. Новый канал
-  реализует контракт и не трогает ядро.
-  **Что видит канал** (решение владельца 2026-10-06): по умолчанию — только
-  запрос и итоговый ответ агента, короткий статус «в работе» и, если канал
-  подтверждающий, запросы подтверждения. Промежуточные `tool_call`, `plan` и
-  рассуждения агента в Telegram и Hermes не пересылаются; детальный поток
-  событий доступен через SSE локального API (CLI, Web UI).
-- **`api/` — локальный HTTP API + SSE.** Нужен CLI, Web UI и сторонним
-  клиентам. Telegram и MCP-канал работают с ядром напрямую, не через HTTP.
-- **`cli/` — `acpgw`.** Клиент HTTP API демона (`status`, `sessions`, `ask`,
-  `approvals`) плюс прямой режим для отладки без демона.
-- **`storage/`** — SQLite (`sqlite3`/`aiosqlite`, без ORM): `sessions`,
-  `jobs`, `approvals_audit`, миграции.
+  - *turns* — one active task per session; a new message to a busy session is
+    refused with "busy, /stop" (a queue may come later if needed);
+  - *jobs* — an asynchronous model for long tasks: `ask → job_id`, then
+    `result(job_id, wait)`; needed for the MCP channel and its timeouts;
+  - *approvals* — see section 6;
+  - *policy* — section 7;
+  - *event bus* — channels subscribe to session events and approvals.
+- **`channels/` — the channel contract** (`base.py`) and adapters. A new
+  channel implements the contract and does not touch the core.
+  **What a channel sees** (owner decision 2026-10-06): by default only the
+  request and the agent's final answer, a short "working" status and — if the
+  channel is an approver — approval requests. Intermediate `tool_call`, `plan`
+  and agent reasoning are not forwarded to Telegram or Hermes; the detailed
+  event stream is available through the local API's SSE (CLI, web UI).
+- **`api/` — local HTTP API + SSE.** Used by the CLI, the web UI and
+  third-party clients. Telegram and the MCP channel talk to the core directly,
+  not over HTTP.
+- **`cli/` — `acpgw`.** A client of the daemon's HTTP API (`status`,
+  `sessions`, `ask`, `approvals`) plus a direct mode for debugging without the
+  daemon.
+- **`storage/`** — SQLite (`sqlite3`/`aiosqlite`, no ORM): `sessions`, `jobs`,
+  `approvals_audit`, migrations.
 
-## 6. Подтверждения (approvals)
+## 6. Approvals
 
-- По умолчанию ничего не подтверждается автоматически; истёкший запрос →
+- Nothing is approved automatically by default; an expired request becomes
   `reject`/`cancelled`.
-- Запрос подтверждения уходит в **канал-подтверждатель** — канал с живым
-  человеком, — а не обязательно в канал, откуда пришёл prompt. Задача из
-  Hermes подтверждается человеком в CLI/Telegram, а не моделью Hermes.
-- MCP-канал **никогда** не экспортирует инструменты approve/deny: иначе
-  LLM-агент может подтвердить действие сам себе.
-- `allow_always` из удалённых каналов запрещён политикой; доступны
-  `allow_once` / `reject_once`.
-- Если подтверждающий канал не подключён — немедленный `reject` с понятным
-  сообщением в исходный канал.
-- Каждое решение пишется в `approvals_audit`: кто, когда, через какой канал,
-  инструмент, аргументы (с маскированием секретов), исход.
-- Ожидающие approvals при рестарте Gateway теряются — это осознанное
-  поведение: со стороны агента они будут отклонены вместе с соединением.
+- An approval request goes to an **approver channel** — a channel with a live
+  human — which is not necessarily the channel the prompt came from. A task
+  started from Hermes is approved by a human in the CLI/Telegram, not by the
+  Hermes model.
+- The MCP channel **never** exports approve/deny tools: otherwise an LLM agent
+  could approve its own actions.
+- `allow_always` from remote channels is forbidden by policy; `allow_once` /
+  `reject_once` are available.
+- If no approver channel is connected, the request is rejected immediately
+  with a clear message to the originating channel.
+- Every decision is written to `approvals_audit`: who, when, through which
+  channel, tool, arguments (secrets masked), outcome.
+- Pending approvals are lost when the gateway restarts — deliberately: the
+  agent rejects them together with the dropped connection.
 
-## 7. Безопасность
+## 7. Security
 
-Инварианты (проверяются тестами):
+Invariants (covered by tests):
 
-1. В `initialize` Gateway объявляет **все client capabilities выключенными**
-   (`fs.readTextFile`, `fs.writeTextFile`, `terminal`) — агент не может
-   попросить хост Gateway читать/писать файлы или выполнять команды.
-2. `session/new` всегда с `mcp_servers=[]`.
-3. Секреты (секрет агента, токены ботов и API) не попадают в логи —
-   фильтр-редактор в логгере + тест.
-4. API и MCP-endpoint слушают только `127.0.0.1` и требуют bearer-токен.
-5. Каналы работают по allowlist идентичностей (Telegram user_id, JID,
-   email); `allow all` не существует.
+1. In `initialize` the gateway advertises **all client capabilities as
+   disabled** (`fs.readTextFile`, `fs.writeTextFile`, `terminal`) — the agent
+   cannot ask the gateway host to read/write files or run commands.
+2. `session/new` is always sent with `mcp_servers=[]`.
+3. Secrets (agent secret, bot and API tokens) never reach the logs — a
+   redacting filter in the logger plus tests.
+4. The API and the MCP endpoint listen on `127.0.0.1` only and require a
+   bearer token.
+5. Channels work with an allowlist of identities (Telegram user_id, JID,
+   e-mail); there is no "allow all".
 
-Что Gateway хранит: адреса и секреты агентов, fingerprint, токены каналов
-(в `.env` с правами `600`; OS keyring — позже), session id, audit-метаданные.
-Не хранит: корпоративные MCP-credentials, API-ключи, cookies, SSH-ключи.
+What the gateway stores: agent addresses and secrets, fingerprints, channel
+tokens (in `.env` with mode `600`; an OS keyring later), session ids, audit
+metadata. What it does not store: corporate MCP credentials, API keys,
+cookies, SSH keys.
 
-Политика (`config.yaml`):
+Policy (`config.yaml`):
 
 ```yaml
 policy:
@@ -226,74 +238,77 @@ policy:
   approver_channels: [cli, telegram]
 ```
 
-Позже: allowlist инструментов, denylist shell-шаблонов, права по каналам.
+Later: a tool allowlist, a shell pattern denylist, per-channel permissions.
 
-Принятые риски и границы данных:
+Accepted risks and data boundaries:
 
-- **Telegram** не даёт end-to-end шифрования для ботов: всё, что агент
-  отвечает в Telegram, проходит через серверы Telegram. Владелец принял риск
-  без ограничений (2026-10-06).
-- **Hermes** обладает постоянной памятью: ответы агента, прошедшие через
-  Hermes, могут осесть в его памяти. Граница «home/work» соблюдается на уровне
-  сессий, на уровне памяти Hermes — нет; владелец принял риск (2026-10-06).
+- **Telegram** offers no end-to-end encryption for bots: everything the agent
+  answers in Telegram passes through Telegram's servers. The owner accepted
+  this risk without restrictions (2026-10-06).
+- **Hermes** has persistent memory: agent answers that pass through Hermes may
+  settle in its memory. The home/work boundary holds at the session level but
+  not at the level of Hermes memory; the owner accepted this risk
+  (2026-10-06).
 
-## 8. Конфигурация
+## 8. Configuration
 
-Реализовано в `P0.3` (`src/acp_gateway/config.py`); полный пример —
-[`config.example.yaml`](../config.example.yaml) и
+Implemented in `P0.3` (`src/acp_gateway/config.py`); full examples:
+[`config.example.yaml`](../config.example.yaml) and
 [`.env.example`](../.env.example).
 
-- **`config.yaml`** — вся структура: `gateway`, `agents`, `policy`, `logging`.
-  Поиск: `--config` / `ACPGW_CONFIG` → `./config.yaml` → каталог конфига
-  платформы.
-- **Переменные окружения** `ACPGW_<РАЗДЕЛ>__<ПОЛЕ>` переопределяют
-  `config.yaml` (`ACPGW_LOGGING__LEVEL=DEBUG`).
-- **`.env` — только секреты.** Профили и раздел `gateway` ссылаются на имя
-  переменной (`secret_env`, `api_token_env`, `mcp_token_env`); значение берётся
-  из окружения процесса, затем из `.env`. Поиск: `--env-file` /
-  `ACPGW_ENV_FILE` → `./.env` → каталог конфига. Настройки через `.env` не
-  переопределяются — это сделано намеренно, чтобы в `.env` не смешивались
-  секреты и параметры.
-- При загрузке все упомянутые секреты регистрируются в маскировщике логов.
+- **`config.yaml`** holds the whole structure: `gateway`, `agents`, `policy`,
+  `logging`. Lookup: `--config` / `ACPGW_CONFIG` → `./config.yaml` → the
+  platform config directory.
+- **Environment variables** `ACPGW_<SECTION>__<FIELD>` override `config.yaml`
+  (`ACPGW_LOGGING__LEVEL=DEBUG`).
+- **`.env` holds secrets only.** Profiles and the `gateway` section refer to a
+  variable by name (`secret_env`, `api_token_env`, `mcp_token_env`); the value
+  comes from the process environment first, then from `.env`. Lookup:
+  `--env-file` / `ACPGW_ENV_FILE` → `./.env` → the config directory. Settings
+  cannot be overridden through `.env` — on purpose, so secrets and parameters
+  never mix in one file.
+- On load, every referenced secret is registered with the log redactor.
 
-Проверки при загрузке (инварианты): `gateway.host` — только loopback;
-`ws://`/`http://` к агенту — только на loopback, иначе нужен явный
-`allow_insecure_transport: true`; `tls_fingerprint` — SHA-256 и только с
-`wss://`/`https://`; уникальные алиасы агентов; неизвестные ключи — ошибка.
+Load-time checks (invariants): `gateway.host` must be loopback; `ws://` /
+`http://` to an agent only on loopback, otherwise an explicit
+`allow_insecure_transport: true` is required; `tls_fingerprint` must be a
+SHA-256 and only with `wss://`/`https://`; agent aliases are unique; unknown
+keys are errors.
 
-Фрагмент профиля:
+Profile fragment:
 
 ```yaml
 agents:
-  - alias: work                  # префикс MCP-инструментов и имя в каналах
+  - alias: work                  # MCP tool prefix and the name shown in channels
     title: Work Goose
-    kind: goose                  # агент-специфичная логика профиля
+    kind: goose                  # agent-specific profile logic
     backend: remote
     url: wss://work-laptop.lan:3000/acp   # co-located: ws://127.0.0.1:3284/acp
     secret_env: AGENT_WORK_SECRET
-    tls_fingerprint: ""          # пусто → trust-on-first-use
+    tls_fingerprint: ""          # empty → trust on first use
     default_cwd: /home/<user>/work
 ```
 
-Данные (SQLite, логи) — в каталогах платформы (`platformdirs`, `acpgw paths`).
+Data (SQLite, logs) lives in the platform directories (`platformdirs`,
+`acpgw paths`).
 
-## 9. Ошибки
+## 9. Errors
 
-Нормализованные: `AgentUnavailable`, `AuthenticationFailed`,
+Normalized errors: `AgentUnavailable`, `AuthenticationFailed`,
 `TLSFingerprintMismatch`, `TransportDisconnected`, `SessionNotFound`,
 `SessionBusy`, `PromptFailed`, `ApprovalTimeout`, `PolicyDenied`,
-`RateLimited`. Каждый канал переводит их в свой понятный текст
-с названием агента из профиля («Work Goose сейчас недоступен»).
+`RateLimited`. Each channel turns them into its own readable text using the
+agent name from the profile ("Work Goose is unavailable right now").
 
-## 10. Стек
+## 10. Stack
 
-Python 3.12+, `uv`, `agent-client-protocol` (`acp`), FastAPI + uvicorn,
-MCP Python SDK (FastMCP, Streamable HTTP) для MCP-канала, aiogram 3 для
-Telegram (HTML parse mode), `sqlite3`/`aiosqlite`, `pydantic`/
-`pydantic-settings`, `structlog`, `platformdirs`, `pytest` +
-`pytest-asyncio`, `ruff`.
+Python 3.12+, `uv`, `agent-client-protocol` (`acp`), FastAPI + uvicorn, the
+MCP Python SDK (FastMCP, Streamable HTTP) for the MCP channel, aiogram 3 for
+Telegram (HTML parse mode), `sqlite3`/`aiosqlite`, `pydantic` /
+`pydantic-settings`, `structlog`, `platformdirs`, `pytest` + `pytest-asyncio`,
+`ruff`.
 
-## 11. Структура репозитория
+## 11. Repository layout
 
 ```text
 acp-gateway/
@@ -304,15 +319,16 @@ acp-gateway/
 │   ├── agents/     client.py · profiles.py · transport.py · tls.py · events.py · errors.py
 │   ├── core/       sessions.py · turns.py · jobs.py · approvals.py · policy.py · bus.py
 │   ├── storage/    db.py · migrations/
-│   ├── channels/   base.py · mcp/ · telegram/ · (xmpp/ · email/ позже)
+│   ├── channels/   base.py · mcp/ · telegram/ · (xmpp/ · email/ later)
 │   ├── api/        app.py · routes_*.py · schemas.py
 │   └── cli/        main.py
-├── tests/          unit/ · integration/ · e2e/ · fixtures/acp/
-├── scripts/        check_secrets.py · spike_acp.py
+├── tests/          unit/ · integration/ · e2e/ · fakes/ · fixtures/acp/
+├── scripts/        check_secrets.py · spike_acp.py · sanitize_fixture.py
 ├── .githooks/      pre-commit
 ├── deploy/         systemd/ · windows/ · macos/
 └── docs/           architecture.md · setup/ · archive/
 ```
 
-Тестовый стенд: mock ACP-агент на том же SDK (агентская сторона), который
-воспроизводит записанный в `P0.2` реальный трафик Work Goose.
+Test bench: a mock ACP agent built on the same SDK (agent side) that replays
+real Work Goose traffic recorded in `P0.2`; recordings are cleaned with
+`scripts/sanitize_fixture.py` before they are committed.
