@@ -18,8 +18,12 @@ not touch the core:
   is for detailed clients such as the local API's SSE stream.
 - ``str()`` of an ``AgentError`` or a ``GatewayError`` is safe to show to a
   user; anything else is an internal error and is shown generically.
-- Approvals (which channels may approve, how a request reaches a human) are
-  added to the contract by ``P1.4``.
+- Human channels set ``can_approve=True`` and report live human availability
+  through ``connected``. They subscribe with ``for_approver(name)`` or list
+  ``core.pending_approvals(name)`` and call ``core.resolve_approval`` with an
+  authenticated human identity. The adapter must authenticate that identity;
+  the core checks channel eligibility, request ownership, option and expiry.
+  MCP/LLM channels never expose approval operations.
 """
 
 from __future__ import annotations
@@ -33,6 +37,7 @@ if TYPE_CHECKING:
 
 class Channel(ABC):
     name: str
+    can_approve: bool = False
 
     @abstractmethod
     async def start(self, core: GatewayCore) -> None:

@@ -45,7 +45,7 @@ and the work queue are in [`road-map.md`](road-map.md) (in Russian).
 | ACP over WebSocket with TLS pinning, verified on goose 1.53.0 | ✅ |
 | Agent client (`acp_gateway.agents`) and recorded-traffic mock agent | ✅ `P1.1`, `P1.2` |
 | Core: sessions in SQLite, jobs, event bus, channel contract | ✅ `P1.3` |
-| Approvals and policy | 🔜 `P1.4` |
+| Approvals: human routing, deadlines, audit; core policy limits | ✅ `P1.4` |
 | Daemon, local API, approvals from the CLI | 🔜 `P1.5` |
 | Hermes (MCP), then Telegram | 🔜 `P2` |
 | Snikket/XMPP, e-mail, web UI | 🗓 `P4` |
@@ -157,7 +157,7 @@ kept in Russian.
 ## Layout
 
 ```text
-src/acp_gateway/   gateway code: agents (ACP client), config, log, paths, cli
+src/acp_gateway/   ACP client, core (jobs, approvals, policy), SQLite storage, config, cli
 scripts/           spike_acp.py (agent check), check_secrets.py (hook), sanitize_fixture.py
 tests/             unit, integration, fakes, fixtures/acp
 docs/              architecture.md, setup/, archive/

@@ -16,6 +16,7 @@ from acp_gateway.agents.events import MessageChunk, ToolCallStarted, TurnFinishe
 from acp_gateway.channels import Channel
 from acp_gateway.config import AgentProfile
 from acp_gateway.core import (
+    ApprovalRequested,
     GatewayCore,
     JobFinished,
     JobNotFound,
@@ -24,6 +25,7 @@ from acp_gateway.core import (
     SessionCreated,
     UnknownAgent,
     UnknownSession,
+    for_approver,
     for_conversation,
 )
 from acp_gateway.storage import Conversation, JobStatus, Store
@@ -61,7 +63,39 @@ def make_core(url: str, tmp_path, *, handler=reject_all, **core_options) -> Gate
         reconnect_delays=(0.05, 0.1),
         open_timeout=5,
     )
-    return GatewayCore(Store.open(tmp_path / "gateway.db"), {"work": client}, **core_options)
+    core = GatewayCore(Store.open(tmp_path / "gateway.db"), {"work": client}, **core_options)
+    if handler is not reject_all:
+        core.add_channel(CallbackApprover(core, handler))
+    return core
+
+
+class CallbackApprover(Channel):
+    """A simulated human approving through the same interface as CLI/Telegram."""
+
+    name = "cli"
+    can_approve = True
+
+    def __init__(self, core, handler):
+        self.decision_sent = asyncio.Event()
+        self.events = core.bus.subscribe(for_approver(self.name))
+        self.task = asyncio.create_task(self._serve(core, handler))
+
+    async def start(self, core):
+        pass
+
+    async def stop(self):
+        self.events.close()
+        self.task.cancel()
+        await asyncio.gather(self.task, return_exceptions=True)
+
+    async def _serve(self, core, handler):
+        async for event in self.events:
+            if isinstance(event, ApprovalRequested):
+                option_id = await handler(event.approval.request)
+                core.resolve_approval(
+                    event.approval.id, option_id, channel=self.name, actor="test-human"
+                )
+                self.decision_sent.set()
 
 
 async def wait_for_tool_call(core: GatewayCore, conversation: Conversation, job_id: str) -> None:
@@ -284,6 +318,7 @@ async def test_cancel_when_the_agent_does_not_confirm(server, tmp_path):
     try:
         job = await core.submit(CLI, "run exactly: sleep 30 .")
         await wait_for_tool_call(core, CLI, job.id)
+        await asyncio.wait_for(core.channels["cli"].decision_sent.wait(), 5)
         cancelled = await core.cancel_job(job.id)
         assert (await core.ask(CLI, "say pong", wait=10)).answer == "pong"
     finally:

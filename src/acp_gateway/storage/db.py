@@ -1,4 +1,4 @@
-"""SQLite storage: sessions, conversations and jobs.
+"""SQLite storage: sessions, conversations, jobs and approval audit.
 
 The standard ``sqlite3`` module is used synchronously from the event loop:
 every statement touches a handful of rows of a local file, so a worker thread
@@ -17,7 +17,15 @@ from importlib import resources
 from pathlib import Path
 from typing import Any
 
-from acp_gateway.storage.records import Conversation, Job, JobStatus, SessionRecord, utcnow
+from acp_gateway.log import redact_text, redact_value
+from acp_gateway.storage.records import (
+    ApprovalAudit,
+    Conversation,
+    Job,
+    JobStatus,
+    SessionRecord,
+    utcnow,
+)
 
 DB_FILENAME = "gateway.db"
 _MIGRATION_NAME = re.compile(r"^(\d{4})_[a-z0-9_]+\.sql$")
@@ -229,6 +237,62 @@ class Store:
             (JobStatus.RUNNING.value, _ts(finished_before)),
         )
         return cursor.rowcount
+
+    # --------------------------------------------------------------- approvals
+
+    def record_approval(self, audit: ApprovalAudit) -> None:
+        """Persist a decision before replying to the agent; never persist raw secrets."""
+        self._conn.execute(
+            "INSERT INTO approvals_audit (id, job_id, channel, conversation_key, agent,"
+            " acp_session_id, tool_call_id, title, kind, raw_input, requested_at, resolved_at,"
+            " outcome, option_id, decided_channel, actor, reason) VALUES "
+            "(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (
+                audit.id,
+                audit.job_id,
+                *self._key(audit.conversation),
+                audit.acp_session_id,
+                audit.tool_call_id,
+                redact_text(audit.title) if audit.title else None,
+                audit.kind,
+                json.dumps(redact_value(audit.raw_input)),
+                _ts(audit.requested_at),
+                _ts(audit.resolved_at),
+                audit.outcome,
+                audit.option_id,
+                audit.decided_channel,
+                redact_text(audit.actor) if audit.actor else None,
+                redact_text(audit.reason) if audit.reason else None,
+            ),
+        )
+
+    def approval_audit(self, job_id: str | None = None) -> list[ApprovalAudit]:
+        query = "SELECT * FROM approvals_audit"
+        params = ()
+        if job_id is not None:
+            query += " WHERE job_id = ?"
+            params = (job_id,)
+        rows = self._conn.execute(query + " ORDER BY resolved_at, rowid", params).fetchall()
+        return [
+            ApprovalAudit(
+                id=r["id"],
+                job_id=r["job_id"],
+                conversation=Conversation(r["channel"], r["conversation_key"], r["agent"]),
+                acp_session_id=r["acp_session_id"],
+                tool_call_id=r["tool_call_id"],
+                title=r["title"],
+                kind=r["kind"],
+                raw_input=json.loads(r["raw_input"]),
+                requested_at=datetime.fromisoformat(r["requested_at"]),
+                resolved_at=datetime.fromisoformat(r["resolved_at"]),
+                outcome=r["outcome"],
+                option_id=r["option_id"],
+                decided_channel=r["decided_channel"],
+                actor=r["actor"],
+                reason=r["reason"],
+            )
+            for r in rows
+        ]
 
     # ----------------------------------------------------------------- helpers
 

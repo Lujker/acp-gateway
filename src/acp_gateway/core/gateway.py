@@ -9,7 +9,7 @@
 - Agent events of a running job, job start and job end are published on
   :attr:`GatewayCore.bus`.
 
-Not here yet: approval routing and policy (``P1.4``).
+Approval routing, audit and policy apply to every channel through the core.
 """
 
 from __future__ import annotations
@@ -21,12 +21,23 @@ from collections import defaultdict
 from collections.abc import Mapping
 from dataclasses import replace
 from datetime import timedelta
+from functools import partial
 
 from acp_gateway.agents import AgentClient, AgentError, SessionBusy
+from acp_gateway.agents.client import PermissionRequest
 from acp_gateway.agents.events import MessageChunk, SessionInfoUpdated, TurnFinished
 from acp_gateway.channels.base import Channel
+from acp_gateway.config import PolicySettings
+from acp_gateway.core.approvals import Approval, ApprovalManager
 from acp_gateway.core.bus import EventBus, JobFinished, JobProgress, JobStarted, SessionCreated
-from acp_gateway.core.errors import JobNotFound, UnknownAgent, UnknownSession
+from acp_gateway.core.errors import (
+    GatewayError,
+    JobNotFound,
+    PolicyDenied,
+    UnknownAgent,
+    UnknownSession,
+)
+from acp_gateway.core.policy import Policy
 from acp_gateway.log import get_logger
 from acp_gateway.storage import Conversation, Job, JobStatus, SessionRecord, Store
 from acp_gateway.storage.records import utcnow
@@ -43,6 +54,8 @@ class _RunningJob:
     def __init__(self, job: Job) -> None:
         self.job = job
         self.parts: list[str] = []
+        self.answer_chars = 0
+        self.notice: str | None = None
         self.done = asyncio.Event()
         self.final: Job | None = None
         self.cancel_requested = False
@@ -63,6 +76,7 @@ class GatewayCore:
         bus: EventBus | None = None,
         job_retention: timedelta = DEFAULT_JOB_RETENTION,
         cancel_grace: float = DEFAULT_CANCEL_GRACE,
+        policy: PolicySettings | None = None,
     ) -> None:
         self.store = store
         self.bus = bus or EventBus()
@@ -74,6 +88,11 @@ class GatewayCore:
         self._busy: dict[int, str] = {}  # session row id -> running job id
         self._locks: defaultdict[Conversation, asyncio.Lock] = defaultdict(asyncio.Lock)
         self._log = get_logger(__name__)
+        self._closed = False
+        self.policy = Policy(policy)
+        self.approvals = ApprovalManager(store, self.bus, self.policy, lambda: self._channels)
+        for alias, client in self._agents.items():
+            client.set_permission_handler(partial(self._on_permission, alias))
 
     # --------------------------------------------------------------- lifecycle
 
@@ -98,6 +117,8 @@ class GatewayCore:
 
     async def start(self) -> None:
         """Settle jobs left by a previous process, prune old jobs, start the channels."""
+        if self._closed:
+            raise GatewayError("the gateway has stopped")
         interrupted = self.store.interrupt_running_jobs()
         pruned = self.store.prune_jobs(utcnow() - self._job_retention)
         self._log.info("gateway core started", interrupted_jobs=interrupted, pruned_jobs=pruned)
@@ -106,6 +127,10 @@ class GatewayCore:
 
     async def close(self) -> None:
         """Stop channels, interrupt running jobs, close agent connections and the store."""
+        if self._closed:
+            return
+        self._closed = True
+        self.approvals.close()
         for channel in reversed(self._channels.values()):
             try:
                 await channel.stop()
@@ -160,8 +185,13 @@ class GatewayCore:
     async def _create_session(
         self, conversation: Conversation, cwd: str | None = None
     ) -> SessionRecord:
+        if self._closed:
+            raise GatewayError("the gateway has stopped")
         client = self.agent(conversation.agent)
+        self.policy.check_new_session()
         acp_session_id = await client.new_session(cwd)
+        if self._closed:
+            raise GatewayError("the gateway has stopped")
         record = self.store.add_session(
             conversation, acp_session_id, cwd or client.profile.default_cwd
         )
@@ -177,8 +207,13 @@ class GatewayCore:
         Returns the running job at once; raises ``SessionBusy`` if the session
         is already running a job, and agent errors if a session cannot be created.
         """
+        if self._closed:
+            raise GatewayError("the gateway has stopped")
         client = self.agent(conversation.agent)
+        self.policy.check_prompt(text)
         async with self._locks[conversation]:
+            if self._closed:
+                raise GatewayError("the gateway has stopped")
             session = self.store.active_session(conversation)
             if session is None:
                 session = await self._create_session(conversation)
@@ -232,10 +267,12 @@ class GatewayCore:
 
     async def cancel_job(self, job_id: str) -> Job:
         """Cancel a running job and return its final state; a finished job is returned as is."""
+        self.policy.check_cancel()
         run = self._running.get(job_id)
         if run is None:
             return self.job(job_id)
         run.cancel_requested = True
+        self.approvals.cancel_job(job_id)
         await self.agent(run.job.conversation.agent).cancel(run.job.acp_session_id)
         with contextlib.suppress(TimeoutError):
             await asyncio.wait_for(asyncio.shield(run.done.wait()), self._cancel_grace)
@@ -248,6 +285,7 @@ class GatewayCore:
 
     async def cancel(self, conversation: Conversation) -> list[Job]:
         """Cancel every running job of the conversation (``/stop``)."""
+        self.policy.check_cancel()
         job_ids = [job.id for job in self.running_jobs(conversation)]
         return [await self.cancel_job(job_id) for job_id in job_ids]
 
@@ -256,25 +294,43 @@ class GatewayCore:
         finished: TurnFinished | None = None
         status, error = JobStatus.FAILED, None
         try:
+            if run.cancel_requested:
+                status = JobStatus.CANCELLED
+                return
             # aclosing: an interrupted job must close the stream, which cancels the turn.
             async with contextlib.aclosing(
                 client.prompt(job.acp_session_id, text, cwd=cwd)
             ) as events:
                 async for event in events:
                     if isinstance(event, MessageChunk):
+                        remaining = self.policy.settings.max_response_length - run.answer_chars
+                        if len(event.text) > remaining:
+                            if remaining:
+                                chunk = replace(event, text=event.text[:remaining])
+                                run.parts.append(chunk.text)
+                                run.answer_chars += remaining
+                                self.bus.publish(JobProgress(job.conversation, job.id, chunk))
+                            raise PolicyDenied(
+                                "response exceeds "
+                                f"{self.policy.settings.max_response_length} characters"
+                            )
                         run.parts.append(event.text)
+                        run.answer_chars += len(event.text)
                     elif isinstance(event, SessionInfoUpdated) and event.title:
                         self.store.set_session_title(job.session_id, event.title)
                     elif isinstance(event, TurnFinished):
                         finished = event
                     self.bus.publish(JobProgress(job.conversation, job.id, event))
-            if finished is not None and finished.stop_reason == "cancelled":
+            if run.cancel_requested or (
+                finished is not None and finished.stop_reason == "cancelled"
+            ):
                 status = JobStatus.CANCELLED
             elif finished is not None:
                 status = JobStatus.COMPLETED
+                error = run.notice
             else:
                 error = "the turn ended without a result"
-        except AgentError as exc:
+        except (AgentError, GatewayError) as exc:
             error = str(exc)
         except asyncio.CancelledError:
             if run.cancel_requested:
@@ -288,6 +344,7 @@ class GatewayCore:
             self._log.exception("job failed with an internal error", job_id=job.id)
             error = "internal gateway error"
         finally:
+            self.approvals.cancel_job(job.id)
             outcome = {
                 "answer": "".join(run.parts),
                 "stop_reason": finished.stop_reason if finished else None,
@@ -312,3 +369,28 @@ class GatewayCore:
                 stop_reason=final.stop_reason,
                 error=error,
             )
+
+    async def _on_permission(self, alias: str, request: PermissionRequest) -> str | None:
+        record = next(
+            (
+                run
+                for run in self._running.values()
+                if run.job.conversation.agent == alias
+                and run.job.acp_session_id == request.session_id
+            ),
+            None,
+        )
+        if record is None or record.cancel_requested:
+            return None
+        result = await self.approvals.request(record.job.conversation, record.job.id, request)
+        if result.reason:
+            record.notice = result.reason
+        return result.option_id
+
+    def pending_approvals(self, channel: str) -> list[Approval]:
+        return self.approvals.pending(channel)
+
+    def resolve_approval(
+        self, approval_id: str, option_id: str, *, channel: str, actor: str
+    ) -> None:
+        self.approvals.resolve(approval_id, option_id, channel=channel, actor=actor)

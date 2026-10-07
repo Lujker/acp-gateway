@@ -10,10 +10,14 @@ from __future__ import annotations
 import asyncio
 from collections.abc import AsyncIterator, Callable
 from dataclasses import dataclass
+from typing import TYPE_CHECKING
 
 from acp_gateway.agents.events import AgentEvent
 from acp_gateway.log import get_logger
 from acp_gateway.storage.records import Conversation, Job, SessionRecord
+
+if TYPE_CHECKING:
+    from acp_gateway.core.approvals import Approval
 
 DEFAULT_QUEUE_SIZE = 1000
 
@@ -48,6 +52,24 @@ class JobFinished(GatewayEvent):
     job: Job
 
 
+@dataclass(frozen=True)
+class ApprovalRequested(GatewayEvent):
+    approval: Approval
+    approver_channel: str
+
+
+@dataclass(frozen=True)
+class ApprovalResolved(GatewayEvent):
+    approval_id: str
+    job_id: str
+    outcome: str
+    option_id: str | None
+    channel: str | None
+    actor: str | None
+    reason: str | None
+    approver_channels: tuple[str, ...]
+
+
 EventFilter = Callable[[GatewayEvent], bool]
 
 
@@ -57,6 +79,17 @@ def for_channel(channel: str) -> EventFilter:
 
 def for_conversation(conversation: Conversation) -> EventFilter:
     return lambda event: event.conversation == conversation
+
+
+def for_approver(channel: str) -> EventFilter:
+    def accept(event: GatewayEvent) -> bool:
+        if isinstance(event, ApprovalRequested):
+            return channel == event.approver_channel
+        if isinstance(event, ApprovalResolved):
+            return channel in event.approver_channels
+        return False
+
+    return accept
 
 
 class Subscription:

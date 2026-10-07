@@ -80,3 +80,22 @@ class Job:
     error: str | None = None
     usage: dict[str, Any] | None = field(default=None, compare=False)
     finished_at: datetime | None = None
+
+
+@dataclass(frozen=True)
+class ApprovalAudit:
+    id: str
+    job_id: str | None
+    conversation: Conversation
+    acp_session_id: str
+    tool_call_id: str
+    title: str | None
+    kind: str | None
+    raw_input: Any
+    requested_at: datetime
+    resolved_at: datetime
+    outcome: str
+    option_id: str | None = None
+    decided_channel: str | None = None
+    actor: str | None = None
+    reason: str | None = None

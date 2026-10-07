@@ -3,6 +3,7 @@
 import os
 import sqlite3
 from datetime import timedelta
+from importlib import resources
 
 import pytest
 
@@ -28,6 +29,27 @@ def test_migrations_are_applied_once(tmp_path):
     second = Store.open(path)  # re-running migrate() on a current schema is a no-op
     assert second.schema_version == version >= 1
     second.close()
+
+
+def test_upgrade_from_initial_schema_preserves_existing_sessions_and_jobs(tmp_path):
+    path = tmp_path / "gateway.db"
+    conn = sqlite3.connect(path, isolation_level=None)
+    script = resources.files("acp_gateway.storage.migrations").joinpath("0001_initial.sql")
+    conn.executescript(script.read_text() + "\nPRAGMA user_version = 1;")
+    old = Store(conn)
+    # Use the existing SQL schema; only read helpers need Row objects.
+    conn.row_factory = sqlite3.Row
+    session = old.add_session(CLI, "old-session", "/work")
+    old.add_job("old-job", session.id)
+    old.close()
+    upgraded = Store.open(path)
+    try:
+        assert upgraded.schema_version == 2
+        assert upgraded.active_session(CLI).acp_session_id == "old-session"
+        assert upgraded.job("old-job").status is JobStatus.RUNNING
+        assert upgraded.approval_audit() == []
+    finally:
+        upgraded.close()
 
 
 @pytest.mark.skipif(os.name != "posix", reason="POSIX permissions")

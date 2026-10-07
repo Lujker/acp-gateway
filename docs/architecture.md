@@ -191,8 +191,8 @@ Semantics the design must respect:
     the conversation; if the agent does not end the turn within a grace
     period, the gateway stops waiting for it. The answer is stored, the prompt
     is not; finished jobs are pruned after 7 days;
-  - *approvals* — see section 6 (`P1.4`);
-  - *policy* — section 7 (`P1.4`);
+  - *approvals* — implemented in `P1.4`; see section 6;
+  - *policy* — implemented in `P1.4`; see section 7;
   - *event bus* — `SessionCreated`, `JobStarted`, `JobProgress` (raw agent
     events), `JobFinished`; subscribers filter by channel or conversation and
     have bounded queues (a slow subscriber loses events instead of stalling a
@@ -222,6 +222,33 @@ Semantics the design must respect:
 
 ## 6. Approvals
 
+Implemented in `core/approvals.py`. `GatewayCore` installs its permission
+handler through `AgentClient.set_permission_handler()` when it takes ownership
+of the clients. A handler cannot be replaced during a running turn.
+
+An approval belongs to a job, an agent and its ACP session. It stays in memory
+as a Future until a human decision, timeout, cancellation or shutdown settles
+it. The first decision wins. Timeout and missing approvers choose `reject_once`
+when offered by the agent, otherwise `cancelled`. Automatic rejection reasons
+are included in the resulting job's `error` field alongside the agent's answer.
+
+Human adapters opt in with `Channel.can_approve=True`, appear in the policy's
+`approver_channels`, and report an actually reachable human via `connected`.
+They receive events through `for_approver(name)` and can recover the pending
+list with `core.pending_approvals(name)`. Each recipient receives only its
+permitted options. `core.resolve_approval(id, option_id, channel=..., actor=...)`
+checks eligibility, routing, the option and the monotonic deadline. Adapters
+authenticate the human and supply that identity; the core is an in-process
+service, not an authentication endpoint. MCP/Hermes cannot be approvers even
+if accidentally allowlisted. The real CLI channel is added in `P1.5`.
+
+Settled decisions are written to SQLite `approvals_audit` before an allow
+response can reach the agent. Audit failures fail closed. The audit includes
+the originating conversation, job, tool and arguments, timestamps, outcome,
+deciding channel and human identity. Registered secrets and sensitive keys are
+masked in stored titles and arguments. Decisions survive restart and job
+retention cleanup; pending requests are never restored.
+
 - Nothing is approved automatically by default; an expired request becomes
   `reject`/`cancelled`.
 - An approval request goes to an **approver channel** — a channel with a live
@@ -231,7 +258,8 @@ Semantics the design must respect:
 - The MCP channel **never** exports approve/deny tools: otherwise an LLM agent
   could approve its own actions.
 - `allow_always` from remote channels is forbidden by policy; `allow_once` /
-  `reject_once` are available.
+  `reject_once` are available. Local CLI may use `allow_always` only when
+  `allow_always_approval` is explicitly enabled; the default forbids it.
 - If no approver channel is connected, the request is rejected immediately
   with a clear message to the originating channel.
 - Every decision is written to `approvals_audit`: who, when, through which
@@ -274,6 +302,15 @@ policy:
   approval_timeout_seconds: 300
   approver_channels: [cli, telegram]
 ```
+
+The core receives `PolicySettings` via its `policy=` constructor argument.
+Prompt length is checked before session creation. `allow_new_sessions` applies
+to explicit `/new` and first-message creation; existing sessions remain usable.
+`allow_cancel` governs user cancellation, while shutdown and safety cleanup
+always cancel work. Response length is enforced across streamed chunks: the
+stored and published answer is capped, the turn is closed and the job fails
+with a policy error if it exceeds the limit. Upload/download checks are ready
+for future file adapters; file transfer itself remains out of scope.
 
 Later: a tool allowlist, a shell pattern denylist, per-channel permissions.
 

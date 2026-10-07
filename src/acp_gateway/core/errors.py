@@ -17,3 +17,11 @@ class UnknownSession(GatewayError):
 
 class JobNotFound(GatewayError):
     """No job with this id (never existed or already pruned)."""
+
+
+class PolicyDenied(GatewayError):
+    """An operation is disabled or exceeds a configured limit."""
+
+
+class ApprovalNotFound(GatewayError):
+    """An approval does not exist or has already been settled."""

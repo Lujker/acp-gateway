@@ -317,6 +317,12 @@ class AgentClient:
 
     # ---------------------------------------------------------------- sessions
 
+    def set_permission_handler(self, handler: PermissionHandler) -> None:
+        """Wire the owner's handler before starting any turns or permission requests."""
+        if self._turns or self._loading or any(self._permission_tasks.values()):
+            raise SessionBusy("cannot replace the permission handler while the agent is busy")
+        self._permission_handler = handler
+
     async def new_session(self, cwd: str | None = None) -> str:
         await self.ensure_connected()
         cwd = cwd or self.profile.default_cwd

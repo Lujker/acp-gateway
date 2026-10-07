@@ -83,6 +83,11 @@ def _redact_item(key: Any, value: Any) -> Any:
     return _redact_value(value)
 
 
+def redact_value(value: Any) -> Any:
+    """Return a redacted copy of structured data, including nested sensitive keys."""
+    return _redact_value(value)
+
+
 _STRUCTLOG_KEYS = frozenset({"_record", "_from_structlog"})
 
 
