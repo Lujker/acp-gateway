@@ -208,13 +208,18 @@ Semantics the design must respect:
   event stream is available through the local API's SSE (CLI, web UI).
 - **`api/` — local HTTP API + SSE.** Used by the CLI, the web UI and
   third-party clients. Telegram and the MCP channel talk to the core directly,
-  not over HTTP.
+  not over HTTP. Implemented in `P1.5`; bearer authentication, loopback Host
+  checks and bounded request bodies apply before route handling. Job streams
+  recover dropped events using authoritative snapshots. The owner token is
+  distinct from MCP and agent credentials. See [the API contract](setup/gateway.md).
 - **`cli/` — `acpgw`.** A client of the daemon's HTTP API (`status`,
-  `sessions`, `ask`, `approvals`) plus a direct mode for debugging without the
-  daemon.
+  `sessions`, `new`, `switch`, `ask`, `result`, `stop`, `approvals`). `serve`
+  composes the core from config and runs the API; a file lock protects each
+  data directory from a second daemon. Direct agent debugging remains in
+  `scripts/spike_acp.py`.
 - **`storage/`** — SQLite through the standard `sqlite3` module, used
   synchronously from the event loop (each statement touches a few rows of a
-  local file; no ORM, no `aiosqlite`): `sessions`, `conversations`, `jobs`, later
+  local file; no ORM, no `aiosqlite`): `sessions`, `conversations`, `jobs`,
   `approvals_audit`; numbered SQL migrations tracked by `PRAGMA user_version`.
   The database is `<data_dir>/gateway.db`, readable only by its owner. On POSIX,
   opening an existing database also enforces mode `600` on it and its existing
@@ -240,7 +245,11 @@ permitted options. `core.resolve_approval(id, option_id, channel=..., actor=...)
 checks eligibility, routing, the option and the monotonic deadline. Adapters
 authenticate the human and supply that identity; the core is an in-process
 service, not an authentication endpoint. MCP/Hermes cannot be approvers even
-if accidentally allowlisted. The real CLI channel is added in `P1.5`.
+if accidentally allowlisted. The CLI channel is implemented in `P1.5`:
+an authenticated approval watcher holds a server-issued lease for the
+lifetime of its SSE connection. A daemon without a watcher has no connected
+CLI human. Decisions require a live lease; the API supplies the authenticated
+`local-api-owner` actor rather than trusting client input.
 
 Settled decisions are written to SQLite `approvals_audit` before an allow
 response can reach the agent. Audit failures fail closed. The audit includes

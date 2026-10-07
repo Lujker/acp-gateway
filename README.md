@@ -36,7 +36,8 @@ flowchart LR
 
 Early development. The foundation is done: the connection to a real goose
 1.53.0 over the LAN is verified, along with sessions, approvals, cancellation
-and session restore. The daemon and the channels do not exist yet. The plan
+and session restore. The daemon, local HTTP/SSE API and human CLI channel are
+implemented and verified against Work Goose. Hermes and Telegram are next. The plan
 and the work queue are in [`road-map.md`](road-map.md) (in Russian).
 
 | Area | State |
@@ -46,7 +47,7 @@ and the work queue are in [`road-map.md`](road-map.md) (in Russian).
 | Agent client (`acp_gateway.agents`) and recorded-traffic mock agent | ✅ `P1.1`, `P1.2` |
 | Core: sessions in SQLite, jobs, event bus, channel contract | ✅ `P1.3` |
 | Approvals: human routing, deadlines, audit; core policy limits | ✅ `P1.4` |
-| Daemon, local API, approvals from the CLI | 🔜 `P1.5` |
+| Daemon, local API, approvals from the CLI | ✅ `P1.5` |
 | Hermes (MCP), then Telegram | 🔜 `P2` |
 | Snikket/XMPP, e-mail, web UI | 🗓 `P4` |
 
@@ -110,6 +111,8 @@ agents:
 ```
 
 In `.env`: `AGENT_WORK_SECRET=<the same secret>`.
+Also set `ACPGW_API_TOKEN` to a separate random owner token. It must differ
+from the agent secret and `ACPGW_MCP_TOKEN` (if configured).
 
 ### 3. Check the connection
 
@@ -123,6 +126,39 @@ The spike script has more scenarios: `modes`, `permission`, `cancel`, `load`,
 `all`. Traffic is recorded to `spike-runs/` (git-ignored). The scenarios
 `permission --permission allow` and `cancel` run harmless `echo` and `sleep`
 commands on the agent machine.
+
+### 4. Start the daemon and use the CLI
+
+```bash
+uv run acpgw serve                           # keep this terminal open
+```
+
+In another terminal:
+
+```bash
+uv run acpgw status
+uv run acpgw ask "Remember the code word AMBER. Answer only OK."
+uv run acpgw ask "What was the code word?"    # same active session
+uv run acpgw sessions
+uv run acpgw new                             # start a fresh session
+uv run acpgw switch 1                        # gateway session row id from sessions
+```
+
+For actions that need approval, keep a third terminal connected:
+
+```bash
+uv run acpgw approvals watch                 # allow once, reject, or skip interactively
+```
+
+The daemon alone does not count as a connected human. With no approval
+watcher, requests are rejected. `acpgw approvals` lists pending requests;
+`acpgw approvals approve <id>` and `reject <id>` decide an existing request
+once. Long jobs can be submitted with `ask --no-stream`, retrieved with
+`result <job_id> --wait 30`, and cancelled with `stop`. Ctrl+C during a
+streaming `ask` requests cancellation of that job.
+
+The CLI reads the same config and secrets as the daemon. Details and the
+HTTP/SSE contract: [`docs/setup/gateway.md`](docs/setup/gateway.md).
 
 ## Configuration
 
@@ -157,7 +193,7 @@ kept in Russian.
 ## Layout
 
 ```text
-src/acp_gateway/   ACP client, core (jobs, approvals, policy), SQLite storage, config, cli
+src/acp_gateway/   ACP client, core, SQLite storage, daemon, HTTP/SSE API, CLI, channels
 scripts/           spike_acp.py (agent check), check_secrets.py (hook), sanitize_fixture.py
 tests/             unit, integration, fakes, fixtures/acp
 docs/              architecture.md, setup/, archive/

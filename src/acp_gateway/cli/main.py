@@ -7,10 +7,12 @@ import sys
 from collections.abc import Sequence
 from pathlib import Path
 
+import httpx
 from pydantic import ValidationError
 
 from acp_gateway import __version__, paths
 from acp_gateway.config import AppConfig, load_config
+from acp_gateway.log import redact_text
 
 
 def _build_parser() -> argparse.ArgumentParser:
@@ -25,6 +27,39 @@ def _build_parser() -> argparse.ArgumentParser:
     config_sub.add_parser("check", help="validate configuration and show a summary")
 
     commands.add_parser("paths", help="show platform directories used by the gateway")
+    commands.add_parser("serve", help="run the gateway daemon on loopback")
+    commands.add_parser("status", help="show gateway, agents and channels")
+
+    def conversation_options(cmd):
+        cmd.add_argument("--agent", help="agent alias (optional with one configured agent)")
+        cmd.add_argument("--thread", default="default", help="conversation name")
+
+    conversation_options(commands.add_parser("sessions", help="list conversation sessions"))
+    new = commands.add_parser("new", help="create and activate a session")
+    conversation_options(new)
+    new.add_argument("--cwd", help="working directory on the agent machine")
+    switch = commands.add_parser("switch", help="activate one of the conversation's sessions")
+    conversation_options(switch)
+    switch.add_argument("session", type=int, help="gateway session row id")
+    ask = commands.add_parser("ask", help="send a prompt and stream the agent's answer")
+    conversation_options(ask)
+    ask.add_argument("text", help="prompt text, or - to read stdin")
+    ask.add_argument("--session", type=int, help="prompt a specific gateway session row id")
+    ask.add_argument("--no-stream", action="store_true", help="return the running job immediately")
+    ask.add_argument("--json", action="store_true", help="print the final job as JSON")
+    conversation_options(commands.add_parser("stop", help="cancel conversation jobs"))
+    result = commands.add_parser("result", help="retrieve a job after reconnect or restart")
+    result.add_argument("job_id")
+    result.add_argument("--wait", type=float, default=0, help="wait up to 300 seconds")
+    result.add_argument("--json", action="store_true")
+    approvals = commands.add_parser("approvals", help="list, watch and decide human approvals")
+    approval_sub = approvals.add_subparsers(dest="approval_command")
+    approval_sub.add_parser("list", help="list pending approvals")
+    approval_sub.add_parser("watch", help="connect a human and decide actions interactively")
+    for action in ("approve", "reject"):
+        approval_sub.add_parser(action, help=f"{action} a pending request once").add_argument(
+            "approval_id"
+        )
     return parser
 
 
@@ -85,4 +120,20 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     if args.command == "config" and args.config_command == "check":
         return _cmd_config_check(cfg)
-    return 2
+    try:
+        if args.command == "serve":
+            from acp_gateway.daemon import serve
+
+            serve(cfg)
+            return 0
+        from acp_gateway.cli.client import run
+
+        return run(cfg, args)
+    except KeyboardInterrupt:
+        return 130
+    except (OSError, ValueError, EOFError) as exc:
+        print(f"error: {redact_text(str(exc))}", file=sys.stderr)
+        return 1
+    except httpx.HTTPError:
+        print("error: the gateway API is unavailable; start acpgw serve", file=sys.stderr)
+        return 1

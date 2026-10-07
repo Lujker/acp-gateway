@@ -120,6 +120,11 @@ class Subscription:
             return None
         return await self._queue.get()
 
+    def discard_pending(self) -> None:
+        """Discard queued events before replacing them with an authoritative snapshot."""
+        while not self._queue.empty():
+            self._queue.get_nowait()
+
     def close(self) -> None:
         if self.closed:
             return

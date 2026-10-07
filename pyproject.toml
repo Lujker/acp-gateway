@@ -19,11 +19,15 @@ classifiers = [
 ]
 dependencies = [
     "agent-client-protocol[http]>=0.12",
+    "fastapi>=0.115",
+    "filelock>=3.16",
+    "httpx>=0.28",
     "platformdirs>=4.3",
     "pydantic>=2.10",
     "pydantic-settings[yaml]>=2.8",
     "python-dotenv>=1.0",
     "structlog>=25.1",
+    "uvicorn>=0.34",
 ]
 
 [project.urls]
@@ -39,7 +43,6 @@ dev = [
     "pytest>=8.3",
     "pytest-asyncio>=0.25",
     "ruff>=0.9",
-    "uvicorn>=0.34",
 ]
 
 [build-system]

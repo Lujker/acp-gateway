@@ -201,11 +201,14 @@ class GatewayCore:
 
     # -------------------------------------------------------------------- jobs
 
-    async def submit(self, conversation: Conversation, text: str) -> Job:
-        """Start a turn in the conversation's active session (created if missing).
+    async def submit(
+        self, conversation: Conversation, text: str, *, acp_session_id: str | None = None
+    ) -> Job:
+        """Start a turn in the active or explicitly selected owned session.
 
         Returns the running job at once; raises ``SessionBusy`` if the session
         is already running a job, and agent errors if a session cannot be created.
+        An explicit session leaves the active pointer unchanged.
         """
         if self._closed:
             raise GatewayError("the gateway has stopped")
@@ -214,7 +217,12 @@ class GatewayCore:
         async with self._locks[conversation]:
             if self._closed:
                 raise GatewayError("the gateway has stopped")
-            session = self.store.active_session(conversation)
+            if acp_session_id is not None:
+                session = self.store.find_session(conversation, acp_session_id)
+                if session is None:
+                    raise UnknownSession("this conversation does not own that session")
+            else:
+                session = self.store.active_session(conversation)
             if session is None:
                 session = await self._create_session(conversation)
             if session.id in self._busy:
