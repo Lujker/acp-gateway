@@ -166,19 +166,33 @@ Semantics the design must respect:
   requests go to a caller-supplied async handler that returns an option id —
   the default rejects everything; `cancel()` answers pending requests
   `cancelled`. Errors are normalized (`errors.py`).
-- **`core/` — GatewayCore.** An in-process service used by every channel:
-  - *sessions* — `(channel, conversation_key) → (agent, acp_session_id)`; one
-    key may own several sessions with a pointer to the active one (`/new`,
-    `/sessions`);
-  - *turns* — one active task per session; a new message to a busy session is
-    refused with "busy, /stop" (a queue may come later if needed);
-  - *jobs* — an asynchronous model for long tasks: `ask → job_id`, then
-    `result(job_id, wait)`; needed for the MCP channel and its timeouts;
-  - *approvals* — see section 6;
-  - *policy* — section 7;
-  - *event bus* — channels subscribe to session events and approvals.
+- **`core/` — GatewayCore** (sessions, jobs and the bus implemented in
+  `P1.3`). An in-process service used by every channel; it owns the store and
+  the agent clients:
+  - *sessions* — a conversation `(channel, conversation_key, agent)` owns
+    any number of agent sessions and points at the active one (`/new`,
+    `/sessions`, switching); the first message of a conversation creates a
+    session. An agent session belongs to exactly one conversation;
+  - *jobs* — every prompt is a job: `submit → job` returns at once,
+    `wait(job_id, timeout)` returns the finished job or its running snapshot
+    (partial answer), `ask` = submit + wait; needed for the MCP channel and its
+    timeouts. One running job per session; a new message to a busy session is
+    refused with `SessionBusy` (a queue may come later if needed). Statuses:
+    `running`, `completed`, `cancelled`, `failed` (agent error), `interrupted`
+    (the gateway stopped). `cancel(conversation)` stops every running job of
+    the conversation; if the agent does not end the turn within a grace
+    period, the gateway stops waiting for it. The answer is stored, the prompt
+    is not; finished jobs are pruned after 7 days;
+  - *approvals* — see section 6 (`P1.4`);
+  - *policy* — section 7 (`P1.4`);
+  - *event bus* — `SessionCreated`, `JobStarted`, `JobProgress` (raw agent
+    events), `JobFinished`; subscribers filter by channel or conversation and
+    have bounded queues (a slow subscriber loses events instead of stalling a
+    turn).
 - **`channels/` — the channel contract** (`base.py`) and adapters. A new
-  channel implements the contract and does not touch the core.
+  channel implements the contract and does not touch the core: the core
+  starts and stops registered channels, a channel calls the core directly and
+  reads results from `wait` or the bus.
   **What a channel sees** (owner decision 2026-10-06): by default only the
   request and the agent's final answer, a short "working" status and — if the
   channel is an approver — approval requests. Intermediate `tool_call`, `plan`
@@ -190,8 +204,11 @@ Semantics the design must respect:
 - **`cli/` — `acpgw`.** A client of the daemon's HTTP API (`status`,
   `sessions`, `ask`, `approvals`) plus a direct mode for debugging without the
   daemon.
-- **`storage/`** — SQLite (`sqlite3`/`aiosqlite`, no ORM): `sessions`, `jobs`,
-  `approvals_audit`, migrations.
+- **`storage/`** — SQLite through the standard `sqlite3` module, used
+  synchronously from the event loop (each statement touches a few rows of a
+  local file; no ORM, no `aiosqlite`): `sessions`, `conversations`, `jobs`, later
+  `approvals_audit`; numbered SQL migrations tracked by `PRAGMA user_version`.
+  The database is `<data_dir>/gateway.db`, readable only by its owner.
 
 ## 6. Approvals
 
@@ -314,7 +331,7 @@ agent name from the profile ("Work Goose is unavailable right now").
 
 Python 3.12+, `uv`, `agent-client-protocol` (`acp`), FastAPI + uvicorn, the
 MCP Python SDK (FastMCP, Streamable HTTP) for the MCP channel, aiogram 3 for
-Telegram (HTML parse mode), `sqlite3`/`aiosqlite`, `pydantic` /
+Telegram (HTML parse mode), `sqlite3`, `pydantic` /
 `pydantic-settings`, `structlog`, `platformdirs`, `pytest` + `pytest-asyncio`,
 `ruff`.
 
@@ -327,8 +344,8 @@ acp-gateway/
 ├── src/acp_gateway/
 │   ├── config.py · log.py · paths.py · daemon.py
 │   ├── agents/     client.py · transport.py · tls.py · events.py · errors.py
-│   ├── core/       sessions.py · turns.py · jobs.py · approvals.py · policy.py · bus.py
-│   ├── storage/    db.py · migrations/
+│   ├── core/       gateway.py · bus.py · errors.py · (approvals.py · policy.py — P1.4)
+│   ├── storage/    db.py · records.py · migrations/
 │   ├── channels/   base.py · mcp/ · telegram/ · (xmpp/ · email/ later)
 │   ├── api/        app.py · routes_*.py · schemas.py
 │   └── cli/        main.py

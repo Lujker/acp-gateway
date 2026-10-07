@@ -14,7 +14,9 @@ before it can be prompted.
 Prompts are keyword-driven so tests can trigger each path:
 ``run exactly: <cmd> .`` runs a shell command (``sleep N`` waits, ``echo X``
 prints X), ``code word X`` / ``What was the code word`` exercise memory,
-``pong`` replies "pong", anything else is echoed.
+``pong`` replies "pong", anything else is echoed. The first answer of a
+session comes with the recorded ``session_info_update`` that sets its title
+("Pong").
 """
 
 from __future__ import annotations
@@ -62,6 +64,7 @@ class FakeSession:
     history: list[tuple[str, str]] = field(default_factory=list)  # (role, text)
     memory: dict[str, str] = field(default_factory=dict)
     cancelled: asyncio.Event = field(default_factory=asyncio.Event)
+    titled: bool = False
 
 
 class FakeGooseAgent:
@@ -211,7 +214,11 @@ class FakeGooseAgent:
         return await self._reply(session_id, output)
 
     async def _reply(self, session_id: str, text: str) -> PromptResponse:
-        self._sessions[session_id].history.append(("agent", text))
+        session = self._sessions[session_id]
+        session.history.append(("agent", text))
+        if not session.titled:  # goose names a session after its first answer
+            session.titled = True
+            await self._emit(session_id, rec.update("ping", "session_info_update", 1))
         await self._conn.session_update(
             session_id=session_id,
             update=AgentMessageChunk(

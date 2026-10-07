@@ -44,7 +44,8 @@ and the work queue are in [`road-map.md`](road-map.md) (in Russian).
 | Scaffold, config, secret redaction, pre-commit hook | ✅ |
 | ACP over WebSocket with TLS pinning, verified on goose 1.53.0 | ✅ |
 | Agent client (`acp_gateway.agents`) and recorded-traffic mock agent | ✅ `P1.1`, `P1.2` |
-| Core (sessions, jobs, approvals) | 🔜 `P1.3`, `P1.4` |
+| Core: sessions in SQLite, jobs, event bus, channel contract | ✅ `P1.3` |
+| Approvals and policy | 🔜 `P1.4` |
 | Daemon, local API, approvals from the CLI | 🔜 `P1.5` |
 | Hermes (MCP), then Telegram | 🔜 `P2` |
 | Snikket/XMPP, e-mail, web UI | 🗓 `P4` |
