@@ -193,7 +193,9 @@ class GatewayCore:
             self._running[job.id] = run
             self._busy[session.id] = job.id
             self.bus.publish(JobStarted(conversation, job))
-            run.task = asyncio.create_task(self._run(run, client, text), name=f"job-{job.id}")
+            run.task = asyncio.create_task(
+                self._run(run, client, text, session.cwd), name=f"job-{job.id}"
+            )
         self._log.info(
             "job started", job_id=job.id, conversation=str(conversation), chars=len(text)
         )
@@ -249,13 +251,15 @@ class GatewayCore:
         job_ids = [job.id for job in self.running_jobs(conversation)]
         return [await self.cancel_job(job_id) for job_id in job_ids]
 
-    async def _run(self, run: _RunningJob, client: AgentClient, text: str) -> None:
+    async def _run(self, run: _RunningJob, client: AgentClient, text: str, cwd: str) -> None:
         job = run.job
         finished: TurnFinished | None = None
         status, error = JobStatus.FAILED, None
         try:
             # aclosing: an interrupted job must close the stream, which cancels the turn.
-            async with contextlib.aclosing(client.prompt(job.acp_session_id, text)) as events:
+            async with contextlib.aclosing(
+                client.prompt(job.acp_session_id, text, cwd=cwd)
+            ) as events:
                 async for event in events:
                     if isinstance(event, MessageChunk):
                         run.parts.append(event.text)

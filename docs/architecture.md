@@ -118,6 +118,8 @@ Specifics of the `goose` profile (`remote` backend):
   in an SSL context that trusts only that certificate, and only there is
   `X-Secret-Key` sent. Without a pin in the config: trust on first use, saved
   to `<data_dir>/pins/<alias>.sha256`;
+- WebSocket redirects are refused: credentials and the TLS pin apply only to
+  the configured endpoint;
 - **new goose sessions start in `auto` mode** (no approvals); session modes
   are `auto`, `approve`, `smart_approve`, `chat`. Right after `session/new`
   and `session/load` the gateway sets the mode from the profile
@@ -159,12 +161,18 @@ Semantics the design must respect:
   `ensure_connected()` retries with backoff (1, 2, 5, 10, 30 s; auth and pin
   errors are not retried). `new_session()` / `load_session()` apply the
   profile's `session_mode`; a session not yet attached to the current
-  connection (after a reconnect or in a new process) is loaded automatically,
-  with its history replay dropped. `prompt()` is an async stream of normalized
-  events (`events.py`) that always ends with `TurnFinished`; closing it early
-  cancels the turn; one running turn per session (`SessionBusy`). Permission
-  requests go to a caller-supplied async handler that returns an option id —
-  the default rejects everything; `cancel()` answers pending requests
+  connection (after a reconnect or in a new process) is loaded automatically
+  with its saved working directory and its history replay dropped. Sessions
+  become usable only after the mode is applied successfully.
+  `prompt()` is an async stream of normalized events (`events.py`) that always
+  ends with `TurnFinished`; closing it early
+  cancels the turn; one running turn per session (`SessionBusy`).
+  If the agent does not finish the prompt within five seconds after the stream
+  is closed, the local request is cancelled and the session remains blocked
+  (`SessionBusy`) until a fresh connection is established; late permission
+  requests for that session are cancelled. Other sessions remain usable.
+  Permission requests go to a caller-supplied async handler that returns an
+  option id — the default rejects everything; `cancel()` answers pending requests
   `cancelled`. Errors are normalized (`errors.py`).
 - **`core/` — GatewayCore** (sessions, jobs and the bus implemented in
   `P1.3`). An in-process service used by every channel; it owns the store and
@@ -208,7 +216,9 @@ Semantics the design must respect:
   synchronously from the event loop (each statement touches a few rows of a
   local file; no ORM, no `aiosqlite`): `sessions`, `conversations`, `jobs`, later
   `approvals_audit`; numbered SQL migrations tracked by `PRAGMA user_version`.
-  The database is `<data_dir>/gateway.db`, readable only by its owner.
+  The database is `<data_dir>/gateway.db`, readable only by its owner. On POSIX,
+  opening an existing database also enforces mode `600` on it and its existing
+  WAL/SHM files.
 
 ## 6. Approvals
 

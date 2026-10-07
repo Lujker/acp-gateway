@@ -26,6 +26,13 @@ from acp_gateway.agents.tls import TlsPin, fingerprint_of
 MAX_MESSAGE_BYTES = 64 * 1024 * 1024
 
 
+class _NoRedirectConnect(ws_connect):
+    """Credentials and the TLS pin belong only to the configured endpoint."""
+
+    def process_redirect(self, exc: Exception) -> Exception:
+        return exc
+
+
 class PinnedWebSocketTransport:
     """Moves JSON-RPC messages; ``closed`` is set once the socket is gone."""
 
@@ -43,7 +50,7 @@ class PinnedWebSocketTransport:
         open_timeout: float = 15,
     ) -> PinnedWebSocketTransport:
         try:
-            connection = await ws_connect(
+            connection = await _NoRedirectConnect(
                 url,
                 additional_headers=headers,
                 ssl=pin.context if pin else None,

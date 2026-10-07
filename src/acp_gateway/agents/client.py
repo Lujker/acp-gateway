@@ -55,6 +55,7 @@ from acp_gateway.log import get_logger
 T = TypeVar("T")
 
 DEFAULT_RECONNECT_DELAYS: tuple[float, ...] = (1, 2, 5, 10, 30)
+DEFAULT_CANCEL_TIMEOUT = 5.0
 
 
 @dataclass(frozen=True)
@@ -187,6 +188,8 @@ class AgentClient:
         self._transport: PinnedWebSocketTransport | None = None
         self._connect_lock = asyncio.Lock()
         self._attached: set[str] = set()  # sessions usable on the current connection
+        self._uncertain: set[str] = set()  # cancellation not confirmed on this connection
+        self._session_cwds: dict[str, str] = {}
         self._loading: set[str] = set()  # sessions whose history replay is suppressed
         self._turns: dict[str, asyncio.Queue[AgentEvent | _TurnDone]] = {}
         self._permission_tasks: defaultdict[str, set[asyncio.Task[str | None]]] = defaultdict(set)
@@ -271,6 +274,7 @@ class AgentClient:
 
         self._conn, self._transport, self.tls_pin = conn, transport, pin
         self._attached.clear()
+        self._uncertain.clear()
         self.agent_capabilities = init.agent_capabilities
         self.agent_info = init.agent_info.model_dump(exclude_none=True) if init.agent_info else None
         watcher = asyncio.create_task(self._watch(transport))
@@ -315,35 +319,40 @@ class AgentClient:
 
     async def new_session(self, cwd: str | None = None) -> str:
         await self.ensure_connected()
-        response = await self._call(
-            self._conn.new_session(cwd=cwd or self.profile.default_cwd, mcp_servers=[])
-        )
+        cwd = cwd or self.profile.default_cwd
+        response = await self._call(self._conn.new_session(cwd=cwd, mcp_servers=[]))
         session_id = response.session_id
-        self._attached.add(session_id)
         await self._apply_mode(session_id, response.modes)
+        self._attached.add(session_id)
+        self._session_cwds[session_id] = cwd
         self._log.info("session created", session_id=session_id)
         return session_id
 
     async def load_session(self, session_id: str, cwd: str | None = None) -> None:
         """Attach an existing session to this connection; its history replay is dropped."""
         await self.ensure_connected()
+        if session_id in self._uncertain:
+            raise SessionBusy(
+                f"session {session_id} has an unconfirmed cancellation; reconnect first"
+            )
+        self._attached.discard(session_id)
+        cwd = cwd or self._session_cwds.get(session_id) or self.profile.default_cwd
         caps = self.agent_capabilities
         if not (caps and caps.load_session):
             raise SessionNotFound(f"{self.profile.display_name} cannot restore sessions")
         self._loading.add(session_id)
         try:
             response = await self._call(
-                self._conn.load_session(
-                    cwd=cwd or self.profile.default_cwd, session_id=session_id, mcp_servers=[]
-                ),
+                self._conn.load_session(cwd=cwd, session_id=session_id, mcp_servers=[]),
                 not_found=f"session {session_id} not found",
             )
             # Replayed updates were scheduled before the response; let them drain.
             await asyncio.sleep(0)
         finally:
             self._loading.discard(session_id)
-        self._attached.add(session_id)
         await self._apply_mode(session_id, response.modes if response else None)
+        self._attached.add(session_id)
+        self._session_cwds[session_id] = cwd
         self._log.info("session loaded", session_id=session_id)
 
     async def list_sessions(self, cwd: str | None = None) -> list[dict[str, Any]]:
@@ -365,14 +374,18 @@ class AgentClient:
 
     # ------------------------------------------------------------------- turns
 
-    async def prompt(self, session_id: str, text: str) -> AsyncIterator[AgentEvent]:
+    async def prompt(
+        self, session_id: str, text: str, *, cwd: str | None = None
+    ) -> AsyncIterator[AgentEvent]:
         """Run one turn; yields events and always ends with :class:`TurnFinished`.
 
         Closing the iterator before the end cancels the turn on the agent.
         """
         await self.ensure_connected()
+        if session_id in self._turns or session_id in self._uncertain:
+            raise SessionBusy(f"session {session_id} is busy or its cancellation is unconfirmed")
         if session_id not in self._attached:
-            await self.load_session(session_id)
+            await self.load_session(session_id, cwd)
         if session_id in self._turns:
             raise SessionBusy(f"session {session_id} is busy")
 
@@ -403,12 +416,27 @@ class AgentClient:
                 else None,
             )
         finally:
-            self._turns.pop(session_id, None)
-            if not finished and not request.done():
-                with contextlib.suppress(Exception):
-                    await self.cancel(session_id)
+            try:
+                if not finished and not request.done():
+                    self._uncertain.add(session_id)
+                    with contextlib.suppress(Exception):
+                        await self.cancel(session_id)
+                    with contextlib.suppress(Exception):
+                        await asyncio.wait_for(
+                            asyncio.shield(request), timeout=DEFAULT_CANCEL_TIMEOUT
+                        )
+            finally:
+                if not request.done() or request.cancelled():
+                    # A local task cancellation doesn't stop work on the agent.
+                    # Keep this session blocked until a fresh connection is made.
+                    self._uncertain.add(session_id)
+                    self._attached.discard(session_id)
+                    request.cancel()
+                else:
+                    self._uncertain.discard(session_id)
                 with contextlib.suppress(BaseException):
-                    await asyncio.wait_for(asyncio.shield(request), timeout=5)
+                    await request
+                self._turns.pop(session_id, None)
 
     async def ask(self, session_id: str, text: str) -> AgentReply:
         """Run one turn and return the collected answer."""
@@ -445,6 +473,8 @@ class AgentClient:
     async def _on_permission(
         self, session_id: str, tool_call: Any, options: list[Any]
     ) -> RequestPermissionResponse:
+        if session_id in self._uncertain:
+            return RequestPermissionResponse(outcome=DeniedOutcome(outcome="cancelled"))
         request = PermissionRequest(
             session_id=session_id,
             tool_call_id=tool_call.tool_call_id,

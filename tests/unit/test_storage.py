@@ -38,6 +38,24 @@ def test_database_file_is_private(tmp_path):
     assert path.parent.stat().st_mode & 0o077 == 0
 
 
+@pytest.mark.skipif(os.name != "posix", reason="POSIX permissions")
+def test_existing_database_and_wal_files_become_private(tmp_path):
+    path = tmp_path / "gateway.db"
+    first = Store.open(path)
+    files = [path, tmp_path / "gateway.db-wal", tmp_path / "gateway.db-shm"]
+    try:
+        for file in files:
+            assert file.is_file()
+            file.chmod(0o644)
+        second = Store.open(path)
+        try:
+            assert all(file.stat().st_mode & 0o077 == 0 for file in files)
+        finally:
+            second.close()
+    finally:
+        first.close()
+
+
 def test_mapping_survives_reopen(tmp_path):
     path = tmp_path / "gateway.db"
     first = Store.open(path)

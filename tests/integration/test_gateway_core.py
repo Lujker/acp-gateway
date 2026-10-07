@@ -27,7 +27,7 @@ from acp_gateway.core import (
     for_conversation,
 )
 from acp_gateway.storage import Conversation, JobStatus, Store
-from fakes.fake_goose import FakeGooseServer, free_port
+from fakes.fake_goose import FakeGooseAgent, FakeGooseServer, free_port
 
 SECRET = "mock-goose-" + "secret-7781"
 CLI = Conversation("cli", "default", "work")
@@ -129,6 +129,31 @@ async def test_mapping_survives_gateway_restart(server, tmp_path):
     assert after.answer == "fox42"
     assert "load_session" in server.log
     assert old_job.answer == "OK"  # job results are kept across restarts
+
+
+async def test_custom_cwd_survives_gateway_restart(server, tmp_path, monkeypatch):
+    seen = []
+    original = FakeGooseAgent.load_session
+
+    async def load_session(agent, cwd, session_id, **kwargs):
+        seen.append(cwd)
+        return await original(agent, cwd=cwd, session_id=session_id, **kwargs)
+
+    monkeypatch.setattr(FakeGooseAgent, "load_session", load_session)
+    first = make_core(server.url("ws"), tmp_path)
+    try:
+        session = await first.new_session(CLI, cwd="/custom/project")
+        await first.ask(CLI, "Remember the code word fox42. Reply: OK")
+    finally:
+        await first.close()
+    second = make_core(server.url("ws"), tmp_path)
+    try:
+        job = await second.ask(CLI, "What was the code word?")
+    finally:
+        await second.close()
+    assert job.acp_session_id == session.acp_session_id
+    assert job.answer == "fox42"
+    assert seen == ["/custom/project"]
 
 
 async def test_several_sessions_per_conversation(server, tmp_path):

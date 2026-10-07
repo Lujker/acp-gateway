@@ -9,6 +9,7 @@ numbered ``migrations/NNNN_*.sql`` scripts, tracked by ``PRAGMA user_version``.
 from __future__ import annotations
 
 import json
+import os
 import re
 import sqlite3
 from datetime import datetime
@@ -58,6 +59,14 @@ class Store:
             path = Path(path)
             path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
             path.touch(mode=0o600, exist_ok=True)
+            if os.name == "posix":
+                path.chmod(0o600)
+                # Existing WAL files can contain answers too; SQLite preserves
+                # their permissions when reopening an existing database.
+                for suffix in ("-wal", "-shm"):
+                    sidecar = Path(f"{path}{suffix}")
+                    if sidecar.is_file():
+                        sidecar.chmod(0o600)
         conn = sqlite3.connect(path, isolation_level=None)
         conn.row_factory = sqlite3.Row
         conn.execute("PRAGMA foreign_keys = ON")
