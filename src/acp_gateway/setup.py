@@ -55,7 +55,8 @@ def setup(directory: Path | None = None) -> int:
         "# Secrets only. Keep this file private.\n"
         f"ACPGW_API_TOKEN={secrets.token_urlsafe(32)}\n"
         f"ACPGW_MCP_TOKEN={secrets.token_urlsafe(32)}\n"
-        "AGENT_WORK_SECRET=\n",
+        "AGENT_WORK_SECRET=\n"
+        "TELEGRAM_BOT_TOKEN=\n",
     )
     for path, created in ((config, created_config), (env, created_env)):
         print(f"{'Created' if created else 'Kept existing'}: {path}")

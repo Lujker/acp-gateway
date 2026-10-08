@@ -92,6 +92,19 @@ class Store:
     def close(self) -> None:
         self._conn.close()
 
+    def channel_state(self, namespace: str, key: str, default=None):
+        row = self._conn.execute(
+            "SELECT value FROM channel_state WHERE namespace = ? AND key = ?", (namespace, key)
+        ).fetchone()
+        return json.loads(row[0]) if row else default
+
+    def set_channel_state(self, namespace: str, key: str, value) -> None:
+        self._conn.execute(
+            "INSERT INTO channel_state (namespace, key, value) VALUES (?, ?, ?) "
+            "ON CONFLICT(namespace, key) DO UPDATE SET value = excluded.value",
+            (namespace, key, json.dumps(value)),
+        )
+
     @property
     def schema_version(self) -> int:
         return self._conn.execute("PRAGMA user_version").fetchone()[0]

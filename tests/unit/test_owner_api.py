@@ -108,6 +108,40 @@ async def test_cli_lease_is_live_only_until_detach(api):
         cli.attach("owner")
 
 
+async def test_component_health_reports_unavailable_and_authenticates_probes(api):
+    client, core, cli = api
+    assert (await client.get("/health/unknown")).status_code == 404
+    response = await client.get("/health/cli")
+    assert response.status_code == 503 and response.json()["connected"] is False
+    lease = cli.attach("owner")
+    assert (await client.get("/health/channels/cli")).status_code == 200
+    cli.detach(lease)
+
+    class Agent:
+        connected = False
+        agent_info = None
+        calls = 0
+
+        async def connect(self):
+            self.calls += 1
+            self.connected = True
+
+        async def close(self):
+            pass
+
+    agent = Agent()
+    core._agents["work"] = agent
+    assert (await client.get("/health/work")).status_code == 503
+    assert agent.calls == 0
+    assert (
+        await client.get("/health/work?check=true", headers={"Authorization": ""})
+    ).status_code == 401
+    assert agent.calls == 0
+    response = await client.get("/health/agents/work?check=true")
+    assert response.status_code == 200 and response.json()["connected"] is True
+    assert agent.calls == 1
+
+
 def config(tmp_path, secrets):
     return AppConfig(Settings(data_dir=tmp_path), SecretStore(secrets), None, None)
 
@@ -133,7 +167,7 @@ def test_daemon_requires_separate_owner_credential(tmp_path):
 def test_second_daemon_is_blocked_and_lock_released(tmp_path):
     cfg = config(tmp_path, {"ACPGW_API_TOKEN": OWNER})
     with configured_app(cfg) as app:
-        assert app.state.core.store.schema_version == 2
+        assert app.state.core.store.schema_version == 3
         with pytest.raises(ValueError, match="another gateway daemon"), configured_app(cfg):
             pytest.fail("second daemon acquired the lock")
     with configured_app(cfg):

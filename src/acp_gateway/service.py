@@ -101,12 +101,16 @@ def install(config: AppConfig) -> int:
     if config.secrets.get(config.settings.gateway.mcp_token_env) is not None:
         required.append(config.settings.gateway.mcp_token_env)
     required += [p.secret_env for p in config.settings.agents if p.secret_env]
+    if config.settings.telegram.enabled:
+        required.append(config.settings.telegram.token_env)
     for name in required:
         secret = config.secrets.get(name)
         if not values.get(name) or secret is None or secret.get_secret_value() != values[name]:
             raise ValueError(f"persist {name} in the selected .env file before service install")
     if config.settings.data_dir is not None and not config.settings.data_dir.is_absolute():
         raise ValueError("service installation requires an absolute data_dir in config.yaml")
+    if config.settings.logging.file is not None and not config.settings.logging.file.is_absolute():
+        raise ValueError("service installation requires an absolute logging.file in config.yaml")
     owner_token(config)
     missing = config.missing_agent_secrets()
     if missing:

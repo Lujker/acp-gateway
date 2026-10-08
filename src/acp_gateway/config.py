@@ -170,11 +170,38 @@ class PolicySettings(_Section):
 class LoggingSettings(_Section):
     level: Literal["DEBUG", "INFO", "WARNING", "ERROR"] = "INFO"
     format: Literal["auto", "console", "json"] = "auto"
+    file: Path | None = None
+    max_bytes: int = Field(default=5_000_000, ge=1024)
+    backup_count: int = Field(default=3, ge=1, le=20)
 
     @field_validator("level", mode="before")
     @classmethod
     def _upper(cls, value: object) -> object:
         return value.upper() if isinstance(value, str) else value
+
+
+class TelegramSettings(_Section):
+    enabled: bool = False
+    token_env: str = "TELEGRAM_BOT_TOKEN"  # noqa: S105
+    allowed_user_ids: list[int] = Field(default_factory=list, max_length=100)
+
+    @field_validator("token_env")
+    @classmethod
+    def _env_name(cls, name: str) -> str:
+        return _validate_env_name(name)
+
+    @field_validator("allowed_user_ids")
+    @classmethod
+    def _ids(cls, values: list[int]) -> list[int]:
+        if any(v <= 0 for v in values) or len(values) != len(set(values)):
+            raise ValueError("allowed_user_ids must contain unique positive user IDs")
+        return values
+
+    @model_validator(mode="after")
+    def _allowlist(self):
+        if self.enabled and not self.allowed_user_ids:
+            raise ValueError("enabled Telegram requires an explicit user allowlist")
+        return self
 
 
 _yaml_path: ContextVar[Path | None] = ContextVar("_yaml_path", default=None)
@@ -191,6 +218,7 @@ class Settings(BaseSettings):
     agents: list[AgentProfile] = Field(default_factory=list)
     policy: PolicySettings = Field(default_factory=PolicySettings)
     logging: LoggingSettings = Field(default_factory=LoggingSettings)
+    telegram: TelegramSettings = Field(default_factory=TelegramSettings)
     data_dir: Path | None = None
 
     @model_validator(mode="after")
@@ -251,6 +279,8 @@ class AppConfig:
     def referenced_secret_names(self) -> list[str]:
         names = [self.settings.gateway.api_token_env, self.settings.gateway.mcp_token_env]
         names += [a.secret_env for a in self.settings.agents if a.secret_env]
+        if self.settings.telegram.enabled:
+            names.append(self.settings.telegram.token_env)
         return names
 
     def missing_agent_secrets(self) -> list[str]:

@@ -15,10 +15,13 @@ Redaction works on three levels:
 from __future__ import annotations
 
 import logging
+import os
 import re
 import sys
 import threading
 from collections.abc import Iterable, MutableMapping
+from logging.handlers import RotatingFileHandler
+from pathlib import Path
 from typing import Any, Literal, TextIO
 
 import structlog
@@ -104,6 +107,16 @@ def redact_secrets(_logger: Any, _method: str, event_dict: MutableMapping[str, A
 
 
 LogFormat = Literal["auto", "console", "json"]
+_configured_handlers: list[logging.Handler] = []
+
+
+class _PrivateRotatingFileHandler(RotatingFileHandler):
+    def _open(self):
+        flags = os.O_WRONLY | os.O_CREAT | os.O_APPEND | getattr(os, "O_NOFOLLOW", 0)
+        fd = os.open(self.baseFilename, flags, 0o600)
+        if os.name == "posix":
+            os.fchmod(fd, 0o600)
+        return os.fdopen(fd, "a", encoding="utf-8")
 
 
 def configure_logging(
@@ -111,6 +124,10 @@ def configure_logging(
     fmt: LogFormat = "auto",
     stream: TextIO | None = None,
     extra_secrets: Iterable[str] = (),
+    *,
+    file: Path | None = None,
+    max_bytes: int = 5_000_000,
+    backup_count: int = 3,
 ) -> None:
     """Configure structlog and stdlib logging to write redacted logs to ``stream``."""
     for secret in extra_secrets:
@@ -154,9 +171,30 @@ def configure_logging(
     )
     handler = logging.StreamHandler(stream)
     handler.setFormatter(formatter)
+    handlers: list[logging.Handler] = [handler]
+    if file is not None:
+        file = Path(file).absolute()
+        file.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+        rotating = _PrivateRotatingFileHandler(
+            file, maxBytes=max_bytes, backupCount=backup_count, encoding="utf-8"
+        )
+        # File logs are always JSON; terminal rendering remains independent.
+        rotating.setFormatter(
+            structlog.stdlib.ProcessorFormatter(
+                foreign_pre_chain=[*shared, structlog.stdlib.ExtraAdder(), redact_secrets],
+                processors=[
+                    structlog.stdlib.ProcessorFormatter.remove_processors_meta,
+                    structlog.processors.JSONRenderer(),
+                ],
+            )
+        )
+        handlers.append(rotating)
 
     root = logging.getLogger()
-    root.handlers = [handler]
+    root.handlers = handlers
+    for previous in _configured_handlers:
+        previous.close()
+    _configured_handlers[:] = handlers
     root.setLevel(level.upper())
 
 

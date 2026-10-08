@@ -94,3 +94,37 @@ def test_level_filtering():
     get_logger("test").info("hidden")
     get_logger("test").warning("shown")
     assert [r["event"] for r in lines(stream)] == ["shown"]
+
+
+def test_file_rotation_is_bounded_private_json_and_redacts_all_handlers(tmp_path):
+    stream = io.StringIO()
+    path = tmp_path / "private" / "gateway.log"
+    configure_logging(
+        fmt="console",
+        stream=stream,
+        extra_secrets=[SECRET],
+        file=path,
+        max_bytes=800,
+        backup_count=2,
+    )
+    for number in range(20):
+        get_logger("rotation").warning("line", number=number, value=SECRET, payload="x" * 150)
+    logging.getLogger("foreign").warning("Bearer %s", SECRET)
+    files = sorted(path.parent.glob("gateway.log*"))
+    assert len(files) == 3
+    for log in files:
+        assert log.stat().st_mode & 0o777 == 0o600
+        assert SECRET not in log.read_text()
+        assert all(isinstance(json.loads(line), dict) for line in log.read_text().splitlines())
+    assert SECRET not in stream.getvalue()
+    configure_logging(stream=stream)
+
+
+def test_log_file_does_not_follow_symlink(tmp_path):
+    target = tmp_path / "target"
+    target.write_text("preserved\n")
+    link = tmp_path / "log"
+    link.symlink_to(target)
+    with pytest.raises(OSError):
+        configure_logging(file=link)
+    assert target.read_text() == "preserved\n"

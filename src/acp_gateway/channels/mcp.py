@@ -57,7 +57,8 @@ class McpChannel(Channel):
             "ACP Gateway",
             instructions=(
                 "Use a stable explicit thread for each conversation. Running jobs return a job_id; "
-                "poll result with the same thread. Human approvals require acpgw approvals watch."
+                "poll result with the same thread. Human approvals require a connected "
+                "CLI or Telegram approver; MCP tools cannot approve actions."
             ),
             stateless_http=True,
             json_response=True,

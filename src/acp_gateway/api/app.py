@@ -138,6 +138,51 @@ def create_app(core: GatewayCore, cli: CliChannel, token: SecretStr, *, mcp=None
             "running_jobs": len(core.running_jobs()),
         }
 
+    async def agent_health(alias: str, check: bool = False):
+        client = core.agent(alias)
+        error = None
+        if check:
+            try:
+                # An ACP initialize only: no sessions/prompts/agent actions.
+                await asyncio.wait_for(client.connect(), 10)
+            except TimeoutError:
+                error = "agent health probe timed out"
+            except AgentError as exc:
+                error = str(exc)
+        data = {
+            "alias": alias,
+            "connected": client.connected,
+            "status": "connected" if client.connected else "disconnected",
+            "info": client.agent_info,
+            "error": error,
+        }
+        return JSONResponse(redact_value(data), status_code=200 if client.connected else 503)
+
+    async def channel_health(name: str):
+        channel = core.channels.get(name)
+        if channel is None:
+            raise HTTPException(404, "unknown channel")
+        return JSONResponse(
+            {
+                "name": name,
+                "connected": channel.connected,
+                "can_approve": channel.can_approve,
+                "status": "connected" if channel.connected else "unavailable",
+            },
+            status_code=200 if channel.connected else 503,
+        )
+
+    app.get("/health/agents/{alias}")(agent_health)
+    app.get("/health/channels/{name}")(channel_health)
+
+    @app.get("/health/{target}")
+    async def component_health(target: str, check: bool = False):
+        if target in core.agents and target in core.channels:
+            raise HTTPException(400, "use /health/agents/ or /health/channels/ for this name")
+        if target in core.agents:
+            return await agent_health(target, check)
+        return await channel_health(target)
+
     @app.get("/sessions")
     async def sessions(agent: str | None = None, thread: str = "default"):
         conv = conversation(agent, thread)

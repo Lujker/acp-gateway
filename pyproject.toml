@@ -19,6 +19,7 @@ classifiers = [
 ]
 dependencies = [
     "agent-client-protocol[http]>=0.12",
+    "aiogram>=3.22,<4",
     "fastapi>=0.115",
     "filelock>=3.16",
     "httpx>=0.28",

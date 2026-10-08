@@ -890,6 +890,60 @@ WSL подтверждает Windows-путь через Linux, но не native
 Фактический reboot также не заменён Task Scheduler smoke. Эти критерии остаются
 открытыми; macOS требует своего хоста и launchd-пути.
 
+## 2026-10-08 — user D-Bus, реальная служба, Telegram и P3.3
+
+Владелец разрешил восстановление user D-Bus и отдельно подтвердил restart
+user manager после отказа auto-review из-за воздействия на все user services.
+Установлен отсутствовавший `dbus-user-session`. Первый разрешённый restart
+`user@1000.service` завершился `219/CGROUP`/EBUSY; после освобождения старой
+cgroup последующий start прошёл. User bus восстановлен, `systemctl --user`
+работает. Windows и WSL целиком не перезагружались.
+
+- Добавлен opt-in `scripts/smoke_service.py`: отказывается заменять существующий
+  gateway unit; временные config/tokens/data; реальный install/enable/status,
+  stop/start/restart, SIGKILL recovery, disable/re-enable/uninstall. Проверяет
+  enabled/disabled, PID, API health/миграции и сохранение файлов/БД при uninstall.
+  Цикл прошёл для source CLI и standalone binary; финальная пересобранная
+  binary-сборка тоже прошла этот цикл.
+- Telegram на aiogram **3.31.0** из `uv.lock`: private user allowlist, команды,
+  сессии/switch/results, final replies, inline allow_once/reject_once. Callback
+  проверяет user/chat/message/request/option/deadline; core сохраняет audit
+  до принятия решения. Повторное или просроченное решение не принимается.
+  Raw tool progress/reasoning в канал не пересылаются.
+- SQLite migration **3** добавляет namespaced channel state. Telegram cursor
+  сохраняется атомарно до dispatch, чтобы рестарт не повторял agent command;
+  это at-most-once dispatch, а не гарантия доставки ответа. Курсор истекает
+  после шести дней inactivity из-за Telegram random update_id после недели.
+  Known private chats и выбор агента сохраняются; отзыв user ID убирает доступ.
+- Polling имеет bounded backoff; commands ограничены пятью за десять секунд
+  на user. Send retry — только явный Telegram 429, до трёх попыток и 30 с;
+  ambiguous network failures не переигрывают отправку. Ответ доступен через
+  `/result`, pending approvals — через `/approvals`.
+- P3.3: owner-auth component health и bounded ACP initialize probe без
+  создания сессий/prompts; private JSON file rotation с mode 600, redaction,
+  byte limit/backup count. SQLite audit retention и outbound delivery recovery
+  пока отдельные незавершённые части.
+- Настоящий Work Goose **1.53.0** прошёл pinned TLS/ACP initialize. Development
+  Telegram bot прошёл getMe/getWebhookInfo (webhook отсутствует). В локальном
+  ignored config включены Telegram, предоставленный владельцем allowlist,
+  approver channels `[telegram, cli]` и private log. Токены не менялись.
+- Рабочий systemd unit установлен и включён с ExecStart финального standalone
+  executable. Owner `/health` сообщает schema 3; live `/health/agents/work?check=true`
+  возвращает 200. Bot принял authorized private chat, live Telegram component
+  health возвращает 200/connected. Лог проверен на отсутствие всех referenced
+  credentials и имеет mode 600. Полная живая приёмка prompts/approval buttons
+  владельцем пока не заменена этим transport/readiness evidence.
+- Финальные проверки: **361 passed, 3 optional Hermes skipped**, 124.42 с;
+  полный binary smoke вне checkout/Python PATH и настоящий service smoke —
+  passed. Ruff/format/diff clean. Первый общий прогон выявил только scanner
+  false positive на явно фиктивных test credentials; запись исправлена без
+  изменения сканера. GitHub Actions не запускали, сборка локальная.
+
+Остаток: настоящий Windows reboot; live Telegram task/approval acceptance,
+streaming status edits; прочие P3.3 limits/audit/delivery; native Windows и
+macOS по их платформенным пунктам. Инструкции — `docs/setup/telegram.md`,
+`docs/setup/observability.md`, обновлённый `docs/setup/service.md`.
+
 ## Незакрытые вопросы
 
 - **Публикация** — удалять ли старые коммиты с GitHub окончательно (GitHub

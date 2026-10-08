@@ -69,6 +69,21 @@ def configured_app(config: AppConfig):
         core = GatewayCore(store, agents, policy=config.settings.policy)
         cli = CliChannel()
         core.add_channel(cli)
+        if config.settings.telegram.enabled:
+            from acp_gateway.channels.telegram import TelegramChannel
+
+            telegram_token = config.secrets.get(config.settings.telegram.token_env)
+            if telegram_token is None:
+                raise ValueError("missing Telegram bot token")
+            for name in config.referenced_secret_names():
+                if name == config.settings.telegram.token_env:
+                    continue
+                other = config.secrets.get(name)
+                if other is not None and secrets.compare_digest(
+                    telegram_token.get_secret_value().encode(), other.get_secret_value().encode()
+                ):
+                    raise ValueError("Telegram and other credentials must be different")
+            core.add_channel(TelegramChannel(config.settings.telegram, telegram_token))
         mcp = McpChannel(core, mcp_token) if mcp_token is not None else None
         if mcp is not None:
             core.add_channel(mcp)
@@ -81,7 +96,13 @@ def configured_app(config: AppConfig):
 
 def serve(config: AppConfig) -> None:
     settings = config.settings
-    configure_logging(settings.logging.level, settings.logging.format)
+    configure_logging(
+        settings.logging.level,
+        settings.logging.format,
+        file=settings.logging.file,
+        max_bytes=settings.logging.max_bytes,
+        backup_count=settings.logging.backup_count,
+    )
     with configured_app(config) as app:
         uvicorn.run(
             app,

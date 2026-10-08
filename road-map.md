@@ -226,10 +226,17 @@ MCP не имеет инструментов принятия решений.
 
 ### P2.3. Telegram
 
-**Статус:** OPEN — после `P2.1`; ограничений на данные через Telegram нет
+**Статус:** PARTIAL — 2026-10-08: aiogram 3, private user allowlist, команды,
+сохранённые сессии/результаты, inline allow_once/reject_once, проверка
+user/chat/message/request/deadline, audit и durable update cursor реализованы.
+Реальные aiogram dispatcher/types проверены с Telegram fake session и ACP mock;
+токен отдельного development-бота прошёл getMe, Work Goose прошёл настоящий
+pinned TLS/ACP initialize. Остаток: живая приёмка сообщений/кнопок владельцем,
+редактируемый streaming status (сейчас working + final) и дополнительные
+recovery/delivery сценарии. Ограничений на данные через Telegram нет
 (решение владельца 2026-10-06), в канал идут только запросы, ответы и
 подтверждения.
-**Репозиторий:** `acp-gateway` (`channels/telegram/`)
+**Репозиторий:** `acp-gateway` (`channels/telegram.py`, `docs/setup/telegram.md`)
 
 aiogram 3, отдельный бот (не бот Hermes), allowlist user_id; команды `/new`,
 `/sessions`, `/status`, `/stop`, `/help`; стриминг редактированием одного
@@ -248,9 +255,11 @@ Done из исходного плана (раздел 20), выполненны�
 Есть Windows logon task, удерживающая WSL через `sleep infinity` и не
 обходящая отключение службы. Реальный Task Scheduler lifecycle проверен на
 текущем Windows/WSL-хосте через временную задачу; исправлен отказ
-`WSL_E_DISTRO_NOT_FOUND` из-за кавычек в аргументах. Остаток: восстановить
-user D-Bus в WSL и проверить service health/enable/disable, затем настоящий
-Windows reboot. Systemd/linger включены, но `/run/user/1000/bus` отсутствует.
+`WSL_E_DISTRO_NOT_FOUND` из-за кавычек в аргументах. Остаток: проверить
+настоящий Windows reboot. User D-Bus восстановлен установкой dbus-user-session
+и разрешённым владельцем restart user manager. Полный lifecycle настоящей
+systemd службы прошёл для source CLI и standalone binary, включая SIGKILL
+recovery и сохранение конфигурации/БД при uninstall.
 **Репозиторий:** `acp-gateway` (`service.py`, `deploy/windows/`, `docs/setup/`)
 
 systemd user unit для демона; запуск WSL при входе в Windows (Task Scheduler
@@ -268,7 +277,13 @@ Task Scheduler («при входе», `python -m acp_gateway`), позже — 
 
 ### P3.3. Надёжность и наблюдаемость
 
-**Статус:** OPEN — после `P2.3`.
+**Статус:** PARTIAL — 2026-10-08: component health/probes (owner auth, ACP
+initialize без prompt), ограниченная ротация приватных JSON logs, Telegram
+per-user throttle, polling backoff и retry после явного 429. Agent reconnect
+и восстановление сессий уже проверены core/ACP тестами. Остаток: лимиты
+других каналов, SQLite audit retention, durable outbound delivery и полный
+live e2e Work Goose/Telegram. Сетевые таймауты отправки и agent prompts
+автоматически не переигрываются из-за неопределённого результата.
 **Репозиторий:** `acp-gateway`
 
 Rate limiting по каналам, retry отправки в каналы, ротация логов и audit,
@@ -315,7 +330,7 @@ GitHub Release и загрузка файлов вручную; Actions толь
 **Статус:** PARTIAL — 2026-10-08: help со стартовым маршрутом; `setup`;
 `service install/enable/disable/start/stop/restart/status/uninstall` для
 Linux/WSL. Windows keepalive task проверена настоящим Task Scheduler.
-Остаток: user-service lifecycle после восстановления user D-Bus и reboot;
+Полный user-service lifecycle и crash recovery подтверждены. Остаток: reboot;
 native Windows (`P3.2`); macOS по `P4.6`.
 **Репозиторий:** `acp-gateway` (`cli/`, `service.py`, platform adapters, docs)
 **Решение владельца:** 2026-10-08 — автозапуск и его контроль должны быть
@@ -425,10 +440,11 @@ launchd-агент; ядро уже кроссплатформенное (см. 
 1. **P3.4/P3.5 — установка, настройка и контроль службы.** Основа Linux/WSL
    и самостоятельная Linux-сборка подтверждены чистым контейнерным CI;
    выпускать версии вручную из локальной сборки; Actions только по ручному запуску.
-2. **P3.1/P3.5 — WSL user bus, реальный lifecycle службы и reboot.** Windows
-   Task Scheduler lifecycle уже подтверждён на текущем хосте.
-3. **P2.3 — Telegram.** Основной канал подтверждений после CLI.
-4. **P3.3 — надёжность и наблюдаемость.**
+2. **P3.1/P3.5 — настоящий Windows reboot.** D-Bus восстановлен; systemd и
+   Task Scheduler lifecycles уже подтверждены на текущем хосте.
+3. **P2.3 — живая приёмка Telegram и streaming status.** Команды и основной
+   человеческий канал подтверждений реализованы.
+4. **P3.3 — audit retention, лимиты остальных каналов и delivery recovery.**
 5. **P3.2 — Windows native**, вместе с Windows-частями `P3.4/P3.5`.
 6. **P4.1 — VPS-диспетчер и собственный WSS-коннектор.** До расширений
    каналов; пересечение с `P4.7` уточнить при старте `P4.1`.

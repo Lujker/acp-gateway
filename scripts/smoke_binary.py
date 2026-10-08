@@ -162,7 +162,7 @@ def main():
                             response = owner.get("/health")
                             if response.status_code == 200:
                                 require(
-                                    response.json()["database"]["schema_version"] == 2,
+                                    response.json()["database"]["schema_version"] == 3,
                                     "SQL migrations were not bundled",
                                 )
                                 return

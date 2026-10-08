@@ -51,8 +51,9 @@ and the work queue are in [`road-map.md`](road-map.md) (in Russian).
 | Approvals: human routing, deadlines, audit; core policy limits | ✅ `P1.4` |
 | Daemon, local API, approvals from the CLI | ✅ `P1.5` |
 | Hermes MCP facade; actions approved through the CLI | ✅ `P2.1`, `P2.2` (Hermes MCP module + mock agent) |
-| Checkout installer, setup, Linux/WSL service CLI, standalone Linux binary recipe | Implemented; binary and real Windows task lifecycle verified; WSL user bus/reboot verification pending |
-| Telegram | 🔜 `P2.3` |
+| Checkout installer, setup, Linux/WSL service CLI, standalone Linux binary recipe | Binary, real user-service/crash recovery and Windows task lifecycle verified; actual reboot pending |
+| Telegram | Commands, private user allowlist and audited approval buttons implemented; live acceptance pending |
+| Runtime diagnostics | Component health/probes, private rotated JSON logs and Telegram throttling/recovery implemented |
 | Snikket/XMPP, e-mail, web UI | 🗓 `P4` |
 
 ## Principles
@@ -94,6 +95,9 @@ Build artifacts, checksums, compatibility limits and installation:
 Build locally and attach archives/checksums to a manually created GitHub
 release. The optional GitHub Actions build runs only on explicit manual
 dispatch; pushes, PRs, tags and releases do not consume build minutes.
+
+Telegram setup and human approvals: [`docs/setup/telegram.md`](docs/setup/telegram.md).
+Health probes and rotating logs: [`docs/setup/observability.md`](docs/setup/observability.md).
 
 ### 1. Prepare the agent
 
