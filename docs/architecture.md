@@ -47,7 +47,8 @@ replaces it nor depends on it.
 
 The current LAN and co-located topologies are followed by a planned VPS
 dispatcher topology (`P4.1`, before channel extensions `P4.2`–`P4.4`). The connector is a launch
-mode of the same program; it is not implemented yet.
+mode of the same program. Development starts with protocol and computer
+enrollment; the operational WSS relay is not implemented yet.
 
 | Topology | Gateway runs on | Work Goose runs on | Transport | Status |
 |---|---|---|---|---|
@@ -56,7 +57,7 @@ mode of the same program; it is not implemented yet.
 | **VPS dispatcher** | VPS with a stable IP and/or domain | multiple computers, any ACP-compatible agents | computers initiate WSS connections through our own connector | planned before channel extensions, `P4.1` |
 
 Gateway platforms: **WSL (Linux) is the primary and recommended path**,
-native Windows is supported, macOS is planned. Hence the code requirements:
+native Windows and macOS adapters are planned. Hence the code requirements:
 plain Python without OS-specific dependencies in the core, paths via
 `platformdirs`, service wrappers (systemd / Task Scheduler / launchd) as
 separate files under `deploy/`.
@@ -69,8 +70,10 @@ The Windows logon task under `deploy/windows/` keeps the WSL distro alive;
 gateway autostart remains controlled by the systemd unit. Windows reboot
 verification remains outstanding. A standalone Linux executable recipe now
 bundles Python, dependencies, SQL migrations and version metadata through
-PyInstaller; the CI build targets Ubuntu 22.04 x86_64 and emits a versioned
-archive and SHA-256 checksum. See [binary installation](setup/binary.md).
+PyInstaller; local builds emit versioned archives and SHA-256 checksums.
+GitHub Actions is optional and manual only; releases are also manual.
+The user D-Bus and real systemd lifecycle/crash recovery have been verified
+for source and binary installations. See [binary installation](setup/binary.md).
 See [installation and service control](setup/service.md).
 
 ### 3.1. Networking in the LAN topology
@@ -95,8 +98,9 @@ Outbound connections from the home WSL into the LAN work without any setup.
 
 ### 3.2. Planned VPS dispatcher and WSS connector
 
-Owner decision, 2026-10-08: implement after `P3.2`, before channel extensions
-`P4.2`–`P4.4`. Use
+Updated priority, 2026-10-08: start the Linux/WSL connector before native
+Windows, using the existing core/channels. Channel extensions `P4.2`–`P4.4`
+follow this work. Use
 our own connector, not Tailscale, VPN, SSH or frp tunnels.
 
 ```mermaid
@@ -131,9 +135,10 @@ dispatcher. Approvals remain human decisions; the connector does not grant
 permissions on its own. Reconnecting a computer does not by itself guarantee
 resuming an interrupted task or restoring a session.
 
-Enrollment, authentication, protocol framing, reconnect semantics, task and
-session recovery, authorization and deployment details remain open until work
-on `P4.1` begins; see the 2026-10-08 entry in `road-notes.md`.
+The first target is one owner, Linux/WSL connectors and network ACP agents.
+Development stages and the protocol boundary are documented in
+[the connector design](items/connector.md). Multi-user access, stdio bridging
+and native platform adapters follow the initial route.
 
 ## 4. ACP: how the protocol actually behaves
 

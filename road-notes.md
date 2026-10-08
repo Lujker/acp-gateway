@@ -944,6 +944,25 @@ streaming status edits; прочие P3.3 limits/audit/delivery; native Windows 
 macOS по их платформенным пунктам. Инструкции — `docs/setup/telegram.md`,
 `docs/setup/observability.md`, обновлённый `docs/setup/service.md`.
 
+## 2026-10-08 — актуализация документов и старт P4.1
+
+Владелец поручил записать выполненное, актуализировать документы и начинать
+следующую разработку по рекомендованным приоритетам. Предыдущие результаты
+сохранены: D-Bus восстановлен, real source/binary service lifecycle и crash
+recovery прошли, binary служба включена; Telegram private ACL/commands/approvals
+и health/log rotation реализованы; 361 passed/3 optional skipped, binary/service
+smoke passed. Live bot readiness и pinned ACP initialize не объявляются полной
+приёмкой Telegram задания/кнопок или проверкой Windows reboot.
+
+Устранены устаревшие заявления архитектуры о готовом native Windows и
+автоматическом CI. Следующий основной трек — P4.1 перед native Windows:
+один владелец, Linux/WSL и сетевой ACP. Этапы и начальные recovery/trust правила
+записаны в `docs/items/connector.md`. Оценка 8–12 итераций / 1–2 недели для
+ограниченного MVP / 3–5 для полного объёма — предварительная, не срок выпуска.
+Начинаем с control protocol и локального enrollment credentials; WSS relay
+и VPS deployment не выдаются за существующие. Native Windows/macOS, Telegram
+streaming и audit/delivery retention остаются явными незавершёнными пунктами.
+
 ## Незакрытые вопросы
 
 - **Публикация** — удалять ли старые коммиты с GitHub окончательно (GitHub
