@@ -784,6 +784,47 @@ ACP capabilities; нужны локальный сетевой транспор�
 настоящий Windows reboot/task lifecycle (`P3.1`), затем native Windows
 adapter и binary (`P3.2` + Windows-части `P3.4/P3.5`).
 
+## 2026-10-08 — P3.4: самостоятельный Linux-бинарник
+
+- Отдельная dependency group `build`: PyInstaller (`6.22.3` в `uv.lock`),
+  build-only зависимости не попадают в установку checkout как runtime.
+  `scripts/build_binary.py` запускается через `uv run --frozen --group build`.
+- One-file `acpgw` включает Python 3.12, runtime-зависимости, SQL-миграции,
+  package metadata для версии и динамические модули uvicorn/websockets/anyio.
+  Entry point вызывает `multiprocessing.freeze_support()` и тот же CLI.
+  Config, .env, pins, БД и файлы checkout в сборку не добавляются.
+- Выход: executable, versioned tar.gz с LICENSE/INSTALL.md, checksum SHA-256
+  и build metadata (architecture, Python, libc, hash uv.lock). Рецепт
+  фиксирует версии зависимостей, но не обещает побайтовую воспроизводимость.
+- Локальная проверенная сборка: **Linux x86_64, Python 3.12.10, glibc 2.35**,
+  executable около **26 MiB**. На runtime-хосте отдельный Python/uv не нужен.
+  Документированы libc/architecture baseline и необходимость executable temp
+  filesystem для распаковки one-file; arm64 и другие ОС здесь не проверялись.
+- `scripts/smoke_binary.py` запускает именно готовый executable вне checkout,
+  с PATH без Python, отдельными config/data/home. Проверены help/version,
+  setup без замены токенов, миграции, CLI/API/SSE, настоящий pinned WSS к
+  mock Goose, память между ходами, jobs, CLI approve, интерактивный
+  approvals watch/reject, отмена pending permission, MCP discovery/prompt,
+  восстановление сессии после рестарта executable и frozen service commands.
+  Для службы используется stand-in systemctl: настоящий manager lifecycle
+  по-прежнему относится к проверке `P3.1/P3.5` на хосте.
+- Добавлен GitHub Actions workflow на Ubuntu 22.04: locked dependencies,
+  lint/tests, binary build, полный artifact smoke, запуск --help в чистом
+  Ubuntu container без Python, upload архивов/checksums/metadata. Это CI
+  artifacts, не автоматически опубликованный GitHub Release.
+- Локальный Docker не подключён к WSL, поэтому clean-container шаг локально
+  не выполнен. Он не выдан за проверенный результат; первый CI-прогон ещё
+  требуется. Инструкция сборки/установки — `docs/setup/binary.md`.
+- Полный pytest: **345 passed, 3 skipped**, 92.85 с; optional Hermes checks
+  здесь не включались. Ruff/format/diff, workflow YAML, secret scan и проверка
+  SHA-256 архива — чисто. Runtime приложения не менялся.
+- Context7 callable недоступен: использованы официальные PyInstaller docs и
+  setup-uv README, а также текущие исходники приложения и реальные прогоны.
+
+`P3.4` остаётся PARTIAL: standalone Linux artifact уже реализован и локально
+проверен, остаток — чистый CI-прогон, версионированный выпуск, другие платформы.
+Binary build/service installation сохраняют прежний CLI-контракт.
+
 ## Незакрытые вопросы
 
 - **Публикация** — удалять ли старые коммиты с GitHub окончательно (GitHub

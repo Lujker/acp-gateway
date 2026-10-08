@@ -67,7 +67,10 @@ private configuration and independent owner/MCP tokens, preserving existing
 files. `scripts/install.sh` installs the checkout as an isolated uv tool.
 The Windows logon task under `deploy/windows/` keeps the WSL distro alive;
 gateway autostart remains controlled by the systemd unit. Windows reboot
-verification and standalone binary builds remain outstanding.
+verification remains outstanding. A standalone Linux executable recipe now
+bundles Python, dependencies, SQL migrations and version metadata through
+PyInstaller; the CI build targets Ubuntu 22.04 x86_64 and emits a versioned
+archive and SHA-256 checksum. See [binary installation](setup/binary.md).
 See [installation and service control](setup/service.md).
 
 ### 3.1. Networking in the LAN topology

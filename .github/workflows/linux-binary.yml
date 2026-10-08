@@ -1,0 +1,40 @@
+name: Linux binary
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    tags: ['v*']
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@bec219d24cd3e171d82865faccec33120bb574f4 # v10.1.0
+        with:
+          python-version: '3.12'
+      - run: uv sync --frozen --group build
+      - run: uv run --frozen ruff check
+      - run: uv run --frozen ruff format --check
+      - run: uv run --frozen pytest
+      - run: uv run --frozen --group build python scripts/build_binary.py
+      - run: uv run --frozen python scripts/smoke_binary.py dist/acpgw-linux-x86_64/acpgw
+      - name: Check executable in Ubuntu without Python
+        run: >-
+          docker run --rm
+          --mount type=bind,source="$PWD/dist/acpgw-linux-x86_64/acpgw",target=/opt/acpgw,readonly
+          ubuntu:22.04 /opt/acpgw --help
+      - uses: actions/upload-artifact@v4
+        with:
+          name: acpgw-linux-x86_64
+          path: |
+            dist/*.tar.gz
+            dist/*.sha256
+            dist/*.build.json
+          if-no-files-found: error

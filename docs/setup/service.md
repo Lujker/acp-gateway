@@ -20,9 +20,9 @@ If the executable/interpreter path changes, rerun `service install` and
 `service restart` to update the installed unit.
 
 For development, use `uv sync --frozen` followed by `uv run acpgw setup`.
-Both installation routes expose the same CLI commands. A standalone binary
-without a separately installed Python is planned under `P3.4` and is not
-available yet.
+Both installation routes expose the same CLI commands. A standalone Linux
+executable with an embedded Python runtime can also be built; see
+[binary build and installation](binary.md).
 
 ```bash
 acpgw --help

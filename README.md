@@ -51,7 +51,7 @@ and the work queue are in [`road-map.md`](road-map.md) (in Russian).
 | Approvals: human routing, deadlines, audit; core policy limits | ✅ `P1.4` |
 | Daemon, local API, approvals from the CLI | ✅ `P1.5` |
 | Hermes MCP facade; actions approved through the CLI | ✅ `P2.1`, `P2.2` (Hermes MCP module + mock agent) |
-| Checkout installer, initial setup, Linux/WSL service CLI | Implemented; Windows reboot verification and standalone binaries pending |
+| Checkout installer, setup, Linux/WSL service CLI, standalone Linux binary recipe | Implemented; clean-container CI and Windows reboot verification pending |
 | Telegram | 🔜 `P2.3` |
 | Snikket/XMPP, e-mail, web UI | 🗓 `P4` |
 
@@ -86,6 +86,11 @@ For an installed `acpgw` command outside the checkout, run
 `sh scripts/install.sh`, then configure the files created by `acpgw setup`.
 The installer keeps existing configuration and tokens. Installation and
 service commands: [`docs/setup/service.md`](docs/setup/service.md).
+
+To build a standalone Linux executable with no Python required on the runtime
+host, use `uv run --frozen --group build python scripts/build_binary.py`.
+Build artifacts, checksums, compatibility limits and installation:
+[`docs/setup/binary.md`](docs/setup/binary.md).
 
 ### 1. Prepare the agent
 
