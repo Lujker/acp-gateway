@@ -10,7 +10,7 @@ tool credentials and work files stay on computers.
 | Stage | Deliverable |
 |---|---|
 | 1 | Implemented: versioned control frames, stable computer IDs, local enrollment, credential rotation/revocation |
-| 2 | Outbound WSS route to one network ACP agent, requests/results/human approvals |
+| 2 | In progress: WSS registration/heartbeats implemented; ACP route, requests/results/human approvals next |
 | 3 | Multiple computers/agents, selection in channels, isolated session mappings |
 | 4 | Heartbeats, reconnect/connection epochs, bounded queues, deduplication and uncertain task outcomes |
 | 5 | VPS deployment, connector services/upgrades and local stdio bridging |
@@ -82,6 +82,62 @@ Control protocol v1 implements `hello`, `welcome`, `ping`, `pong` and `error`.
 Frames are bounded to 64 KiB of UTF-8 JSON; hello contains 1–100 uniquely named
 agents. Unknown fields, duplicate JSON keys, invalid identifiers and unsupported
 versions are rejected with input-independent errors. Connection IDs are UUIDs.
-These models do not yet implement transport, authorization handshakes, heartbeat
-scheduling or task routing. Revocation of an active connection will be wired
-into the relay in stage 2.
+WSS transport, authorization and heartbeat scheduling are implemented below.
+Task routing is the next increment of stage 2.
+
+## Stage 2: WSS registration channel
+
+Two foreground modes now establish a real control connection. They register a
+computer and its configured agent aliases; they do not relay tasks yet.
+
+On the dispatcher host, provision a TLS certificate/key and enroll the computer
+with the stage 1 commands. Then start the separate listener:
+
+```bash
+acpgw --config /path/to/dispatcher.yaml dispatcher \
+  --host 0.0.0.0 --port 8766 \
+  --tls-cert /private/path/dispatcher.crt --tls-key /private/path/dispatcher.key
+```
+
+Default binding is `127.0.0.1`; a public bind requires the explicit `--host`.
+TLS is mandatory. This listener exposes only `/connect`; the owner API and MCP
+remain on their existing loopback listener. It uses a separate dispatcher lock
+in `data_dir`. Its SQLite registry can be administered by `computers` commands
+while it runs. `computers list` shows enrolled/enabled identities, not online
+connection status. There is no public registration-status API yet.
+
+Securely copy the enrollment credential to the computer and keep it in a file
+owned by its local Linux user with mode `0600`. Obtain the dispatcher certificate
+SHA-256 fingerprint through a trusted route, for example the hex value printed by
+`openssl x509 -in dispatcher.crt -noout -fingerprint -sha256`. Configure local
+agent profiles in the computer's YAML, then run:
+
+```bash
+acpgw --config /path/to/computer.yaml connector \
+  --dispatcher-url wss://dispatcher.example:8766/connect \
+  --computer-id work-laptop --token-file /private/path/work-laptop.key \
+  --tls-fingerprint AA:BB:...:FF
+```
+
+The pin is mandatory in this first mode; there is no implicit first-use trust.
+Credential files must be regular, small, private and locally owned; symlinks
+are refused. Dispatcher URLs cannot contain credentials, queries or fragments.
+HTTP redirects are refused. The credential is sent in the authorization header
+only after TLS validates the pinned certificate. Wire DEBUG traces are disabled
+to keep authorization headers out of logs. No local agent URL/credential is sent
+in the manifest, and registering does not connect to the ACP agent yet.
+
+Authorization occurs before WebSocket upgrade and is checked again when hello
+arrives. Hello must match the authenticated computer ID. Each accepted
+connection gets a new UUID epoch. A second connection for an active computer is
+refused; it cannot replace that registration. Heartbeats default to 20 seconds;
+missing or mismatched replies close the connection. Rotation/revocation closes
+an active connection on the next access check, normally within one second.
+Failure to read the access registry also closes it. One computer's revocation
+leaves other registrations running. No reconnect or prompt replay is automatic.
+Use Ctrl+C for foreground shutdown; dedicated service modes are stage 5 work.
+
+Rebuild locally to include these modes in a standalone binary. The opt-in smoke
+`scripts/smoke_connector.py /path/to/acpgw` runs both modes outside the checkout
+with no Python on the child PATH, checks two heartbeats, live revocation and
+interrupt shutdown. It uses only temporary certificates, config, DB and keys.

@@ -992,6 +992,35 @@ ruff check/format и git diff --check проходят. Отдельная Linux
 Read-only проверка службы после разработки: ActiveState=active, SubState=running,
 UnitFileState=enabled. GitHub Actions и публикация релиза не запускались.
 
+## 2026-10-08 — P4.1: WSS-регистрация компьютера
+
+Добавлены foreground-команды `dispatcher` и `connector`. Диспетчер использует
+отдельный TLS-only listener `/connect`; owner API/MCP по-прежнему loopback.
+Компьютер подключается исходящим WSS с обязательным fingerprint, без redirects,
+токена в URL или implicit TOFU. До upgrade проверяется отдельный ключ компьютера;
+hello обязан соответствовать выданному доступу. Повторное активное соединение
+отклоняется. UUID epoch меняется при новом подключении; heartbeat ограничивает
+время потери связи. Ротация/отзыв отключают живое соединение на очередной проверке
+(обычно до 1 с), ошибка БД также закрывает доступ. Проверены независимость двух
+компьютеров и отсутствие ключа в wire DEBUG. Manifest содержит aliases/names,
+без URL/credentials локальных ACP-агентов.
+
+Это рабочий control channel регистрации, **передачи задач пока нет**. Следующий
+шаг — ACP relay и связка с core для sessions/prompts/updates/human approvals.
+Автоматический reconnect/replay отсутствует; выделенные service modes остаются
+этапом 5. Инструкции и ограничения — `docs/items/connector.md`.
+
+Собран отдельный Linux/WSL бинарник во временном каталоге. Новый
+`scripts/smoke_connector.py` проверил обе CLI-команды вне checkout с пустым
+Python PATH: подключение, два heartbeat, live revoke и shutdown через Ctrl+C.
+Финальный набор: **425 passed, 3 optional Hermes skipped**, 132.09 с;
+ruff check/format и git diff --check проходят. Финальная сборка прошла также
+прежний full binary smoke: CLI/API/SSE, pinned ACP, approvals/cancel, MCP,
+restart persistence и frozen service commands. Рабочая служба проверена read-only:
+ActiveState=active, SubState=running, UnitFileState=enabled. Её бинарник не
+обновлялся; публичный VPS не разворачивался. В ручной workflow добавлен новый
+smoke; trigger остаётся только workflow_dispatch. GitHub Actions/релиз не запускались.
+
 ## Незакрытые вопросы
 
 - **Публикация** — удалять ли старые коммиты с GitHub окончательно (GitHub

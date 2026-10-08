@@ -41,7 +41,8 @@ implemented and verified against Work Goose. The Hermes MCP facade is implemente
 and checked with Hermes' installed MCP module against the recorded Goose mock.
 Linux/WSL service lifecycle and Telegram commands/approval buttons are implemented;
 actual reboot and the live human Telegram acceptance remain pending. Connector
-development has started with local computer enrollment and control frames. The plan
+development includes local computer enrollment and a pinned WSS registration
+channel; task relay is next. The plan
 and the work queue are in [`road-map.md`](road-map.md) (in Russian).
 
 | Area | State |
@@ -56,7 +57,7 @@ and the work queue are in [`road-map.md`](road-map.md) (in Russian).
 | Checkout installer, setup, Linux/WSL service CLI, standalone Linux binary recipe | Binary, real user-service/crash recovery and Windows task lifecycle verified; actual reboot pending |
 | Telegram | Commands, private user allowlist and audited approval buttons implemented; live acceptance pending |
 | Runtime diagnostics | Component health/probes, private rotated JSON logs and Telegram throttling/recovery implemented |
-| [VPS connector](docs/items/connector.md) | Control protocol and local enrollment/rotation/revocation implemented; WSS relay next |
+| [VPS connector](docs/items/connector.md) | Enrollment and pinned WSS registration/heartbeats implemented; task relay next |
 | Snikket/XMPP, e-mail, web UI | 🗓 `P4` |
 
 ## Principles

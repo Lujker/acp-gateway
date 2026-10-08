@@ -21,6 +21,7 @@ jobs:
       - run: uv run --frozen pytest
       - run: uv run --frozen --group build python scripts/build_binary.py
       - run: uv run --frozen python scripts/smoke_binary.py dist/acpgw-linux-x86_64/acpgw
+      - run: uv run --frozen python scripts/smoke_connector.py dist/acpgw-linux-x86_64/acpgw
       - name: Check executable in Ubuntu without Python
         run: >-
           uv run --frozen python scripts/smoke_binary.py

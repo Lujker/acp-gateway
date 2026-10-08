@@ -60,6 +60,25 @@ def _build_parser() -> argparse.ArgumentParser:
     ):
         service_sub.add_parser(action, help=help_text)
 
+    dispatcher = commands.add_parser("dispatcher", help="TLS computer ingress (registration only)")
+    dispatcher.add_argument(
+        "--host", default="127.0.0.1", help="bind address; explicit for public ingress"
+    )
+    dispatcher.add_argument("--port", type=int, default=8766)
+    dispatcher.add_argument("--tls-cert", type=Path, required=True)
+    dispatcher.add_argument("--tls-key", type=Path, required=True)
+    connector = commands.add_parser(
+        "connector", help="outgoing WSS computer registration (no task relay yet)"
+    )
+    connector.add_argument("--dispatcher-url", required=True, help="wss://host:port/connect")
+    connector.add_argument("--computer-id", required=True)
+    connector.add_argument(
+        "--token-file", type=Path, required=True, help="private enrollment credential"
+    )
+    connector.add_argument(
+        "--tls-fingerprint", required=True, help="trusted dispatcher certificate SHA-256"
+    )
+
     computers = commands.add_parser(
         "computers", help="local enrollment and credential control (connector foundation)"
     )
@@ -181,6 +200,10 @@ def main(argv: Sequence[str] | None = None) -> int:
     if args.command == "config" and args.config_command == "check":
         return _cmd_config_check(cfg)
     try:
+        if args.command in {"connector", "dispatcher"}:
+            from acp_gateway.connectors.commands import run as run_connector_command
+
+            return run_connector_command(cfg, args)
         if args.command == "computers":
             from acp_gateway.cli.computers import run_computers
 

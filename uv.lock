@@ -25,6 +25,7 @@ dependencies = [
     { name = "python-dotenv" },
     { name = "structlog" },
     { name = "uvicorn" },
+    { name = "websockets" },
 ]
 
 [package.dev-dependencies]
@@ -51,6 +52,7 @@ requires-dist = [
     { name = "python-dotenv", specifier = ">=1.0" },
     { name = "structlog", specifier = ">=25.1" },
     { name = "uvicorn", specifier = ">=0.34" },
+    { name = "websockets", specifier = ">=15" },
 ]
 
 [package.metadata.requires-dev]

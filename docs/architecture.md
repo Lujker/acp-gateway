@@ -47,14 +47,14 @@ replaces it nor depends on it.
 
 The current LAN and co-located topologies are followed by a planned VPS
 dispatcher topology (`P4.1`, before channel extensions `P4.2`–`P4.4`). The connector is a launch
-mode of the same program. Development starts with protocol and computer
-enrollment; the operational WSS relay is not implemented yet.
+mode of the same program. Computer enrollment and a separate pinned WSS
+registration/heartbeat channel are implemented. ACP task relay is next.
 
 | Topology | Gateway runs on | Work Goose runs on | Transport | Status |
 |---|---|---|---|---|
 | **LAN** (initial default) | home host, WSL | work laptop, WSL | `wss://<work-host>:<port>/acp`, TLS + secret + pinning | MVP target |
 | **Co-located** | the same machine as Work Goose | WSL | `ws://127.0.0.1:3284/acp` (loopback), secret | supported from MVP |
-| **VPS dispatcher** | VPS with a stable IP and/or domain | multiple computers, any ACP-compatible agents | computers initiate WSS connections through our own connector | planned before channel extensions, `P4.1` |
+| **VPS dispatcher** | VPS with a stable IP and/or domain | multiple computers, any ACP-compatible agents | computers initiate WSS connections through our own connector | registration channel implemented; task relay next, `P4.1` |
 
 Gateway platforms: **WSL (Linux) is the primary and recommended path**,
 native Windows and macOS adapters are planned. Hence the code requirements:

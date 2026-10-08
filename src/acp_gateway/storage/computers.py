@@ -32,15 +32,25 @@ class ComputerRegistry:
         return [dict(row) for row in rows]
 
     def authenticate(self, computer_id: str, credential: str) -> bool:
+        return self.authorize(computer_id, credential) is not None
+
+    def authorize(self, computer_id: str, credential: str) -> int | None:
+        """Return a generation grant; rotation/revocation invalidates that grant."""
         if not _ID.fullmatch(computer_id) or len(credential) > 256 or not credential.isascii():
-            return False
+            return None
         row = self._conn.execute(
-            "SELECT credential_digest, enabled FROM computers WHERE computer_id = ?",
+            "SELECT credential_digest, enabled, generation FROM computers WHERE computer_id = ?",
             (computer_id,),
         ).fetchone()
         expected = row[0] if row else "0" * 64
         matches = hmac.compare_digest(expected, _digest(credential))
-        return bool(row and row[1] and matches)
+        return row[2] if row and row[1] and matches else None
+
+    def grant_valid(self, computer_id: str, generation: int) -> bool:
+        row = self._conn.execute(
+            "SELECT enabled, generation FROM computers WHERE computer_id = ?", (computer_id,)
+        ).fetchone()
+        return bool(row and row[0] and row[1] == generation)
 
     def issue(self, computer_id: str, token_file: Path, *, display_name: str | None = None):
         """Enroll with a name, otherwise rotate. Export to a new private file.
