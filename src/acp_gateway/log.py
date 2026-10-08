@@ -112,7 +112,9 @@ def _redact_value(value: Any, depth: int = 0) -> Any:
     if depth >= _MAX_DEPTH:
         return MASK
     if isinstance(value, Mapping):
-        return {k: _redact_item(k, v, depth + 1) for k, v in value.items()}
+        return {
+            _redact_value(k, depth + 1): _redact_item(k, v, depth + 1) for k, v in value.items()
+        }
     if isinstance(value, list | tuple | set | frozenset):
         return _rebuild(value, [_redact_value(v, depth + 1) for v in value])
     if isinstance(value, bytes | bytearray | memoryview):
@@ -163,6 +165,9 @@ def redact_secrets(_logger: Any, _method: str, event_dict: MutableMapping[str, A
             event_dict[key] = _redact_value(event_dict[key])
         else:
             event_dict[key] = _redact_item(key, event_dict[key])
+        safe_key = _redact_value(key)
+        if safe_key != key:
+            event_dict[safe_key] = event_dict.pop(key)
     return event_dict
 
 

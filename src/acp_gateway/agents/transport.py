@@ -38,7 +38,9 @@ def _acceptable(message: Any) -> bool:
     """
     if not isinstance(message, dict):
         return False
-    if "id" in message and not isinstance(message["id"], int | str | None):
+    if "id" in message and (
+        isinstance(message["id"], bool) or not isinstance(message["id"], int | str | None)
+    ):
         return False
     if message.get("method") is not None:
         return isinstance(message["method"], str)

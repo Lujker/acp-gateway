@@ -51,6 +51,17 @@ def test_sensitive_keys_are_masked(output):
     assert record["authorization"] == MASK
 
 
+def test_secrets_in_mapping_keys_are_redacted(output):
+    secret = "opaque-" + "value-123456"
+    register_secret(secret)
+    get_logger("test").info("keys", **{secret: "value"}, nested={secret: "plain"})
+    assert secret not in output.getvalue()
+    record = lines(output)[0]
+    assert record[MASK] == "value"
+    assert record["nested"] == {MASK: "plain"}
+    assert redact_value({secret.encode(): "plain"}) == {MASK: "plain"}
+
+
 def test_empty_sensitive_values_are_kept(output):
     get_logger("test").info("config", api_token_env="ACPGW_API_TOKEN", secret=None)
     record = lines(output)[0]
