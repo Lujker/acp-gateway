@@ -151,16 +151,30 @@ passed on the development Windows/WSL host on 2026-10-08.
 
 If `systemctl --user` fails with `Failed to connect to bus`, confirm that
 `$XDG_RUNTIME_DIR/bus` exists and your distro provides a user D-Bus session.
-On Ubuntu/Debian, check/install `dbus-user-session`, then restart the WSL
-distro when its running work can be interrupted. Linger alone does not
-provide this socket. The current development host has systemd and linger
-enabled, but lacks this session bus; a real gateway user-service lifecycle
-could not be verified there. CLI and binary smoke report this limitation
-separately from Task Scheduler validation.
+On Ubuntu/Debian, check/install `dbus-user-session`. Linger alone does not
+provide this socket. Restart the user manager or WSL distro when the affected
+work can be interrupted; restarting the user manager stops all of that user's
+systemd services, including ssh-agent. On the development host, installing
+the missing package and restarting `user@1000.service` restored the bus.
+The first start hit a transient cgroup `EBUSY`; a subsequent start succeeded.
+
+The real gateway user-service lifecycle passed for both the checkout CLI
+and standalone Linux executable, including recovery after `SIGKILL` and
+preservation of config/tokens/database on uninstall. To repeat the opt-in
+check when no gateway service is already installed:
+
+```bash
+uv run --frozen python scripts/smoke_service.py .venv/bin/acpgw
+# Or test a built executable:
+uv run --frozen python scripts/smoke_service.py dist/acpgw-linux-x86_64/acpgw
+```
+
+This briefly installs/enables the real user unit with temporary application
+config/data, then uninstalls it. It refuses to replace any existing unit.
 
 After a real Windows reboot, sign in and verify `acpgw service status` and
 `acpgw status` without opening a WSL terminal first. Also verify disable,
 enable and shutdown behavior. The unit syntax and CLI paths are tested;
-the PowerShell task lifecycle passed on Windows; the user-service lifecycle
-and actual reboot scenario still require validation after fixing the bus.
+the PowerShell task and user-service lifecycles passed on Windows/WSL.
+The actual reboot scenario still requires validation.
 Native Windows service control is planned with `P3.2`/`P3.5`.
