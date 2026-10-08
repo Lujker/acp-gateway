@@ -6,6 +6,8 @@ Build on the target Linux architecture with Python 3.12 and uv:
 uv sync --frozen --group build
 uv run --frozen --group build python scripts/build_binary.py
 uv run --frozen python scripts/smoke_binary.py dist/acpgw-linux-x86_64/acpgw
+# With a working Linux Docker engine, repeat the full smoke without host Python:
+uv run --frozen python scripts/smoke_binary.py dist/acpgw-linux-x86_64/acpgw --container-image ubuntu:22.04
 ```
 
 The output is a single `acpgw` executable with an embedded Python runtime,
@@ -52,3 +54,9 @@ MCP tools, agent prompts, human approvals, cancellation, persistence and
 frozen service installation. A real Windows reboot and native Windows binary
 are separate milestones; this Linux executable does not implement Windows
 service control.
+
+The container smoke mounts only the executable and private temporary test
+files, uses the current user's uid/gid and Linux host networking for the mock
+agent, and forwards only temporary HOME/XDG/PATH settings to the container.
+The checkout and the harness' Python environment are not mounted. CI runs
+this full scenario in the official Ubuntu image, which contains no Python.

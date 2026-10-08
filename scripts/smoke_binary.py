@@ -5,6 +5,7 @@ import asyncio
 import json
 import os
 import secrets
+import shutil
 import signal
 import socket
 import subprocess
@@ -34,6 +35,9 @@ def require(condition, message):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("binary", type=Path)
+    parser.add_argument(
+        "--container-image", help="run every binary command in a clean Docker image"
+    )
     args = parser.parse_args()
     binary = args.binary.resolve()
     with tempfile.TemporaryDirectory(prefix="acpgw-binary-") as directory:
@@ -53,9 +57,33 @@ def main():
             }
         )
 
+        launcher = []
+        if args.container_image:
+            docker = shutil.which("docker")
+            require(docker is not None, "Docker is required for --container-image")
+            launcher = [
+                docker,
+                "run",
+                "--rm",
+                "--interactive",
+                "--network",
+                "host",
+                "--user",
+                f"{os.getuid()}:{os.getgid()}",
+                "--workdir",
+                str(root),
+                "--volume",
+                f"{root}:{root}",
+                "--volume",
+                f"{binary}:{binary}:ro",
+            ]
+            for name in ("HOME", "XDG_CONFIG_HOME", "XDG_DATA_HOME", "XDG_STATE_HOME", "PATH"):
+                launcher += ["--env", f"{name}={env[name]}"]
+            launcher += [args.container_image]
+
         def run(*arguments):
             result = subprocess.run(  # noqa: S603 (explicit binary, no shell)
-                [str(binary), *arguments],
+                [*launcher, str(binary), *arguments],
                 cwd=root,
                 env=env,
                 capture_output=True,
@@ -102,7 +130,7 @@ def main():
             def start():
                 log = (root / ("daemon-" + secrets.token_hex(3) + ".log")).open("w")
                 process = subprocess.Popen(  # noqa: S603
-                    [str(binary), "serve"],
+                    [*launcher, str(binary), "serve"],
                     cwd=root,
                     env=env,
                     stdout=log,
@@ -190,7 +218,7 @@ def main():
                     watch_log = root / "watch.log"
                     with watch_log.open("w") as capture:
                         watcher = subprocess.Popen(  # noqa: S603
-                            [str(binary), "approvals", "watch"],
+                            [*launcher, str(binary), "approvals", "watch"],
                             cwd=root,
                             env=env,
                             stdin=subprocess.PIPE,

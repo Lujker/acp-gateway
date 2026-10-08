@@ -825,6 +825,16 @@ adapter и binary (`P3.2` + Windows-части `P3.4/P3.5`).
 проверен, остаток — чистый CI-прогон, версионированный выпуск, другие платформы.
 Binary build/service installation сохраняют прежний CLI-контракт.
 
+### Дополнение к P3.4: полная проверка в контейнере
+
+Контейнерный шаг CI расширен от `--help` до того же полного smoke-сценария
+через `--container-image ubuntu:22.04`: все CLI, daemon/API/MCP, pinned TLS,
+approvals/watch/reject, cancel, persistence и frozen service commands
+выполняются внутри чистого контейнера. Монтируются только executable и
+временные тестовые файлы, передаются временные HOME/XDG/PATH; checkout и
+Python harness в контейнер не попадают. Проверку запускает CI, поскольку
+локальный Docker engine в WSL недоступен.
+
 ## Незакрытые вопросы
 
 - **Публикация** — удалять ли старые коммиты с GitHub окончательно (GitHub
