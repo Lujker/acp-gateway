@@ -104,15 +104,25 @@ async def test_hello_cannot_impersonate_another_computer(ingress):
     assert not ingress[0].active
 
 
-async def test_duplicate_connection_cannot_replace_active_registration(ingress):
+async def test_new_authenticated_connection_replaces_active_registration(ingress):
     dispatcher, _, url, credential, pin, _ = ingress
     first, welcome = await connect_control(
         url, credential=credential, hello=hello(), fingerprint=pin
     )
-    with pytest.raises(ValueError, match="rejected computer registration"):
-        await connect_control(url, credential=credential, hello=hello(), fingerprint=pin)
-    assert dispatcher.active["work"].connection_id == welcome.connection_id
-    await first.close()
+    second, next_welcome = await connect_control(
+        url, credential=credential, hello=hello(), fingerprint=pin
+    )
+    try:
+        await asyncio.wait_for(first.wait_closed(), timeout=3)
+        assert first.close_code == 1008
+        assert next_welcome.connection_id != welcome.connection_id
+        assert dispatcher.active["work"].connection_id == next_welcome.connection_id
+        # The replaced handler's cleanup must not remove the new registration.
+        await asyncio.sleep(0.05)
+        assert dispatcher.active["work"].connection_id == next_welcome.connection_id
+    finally:
+        await first.close()
+        await second.close()
 
 
 @pytest.mark.parametrize("action", ["rotate", "revoke"])
@@ -299,3 +309,132 @@ async def test_non_websocket_tls_endpoint_reports_safe_error(tmp_path):
                 hello=hello(),
                 fingerprint=fingerprint(cert),
             )
+
+
+@pytest.fixture(params=["/connect", "/gateway/connect", "/"])
+async def plain_ingress(tmp_path, request):
+    store = Store.open_in(tmp_path / "data")
+    key = tmp_path / "computer.key"
+    store.computers.issue("work", key, display_name="Work")
+    dispatcher = ControlDispatcher(store.computers, heartbeat_seconds=5, connect_path=request.param)
+    try:
+        async with dispatcher.listen("127.0.0.1", 0) as server:
+            port = server.sockets[0].getsockname()[1]
+            yield dispatcher, f"ws://127.0.0.1:{port}{request.param}", key.read_text().strip()
+    finally:
+        store.close()
+
+
+async def test_plaintext_ip_registration_and_heartbeat(plain_ingress, monkeypatch):
+    dispatcher, url, credential = plain_ingress
+    if dispatcher.connect_path == "/":
+        url = url.removesuffix("/")  # bare IP:port is a root-path WebSocket URL
+
+    async def no_tls_probe(*args, **kwargs):
+        raise AssertionError("plaintext must not probe TLS")
+
+    monkeypatch.setattr("acp_gateway.connectors.control.pin_certificate", no_tls_probe)
+    connection, welcome = await connect_control(url, credential=credential, hello=hello())
+    try:
+        assert dispatcher.active["work"].connection_id == welcome.connection_id
+        assert connection.transport.get_extra_info("ssl_object") is None
+        ping = decode_frame(await connection.recv())
+        await connection.send(encode_frame(Pong(sequence=ping.sequence)))
+        assert connection.state.name != "CLOSED"
+    finally:
+        await connection.close()
+    await eventually(lambda: not dispatcher.active)
+
+
+async def test_plaintext_still_requires_computer_credential(plain_ingress):
+    dispatcher, url, _ = plain_ingress
+    with pytest.raises(ValueError, match="cannot connect to dispatcher"):
+        await connect_control(url, credential="invalid", hello=hello())
+    assert not dispatcher.active
+
+
+async def test_listener_requires_its_configured_path(plain_ingress):
+    dispatcher, url, credential = plain_ingress
+    wrong_url = url[: url.index("/", len("ws://"))] + "/wrong"
+    with pytest.raises(InvalidStatus) as error:
+        await connect(
+            wrong_url,
+            proxy=None,
+            additional_headers={"Authorization": "Bearer " + credential, "X-ACP-Computer": "work"},
+        )
+    assert error.value.response.status_code == 404
+    assert not dispatcher.active
+
+
+async def test_plaintext_revoke_closes_only_registered_connection(plain_ingress):
+    dispatcher, url, credential = plain_ingress
+    connection, _ = await connect_control(url, credential=credential, hello=hello())
+    dispatcher.registry.revoke("work")
+    await asyncio.wait_for(connection.wait_closed(), timeout=3)
+    assert connection.close_code == 1008
+    await eventually(lambda: not dispatcher.active)
+
+
+async def test_pin_cannot_be_silently_ignored_for_plaintext(plain_ingress):
+    dispatcher, url, credential = plain_ingress
+    with pytest.raises(ValueError, match="requires a wss"):
+        await connect_control(url, credential=credential, hello=hello(), fingerprint="00" * 32)
+    assert not dispatcher.active
+
+
+async def test_invalid_hello_does_not_displace_live_registration(ingress):
+    dispatcher, _, url, credential, pin, _ = ingress
+    first, welcome = await connect_control(
+        url, credential=credential, hello=hello(), fingerprint=pin
+    )
+    invalid = await raw_connect(ingress)
+    try:
+        await invalid.send(encode_frame(hello("other")))
+        await asyncio.wait_for(invalid.wait_closed(), timeout=3)
+        assert invalid.close_code == 1008
+        assert dispatcher.active["work"].connection_id == welcome.connection_id
+        ping = decode_frame(await first.recv())
+        await first.send(encode_frame(Pong(sequence=ping.sequence)))
+    finally:
+        await first.close()
+        await invalid.close()
+
+
+async def test_wss_without_pin_rejects_untrusted_certificate_before_auth(ingress, monkeypatch):
+    dispatcher, _, url, credential, _, _ = ingress
+    seen = []
+    original = dispatcher.registry.authorize
+
+    def capture(identity, token):
+        seen.append(True)
+        return original(identity, token)
+
+    monkeypatch.setattr(dispatcher.registry, "authorize", capture)
+    with pytest.raises(ValueError, match="cannot connect to dispatcher"):
+        await connect_control(url, credential=credential, hello=hello())
+    assert seen == []
+
+
+async def test_ca_validated_domain_and_subpath_without_pin(tmp_path, monkeypatch):
+    cert, key = make_cert(tmp_path, ca=True, hostname="localhost")
+    tls = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+    tls.load_cert_chain(cert, key)
+    trusted = ssl.create_default_context(cafile=cert)
+    monkeypatch.setattr(
+        "acp_gateway.connectors.control.ssl.create_default_context", lambda: trusted
+    )
+    store = Store.open(":memory:")
+    token = tmp_path / "computer.key"
+    store.computers.issue("work", token, display_name="Work")
+    dispatcher = ControlDispatcher(store.computers, connect_path="/gateway/connect")
+    try:
+        async with dispatcher.listen("127.0.0.1", 0, tls=tls) as server:
+            port = server.sockets[0].getsockname()[1]
+            connection, _ = await connect_control(
+                f"wss://localhost:{port}/gateway/connect",
+                credential=token.read_text().strip(),
+                hello=hello(),
+            )
+            await connection.close()
+    finally:
+        store.close()

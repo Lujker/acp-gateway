@@ -9,6 +9,7 @@ from acp_gateway.connectors.control import (
     ControlDispatcher,
     read_credential,
     run_connector,
+    validate_connect_path,
 )
 from acp_gateway.connectors.protocol import AgentManifest, Hello
 from acp_gateway.storage import Store
@@ -40,9 +41,14 @@ def run(config, args):
 
     if not 1 <= args.port <= 65535:
         raise ValueError("dispatcher port must be between 1 and 65535")
-    tls = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
-    tls.minimum_version = ssl.TLSVersion.TLSv1_2
-    tls.load_cert_chain(args.tls_cert, args.tls_key)
+    validate_connect_path(args.connect_path)
+    if bool(args.tls_cert) != bool(args.tls_key):
+        raise ValueError("provide both --tls-cert and --tls-key to enable TLS")
+    tls = None
+    if args.tls_cert is not None:
+        tls = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+        tls.minimum_version = ssl.TLSVersion.TLSv1_2
+        tls.load_cert_chain(args.tls_cert, args.tls_key)
     directory = config.settings.resolved_data_dir()
     directory.mkdir(mode=0o700, parents=True, exist_ok=True)
     lock = FileLock(directory / "dispatcher.lock", timeout=0, mode=0o600)
@@ -53,7 +59,7 @@ def run(config, args):
     store = None
     try:
         store = Store.open_in(directory)
-        dispatcher = ControlDispatcher(store.computers)
+        dispatcher = ControlDispatcher(store.computers, connect_path=args.connect_path)
 
         async def serve():
             async with dispatcher.listen(args.host, args.port, tls=tls):

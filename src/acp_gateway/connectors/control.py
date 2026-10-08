@@ -1,4 +1,4 @@
-"""Separate TLS-only computer ingress and an outgoing registration client.
+"""Computer ingress and an outgoing registration client over WS or WSS.
 
 This control channel advertises agents and monitors identity/liveness. Task
 relay will use this connection in the next increment; no prompts run here.
@@ -54,15 +54,16 @@ class Registration:
 
 
 class ControlDispatcher:
-    def __init__(self, registry, *, heartbeat_seconds: int = 20):
+    def __init__(self, registry, *, heartbeat_seconds: int = 20, connect_path: str = "/connect"):
         if not 5 <= heartbeat_seconds <= 300:
             raise ValueError("heartbeat must be between 5 and 300 seconds")
         self.registry = registry
+        self.connect_path = validate_connect_path(connect_path)
         self.heartbeat_seconds = heartbeat_seconds
         self.active: dict[str, Registration] = {}
 
     def authenticate(self, connection, request):
-        if request.path != "/connect":
+        if request.path != self.connect_path:
             return connection.respond(404, "Not found\n")
         try:
             identity = request.headers.get("X-ACP-Computer", "")
@@ -102,12 +103,17 @@ class ControlDispatcher:
                 raise ProtocolError("invalid registration")
             if not self.registry.grant_valid(identity, generation):
                 raise ProtocolError("computer access changed")
-            if identity in self.active:
-                raise ProtocolError("computer already connected")
+            previous = self.active.get(identity)
             registration = Registration(
                 identity, uuid4(), generation, tuple(frame.agents), connection
             )
             self.active[identity] = registration
+            if previous is not None:
+                await previous.connection.close(code=1008, reason="computer connection replaced")
+            if self.active.get(identity) is not registration:
+                raise ProtocolError("computer connection replaced")
+            if not self.registry.grant_valid(identity, generation):
+                raise ProtocolError("computer access changed")
             watcher = asyncio.create_task(self._watch_grant(registration))
             await connection.send(
                 encode_frame(
@@ -151,8 +157,8 @@ class ControlDispatcher:
             ):
                 del self.active[registration.computer_id]
 
-    def listen(self, host: str, port: int, *, tls: ssl.SSLContext):
-        if tls.protocol != ssl.PROTOCOL_TLS_SERVER:
+    def listen(self, host: str, port: int, *, tls: ssl.SSLContext | None = None):
+        if tls is not None and tls.protocol != ssl.PROTOCOL_TLS_SERVER:
             raise ValueError("dispatcher requires a server TLS context")
         return serve(
             self.handle,
@@ -189,23 +195,36 @@ def read_credential(path: Path) -> str:
     return credential
 
 
+def validate_connect_path(path: str) -> str:
+    if (
+        not isinstance(path, str)
+        or len(path) > 1024
+        or not re.fullmatch(r"/[A-Za-z0-9/_~.-]*", path)
+        or any(part in {".", ".."} for part in path.split("/"))
+        or "//" in path
+    ):
+        raise ValueError("connection path must be an absolute URL path without query or traversal")
+    return path
+
+
 def validate_url(url: str):
     try:
         parts = urlsplit(url)
         if (
-            parts.scheme != "wss"
+            parts.scheme not in {"ws", "wss"}
             or not parts.hostname
             or parts.username is not None
             or parts.password is not None
             or parts.query
             or parts.fragment
-            or parts.path != "/connect"
+            or any(c.isspace() for c in url)
             or (parts.port is not None and not 1 <= parts.port <= 65535)
         ):
             raise ValueError
+        validate_connect_path(parts.path or "/")
     except ValueError:
         raise ValueError(
-            "dispatcher URL must be wss://host[:port]/connect without credentials"
+            "dispatcher URL must be ws:// or wss://host[:port][/path] without credentials or query"
         ) from None
     return parts
 
@@ -217,23 +236,34 @@ def normalize_pin(value: str) -> str:
     return ":".join(hex_digits[i : i + 2] for i in range(0, 64, 2))
 
 
-async def connect_control(url: str, *, credential: str, hello: Hello, fingerprint: str):
+async def connect_control(
+    url: str, *, credential: str, hello: Hello, fingerprint: str | None = None
+):
     parts = validate_url(url)
-    fingerprint = normalize_pin(fingerprint)
+    if fingerprint is not None and parts.scheme != "wss":
+        raise ValueError("a TLS fingerprint requires a wss:// dispatcher URL")
+    fingerprint = normalize_pin(fingerprint) if fingerprint is not None else None
+    pin = None
+    tls = None
     try:
-        pin = await pin_certificate(
-            parts.hostname,
-            parts.port or 443,
-            configured=fingerprint,
-            pin_file=Path("unused-pin"),
-        )
+        if parts.scheme == "wss":
+            if fingerprint is not None:
+                pin = await pin_certificate(
+                    parts.hostname,
+                    parts.port or 443,
+                    configured=fingerprint,
+                    pin_file=Path("unused-pin"),
+                )
+                tls = pin.context
+            else:
+                tls = ssl.create_default_context()
         connection = await _NoRedirectConnect(
             url,
             additional_headers={
                 "Authorization": f"Bearer {credential}",
                 "X-ACP-Computer": hello.computer_id,
             },
-            ssl=pin.context,
+            ssl=tls,
             proxy=None,
             max_size=MAX_FRAME_BYTES,
             max_queue=4,
@@ -246,12 +276,14 @@ async def connect_control(url: str, *, credential: str, hello: Hello, fingerprin
     except (AgentError, OSError, TimeoutError, InvalidHandshake):
         raise ValueError(
             "cannot connect to dispatcher: verify TLS pin, reachability and computer access"
+            if parts.scheme == "wss"
+            else "cannot connect to dispatcher: verify reachability and computer access"
         ) from None
-    der = connection.transport.get_extra_info("ssl_object").getpeercert(binary_form=True)
-    if fingerprint_of(der) != pin.fingerprint:  # defence in depth after the probe
-        await connection.close()
-        raise ValueError("dispatcher TLS certificate changed between probe and connect")
     try:
+        if pin is not None:
+            der = connection.transport.get_extra_info("ssl_object").getpeercert(binary_form=True)
+            if fingerprint_of(der) != pin.fingerprint:
+                raise ValueError("dispatcher TLS certificate changed between probe and connect")
         await connection.send(encode_frame(hello))
         welcome = decode_frame(await asyncio.wait_for(connection.recv(), timeout=5))
         if not isinstance(welcome, Welcome):
@@ -264,7 +296,7 @@ async def connect_control(url: str, *, credential: str, hello: Hello, fingerprin
         raise
 
 
-async def run_connector(url: str, *, credential: str, hello: Hello, fingerprint: str):
+async def run_connector(url: str, *, credential: str, hello: Hello, fingerprint: str | None = None):
     connection, welcome = await connect_control(
         url,
         credential=credential,

@@ -47,14 +47,14 @@ replaces it nor depends on it.
 
 The current LAN and co-located topologies are followed by a planned VPS
 dispatcher topology (`P4.1`, before channel extensions `P4.2`–`P4.4`). The connector is a launch
-mode of the same program. Computer enrollment and a separate pinned WSS
+mode of the same program. Computer enrollment and a separate WS/WSS
 registration/heartbeat channel are implemented. ACP task relay is next.
 
 | Topology | Gateway runs on | Work Goose runs on | Transport | Status |
 |---|---|---|---|---|
 | **LAN** (initial default) | home host, WSL | work laptop, WSL | `wss://<work-host>:<port>/acp`, TLS + secret + pinning | MVP target |
 | **Co-located** | the same machine as Work Goose | WSL | `ws://127.0.0.1:3284/acp` (loopback), secret | supported from MVP |
-| **VPS dispatcher** | VPS with a stable IP and/or domain | multiple computers, any ACP-compatible agents | computers initiate WSS connections through our own connector | registration channel implemented; task relay next, `P4.1` |
+| **VPS dispatcher** | VPS with a stable IP and/or domain | multiple computers, any ACP-compatible agents | computers initiate WS/WSS connections through our own connector | registration channel implemented; task relay next, `P4.1` |
 
 Gateway platforms: **WSL (Linux) is the primary and recommended path**,
 native Windows and macOS adapters are planned. Hence the code requirements:
@@ -96,7 +96,7 @@ are checked under `P0.1`.
 
 Outbound connections from the home WSL into the LAN work without any setup.
 
-### 3.2. Planned VPS dispatcher and WSS connector
+### 3.2. Planned VPS dispatcher and WebSocket connector
 
 Updated priority, 2026-10-08: start the Linux/WSL connector before native
 Windows, using the existing core/channels. Channel extensions `P4.2`–`P4.4`
@@ -108,14 +108,14 @@ flowchart TB
     telegram["Telegram"] --> gateway
     channels["Web / CLI / other channels"] --> gateway
     gateway["VPS: ACP Gateway<br/>routing · sessions · approvals · audit"]
-    connector1["Computer A: connector"] -->|"outbound WSS connection"| gateway
-    connector2["Computer B: connector"] -->|"outbound WSS connection"| gateway
+    connector1["Computer A: connector"] -->|"outbound WS/WSS connection"| gateway
+    connector2["Computer B: connector"] -->|"outbound WS/WSS connection"| gateway
     connector1 <-->|"local ACP transport"| agent1["ACP agent A"]
     connector2 <-->|"local ACP transport"| agent2["ACP agent B"]
     connector2 <-->|"local ACP transport"| agent3["ACP agent C"]
 ```
 
-WSS arrows show which side establishes the connection; requests, responses,
+WS/WSS arrows show which side establishes the connection; requests, responses,
 events and approvals travel in both directions. A computer needs no public
 IP or inbound port forwarding. The connector (working command name:
 `acpgw connector`) starts automatically, reconnects after network loss or
@@ -139,11 +139,26 @@ The first relay route has a local ACP policy boundary: explicit method allowlist
 disabled client capabilities, empty MCP/additional workspace lists, exact locally
 chosen cwd values and the configured session mode. Live permission responses
 accept only once-only options. These restrictions are implemented and tested as
-a transport wrapper; the WSS registration command does not relay ACP yet.
+a transport wrapper; the registration command does not relay ACP yet.
 They constrain ACP parameters, not the agent's tool filesystem access. A trusted
 dispatcher can supply a valid approval decision; independent local approval
 authentication is outside this initial trust model. See
 [the local connector policy](items/connector.md#local-acp-policy-for-the-first-relay-route).
+
+Accepted by the owner on 2026-10-08: ingress becomes a second listener in `serve`,
+sharing core/channels/approvals. Relay uses ACP JSON-RPC in an alias/stream/epoch
+envelope with AgentClient/RelayTransport on the VPS, one demux reader, native
+WebSocket keepalive and byte-bounded queues. Remote agent addresses are
+`computer/agent`, with connectivity/readiness tracked separately. New fully
+authenticated registrations replace old connections and receive new epochs;
+late traffic from old streams must be refused. Replacement is implemented;
+relay fencing and the unified runtime are subsequent work.
+
+TLS is disabled for current IP/port tests by the owner's decision. Listener paths
+are configurable (`/`, `/connect` or a proxy subpath), and connector URLs support
+IP addresses and DNS names. Future nginx deployments can terminate TLS on a
+domain and forward WebSockets to the plain loopback listener. Explicit WSS uses
+CA/name validation or a supplied certificate pin, without plaintext fallback.
 
 The first target is one owner, Linux/WSL connectors and network ACP agents.
 Development stages and the protocol boundary are documented in

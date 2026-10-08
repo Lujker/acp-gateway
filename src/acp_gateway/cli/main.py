@@ -60,23 +60,24 @@ def _build_parser() -> argparse.ArgumentParser:
     ):
         service_sub.add_parser(action, help=help_text)
 
-    dispatcher = commands.add_parser("dispatcher", help="TLS computer ingress (registration only)")
+    dispatcher = commands.add_parser("dispatcher", help="WS computer ingress (registration only)")
     dispatcher.add_argument(
         "--host", default="127.0.0.1", help="bind address; explicit for public ingress"
     )
     dispatcher.add_argument("--port", type=int, default=8766)
-    dispatcher.add_argument("--tls-cert", type=Path, required=True)
-    dispatcher.add_argument("--tls-key", type=Path, required=True)
+    dispatcher.add_argument("--connect-path", default="/connect", help="root or proxy subpath")
+    dispatcher.add_argument("--tls-cert", type=Path, help="optional certificate to enable TLS")
+    dispatcher.add_argument("--tls-key", type=Path, help="private key paired with --tls-cert")
     connector = commands.add_parser(
-        "connector", help="outgoing WSS computer registration (no task relay yet)"
+        "connector", help="outgoing WS/WSS computer registration (no task relay yet)"
     )
-    connector.add_argument("--dispatcher-url", required=True, help="wss://host:port/connect")
+    connector.add_argument("--dispatcher-url", required=True, help="ws[s]://host[:port][/path]")
     connector.add_argument("--computer-id", required=True)
     connector.add_argument(
         "--token-file", type=Path, required=True, help="private enrollment credential"
     )
     connector.add_argument(
-        "--tls-fingerprint", required=True, help="trusted dispatcher certificate SHA-256"
+        "--tls-fingerprint", help="optional WSS certificate pin; otherwise use CA/name validation"
     )
 
     computers = commands.add_parser(

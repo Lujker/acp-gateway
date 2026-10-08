@@ -10,7 +10,7 @@ tool credentials and work files stay on computers.
 | Stage | Deliverable |
 |---|---|
 | 1 | Implemented: versioned control frames, stable computer IDs, local enrollment, credential rotation/revocation |
-| 2 | In progress: WSS registration/heartbeats implemented; ACP route, requests/results/human approvals next |
+| 2 | In progress: WS/WSS registration, heartbeats and newest-wins implemented; ACP route, requests/results/human approvals next |
 | 3 | Multiple computers/agents, selection in channels, isolated session mappings |
 | 4 | Heartbeats, reconnect/connection epochs, bounded queues, deduplication and uncertain task outcomes |
 | 5 | VPS deployment, connector services/upgrades and local stdio bridging |
@@ -26,8 +26,9 @@ random credential, independent of owner/MCP/Telegram/agent tokens. The
 database stores only a credential digest. A token is exported into a new
 private file, never printed or placed in a URL. Rotation replaces the old
 credential; revocation disables the identity. Credentials are transmitted
-only in the WSS handshake authorization header. TLS must be validated before
-credentials are sent. Enrollment is local in the first stage; remote pairing
+only in the WebSocket handshake authorization header. The owner selected plain
+WS for current IP/port testing, with TLS disabled; that link is unencrypted.
+When explicitly using WSS, validate TLS before sending credentials. Enrollment is local in the first stage; remote pairing
 and multi-user delegation are not exposed yet.
 
 Control frames carry a protocol version, type, stable computer ID and agent
@@ -82,7 +83,7 @@ Control protocol v1 implements `hello`, `welcome`, `ping`, `pong` and `error`.
 Frames are bounded to 64 KiB of UTF-8 JSON; hello contains 1–100 uniquely named
 agents. Unknown fields, duplicate JSON keys, invalid identifiers and unsupported
 versions are rejected with input-independent errors. Connection IDs are UUIDs.
-WSS transport, authorization and heartbeat scheduling are implemented below.
+WS/WSS transport, authorization and heartbeat scheduling are implemented below.
 Task routing is the next increment of stage 2.
 
 ## Relay preparation: transport injection
@@ -108,8 +109,31 @@ turn that fails without replay.
 
 This is the implemented seam for a future `RelayTransport`; it does not add
 task routing to the registration channel. The local policy described below is
-also implemented and tested. Integrating relay into the daemon still needs the
-process, duplicate-connection and domain TLS decisions recorded in `road-notes.md`.
+also implemented and tested. The owner accepted the architecture below on
+2026-10-08; those decisions no longer block relay implementation.
+
+## Accepted relay architecture
+
+- Connector ingress becomes a second listener in `serve`, sharing the runtime
+  with core/channels/approvals; the current standalone registration listener is
+  an interim diagnostic mode, not the future routing process.
+- Relay carries ACP JSON-RPC in a multiplexed envelope with agent alias, stream
+  ID and connection epoch. The VPS reuses AgentClient with RelayTransport; the
+  computer applies PolicyTransport before forwarding traffic to its local agent.
+- The newest fully authenticated registration replaces the old connection and
+  receives a fresh epoch. Old stream results and approvals must be rejected.
+  Registration replacement is implemented; relay epoch fencing is still pending.
+- One reader demultiplexes traffic, with WebSocket keepalive, separate control/data
+  limits and byte-bounded stream queues. Overflow fails the affected stream.
+- Core addresses remote agents as `computer/agent`, distinguishing computer
+  connectivity from agent readiness. Network failures retry with backoff;
+  access/TLS failures require correction, and uncertain prompts are not replayed.
+- In-process access revocation notifies connections immediately. Public ingress
+  gets handshake/connection limits as deployment work.
+- TLS is disabled for current IP/port tests. Domains, root paths and subpaths
+  remain supported for a later nginx front end. TLS can be enabled explicitly on
+  the listener or terminated at nginx; plaintext upstream stays on loopback in
+  that deployment. The direct gateway-to-agent transport keeps its own policy.
 
 ## Local ACP policy for the first relay route
 
@@ -162,52 +186,55 @@ fails outstanding work without replay; other streams remain independent.
 Wire frame limits, stream/epoch demultiplexing and reconnect scheduling are the
 next relay layer, not implemented by this policy wrapper.
 
-## Stage 2: WSS registration channel
+## Stage 2: WS/WSS registration channel
 
 Two foreground modes now establish a real control connection. They register a
 computer and its configured agent aliases; they do not relay tasks yet.
 
-On the dispatcher host, provision a TLS certificate/key and enroll the computer
-with the stage 1 commands. Then start the separate listener:
+On the dispatcher host, enroll the computer with the stage 1 commands. For
+current IP/port tests, start the listener without TLS:
 
 ```bash
 acpgw --config /path/to/dispatcher.yaml dispatcher \
-  --host 0.0.0.0 --port 8766 \
-  --tls-cert /private/path/dispatcher.crt --tls-key /private/path/dispatcher.key
+  --host 0.0.0.0 --port 8766 --connect-path /
 ```
 
 Default binding is `127.0.0.1`; a public bind requires the explicit `--host`.
-TLS is mandatory. This listener exposes only `/connect`; the owner API and MCP
+TLS is off unless both `--tls-cert` and `--tls-key` are supplied. The listener
+accepts exactly `--connect-path` (default `/connect`, `/` in the example); the owner API and MCP
 remain on their existing loopback listener. It uses a separate dispatcher lock
 in `data_dir`. Its SQLite registry can be administered by `computers` commands
 while it runs. `computers list` shows enrolled/enabled identities, not online
 connection status. There is no public registration-status API yet.
 
 Securely copy the enrollment credential to the computer and keep it in a file
-owned by its local Linux user with mode `0600`. Obtain the dispatcher certificate
-SHA-256 fingerprint through a trusted route, for example the hex value printed by
-`openssl x509 -in dispatcher.crt -noout -fingerprint -sha256`. Configure local
-agent profiles in the computer's YAML, then run:
+owned by its local Linux user with mode `0600`. Configure local agent profiles
+in the computer's YAML, then run using the dispatcher's IP and port:
 
 ```bash
 acpgw --config /path/to/computer.yaml connector \
-  --dispatcher-url wss://dispatcher.example:8766/connect \
-  --computer-id work-laptop --token-file /private/path/work-laptop.key \
-  --tls-fingerprint AA:BB:...:FF
+  --dispatcher-url ws://192.0.2.10:8766 \
+  --computer-id work-laptop --token-file /private/path/work-laptop.key
 ```
 
-The pin is mandatory in this first mode; there is no implicit first-use trust.
+For explicit WSS, supply both listener TLS files and use a `wss://` URL. Without
+`--tls-fingerprint`, the connector verifies the certificate's CA and host name.
+For self-signed certificates, pass the SHA-256 pin obtained through a trusted
+route, e.g. `openssl x509 -in dispatcher.crt -noout -fingerprint -sha256`.
+A pin with a plain `ws://` URL is refused; TLS never falls back to plaintext.
 Credential files must be regular, small, private and locally owned; symlinks
 are refused. Dispatcher URLs cannot contain credentials, queries or fragments.
 HTTP redirects are refused. The credential is sent in the authorization header
-only after TLS validates the pinned certificate. Wire DEBUG traces are disabled
+after the selected transport connects (and validates TLS when WSS is selected).
+Wire DEBUG traces are disabled
 to keep authorization headers out of logs. No local agent URL/credential is sent
 in the manifest, and registering does not connect to the ACP agent yet.
 
 Authorization occurs before WebSocket upgrade and is checked again when hello
 arrives. Hello must match the authenticated computer ID. Each accepted
-connection gets a new UUID epoch. A second connection for an active computer is
-refused; it cannot replace that registration. Heartbeats default to 20 seconds;
+connection gets a new UUID epoch. A new authenticated hello for an active computer
+replaces its old connection. Invalid credentials or hello cannot displace it.
+The old handler's cleanup cannot remove the new registration. Heartbeats default to 20 seconds;
 missing or mismatched replies close the connection. Rotation/revocation closes
 an active connection on the next access check, normally within one second.
 Failure to read the access registry also closes it. One computer's revocation
@@ -218,3 +245,34 @@ Rebuild locally to include these modes in a standalone binary. The opt-in smoke
 `scripts/smoke_connector.py /path/to/acpgw` runs both modes outside the checkout
 with no Python on the child PATH, checks two heartbeats, live revocation and
 interrupt shutdown. It uses only temporary certificates, config, DB and keys.
+
+## Domain and nginx path layout
+
+The dispatcher URL accepts IP addresses, DNS names, `/` or a configured subpath.
+For example, use `--connect-path /gateway/connect` and connect to
+`ws://dispatcher.example/gateway/connect`. The nginx upstream can stay on
+`127.0.0.1:8766`; the owner API/MCP are not proxied by this location.
+
+Example inside an existing nginx `server` block:
+
+```nginx
+location = /gateway/connect {
+    proxy_pass http://127.0.0.1:8766;
+    proxy_http_version 1.1;
+    proxy_set_header Upgrade $http_upgrade;
+    proxy_set_header Connection "upgrade";
+    proxy_set_header Authorization $http_authorization;
+    proxy_set_header X-ACP-Computer $http_x_acp_computer;
+    proxy_read_timeout 90s;
+}
+```
+
+The Upgrade/Connection headers are explicit as required for
+[nginx WebSocket proxying](https://nginx.org/en/docs/http/websocket.html).
+`proxy_pass` has no URI suffix so it preserves the configured path; see
+[nginx proxy_pass](https://nginx.org/en/docs/http/ngx_http_proxy_module.html#proxy_pass).
+For a domain root endpoint use `--connect-path /` and `location = /`.
+Later, adding TLS to the nginx server changes the connector URL to `wss://`
+while its upstream remains plain WS on loopback. Do not rely on HTTP redirects
+to select the endpoint; the connector refuses them. These snippets describe
+the supported layout; no nginx host or public VPS is deployed by these commands.

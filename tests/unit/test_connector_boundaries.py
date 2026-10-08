@@ -4,18 +4,24 @@ import os
 
 import pytest
 
-from acp_gateway.connectors.control import normalize_pin, read_credential, validate_url
+from acp_gateway.connectors.control import (
+    normalize_pin,
+    read_credential,
+    validate_connect_path,
+    validate_url,
+)
 from acp_gateway.storage import Store
 
 
 @pytest.mark.parametrize(
     "url",
     [
-        "ws://localhost/connect",
+        "http://localhost/connect",
         "wss://user:secret@localhost/connect",
         "wss://localhost/connect?token=x",
         "wss://localhost/connect#fragment",
-        "wss://localhost/other",
+        "wss://localhost/../connect",
+        "ws://localhost/connect\n",
         "wss:///connect",
         "wss://localhost:bad/connect",
         "wss://localhost:0/connect",
@@ -33,6 +39,38 @@ def test_normalize_pin_and_url():
     assert normalize_pin("ab" * 32) == ":".join(["AB"] * 32)
     with pytest.raises(ValueError):
         normalize_pin("wrong")
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        "ws://192.0.2.1:8766/connect",
+        "ws://127.0.0.1:8766",
+        "ws://[::1]:8766/gateway/connect",
+        "wss://dispatcher.example/gateway/connect",
+        "wss://dispatcher.example/",
+    ],
+)
+def test_ip_domain_root_and_proxy_subpath_urls_are_supported(url):
+    assert validate_url(url).hostname
+
+
+@pytest.mark.parametrize(
+    "path",
+    [
+        "relative",
+        "/../connect",
+        "/./connect",
+        "//connect",
+        "/connect?token=x",
+        "/connect#fragment",
+        "/connect%2fother",
+        "/connect\n",
+    ],
+)
+def test_invalid_listener_paths_are_rejected(path):
+    with pytest.raises(ValueError):
+        validate_connect_path(path)
 
 
 def test_credential_reader_rejects_public_symlink_directory_and_fifo(tmp_path):
