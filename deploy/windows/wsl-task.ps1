@@ -20,12 +20,15 @@ switch ($Action) {
         if (-not $Distro -or -not $LinuxUser) {
             throw 'install requires -Distro and -LinuxUser.'
         }
-        if ($Distro -match '["\r\n]' -or $LinuxUser -notmatch '^[a-z_][a-z0-9_-]*\$?$') {
-            throw 'Invalid distro or Linux user argument.'
+        if ($Distro -notmatch '^[\p{L}\p{N}][\p{L}\p{N}._-]*$' -or $LinuxUser -notmatch '^[a-z_][a-z0-9_-]*\$?$') {
+            throw 'Distro must contain only letters, digits, dots, underscores or hyphens; LinuxUser must be a valid Linux username.'
         }
         $windowsUser = [System.Security.Principal.WindowsIdentity]::GetCurrent().Name
+        # Some WSL versions treat quotes in the scheduled action's argument
+        # string as part of the distro name. Restrict names to single safe
+        # tokens and pass them without quotes; no shell is used.
         $exe = Join-Path $env:SystemRoot 'System32\wsl.exe'
-        $arguments = "--distribution `"$Distro`" --user `"$LinuxUser`" --exec /bin/sleep infinity"
+        $arguments = "--distribution $Distro --user $LinuxUser --exec /bin/sleep infinity"
         $taskAction = New-ScheduledTaskAction -Execute $exe -Argument $arguments
         $trigger = New-ScheduledTaskTrigger -AtLogOn -User $windowsUser
         $principal = New-ScheduledTaskPrincipal -UserId $windowsUser -LogonType Interactive

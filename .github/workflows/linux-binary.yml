@@ -2,10 +2,6 @@ name: Linux binary
 
 on:
   workflow_dispatch:
-  push:
-    branches: [main]
-    tags: ['v*']
-  pull_request:
 
 permissions:
   contents: read

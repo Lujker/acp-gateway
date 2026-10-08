@@ -853,6 +853,43 @@ Python harness в контейнер не попадают. Проверку з�
   PARTIAL до других целевых платформ и версионированного выпуска. Проверка
   настоящего WSL/Windows автозапуска остаётся в P3.1/P3.5.
 
+## 2026-10-08 — ручная сборка и реальная проверка Windows/WSL
+
+Решение владельца: не расходовать GitHub Actions на каждый push/PR, собирать
+бинарник локально вручную либо запускать сборку явно; GitHub Releases создавать
+и заполнять вручную. В workflow оставлен только `workflow_dispatch`, удалены
+push/PR/tag триггеры. Release тоже не запускает Actions. Инструкция описывает
+локальную сборку, проверку и ручное прикрепление archive/checksum/build metadata.
+
+Проверки на текущем Windows/WSL-хосте:
+
+- Доступны Windows PowerShell 5.1 и Task Scheduler, WSL `Ubuntu-22.04`;
+  PID 1 — systemd, `/etc/wsl.conf` включает systemd, `Linger=yes`.
+- Реальный временный Task Scheduler task выявил ошибку: прямой запуск с
+  кавычками в `--distribution` завершался `4294967295`; диагностический лог
+  показал `WSL_E_DISTRO_NOT_FOUND`. После передачи проверенных single-token
+  distro/user без кавычек `wsl.exe` удерживает `sleep infinity`. Shell wrapper
+  не понадобился. Имена distro с пробелами helper теперь явно отклоняет.
+- Добавлен `scripts/smoke_wsl_task.ps1`: реальный install → enable/start →
+  status → disable/stop → enable → uninstall, проверка trigger/principal/
+  execution limit, выдержка Running по три секунды, finally cleanup.
+  Полный цикл **прошёл**. Тестовые задачи, sleep-процессы и логи удалены.
+- Настоящий gateway user-service lifecycle пока **не подтверждён**:
+  `/run/user/1000/bus` отсутствует, private socket manager тоже не принимает
+  подключения. Windows `wsl.exe` даёт тот же результат. Временная session bus
+  и документированный SIGUSR1 не восстановили доступ; временная bus удалена,
+  чужие службы не перезапускались. Нужны user D-Bus prerequisites и безопасный
+  restart WSL; текущую рабочую Windows/WSL-сессию не перезагружали.
+- Локальная ручная сборка и полный binary smoke **прошли**: CLI/API/SSE/MCP,
+  pinned TLS ACP mock, approvals/watch/reject/cancel, persistence, frozen
+  service commands с stand-in. Python не был на PATH дочерних процессов.
+- Восемь unit-проверок service/setup прошли; ruff, format, workflow YAML
+  (только ручной trigger) и `git diff --check` — чисто. GitHub workflow не запускали.
+
+WSL подтверждает Windows-путь через Linux, но не native Windows binary/service.
+Фактический reboot также не заменён Task Scheduler smoke. Эти критерии остаются
+открытыми; macOS требует своего хоста и launchd-пути.
+
 ## Незакрытые вопросы
 
 - **Публикация** — удалять ли старые коммиты с GitHub окончательно (GitHub

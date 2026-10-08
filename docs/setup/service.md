@@ -132,9 +132,35 @@ The task uses your interactive Windows identity without storing a password,
 is initially disabled, and has no execution time limit. Task management
 refuses to change an existing task with another description. Installing the
 Linux service does not install this Windows task or enable lingering for you.
+The helper accepts distro names containing letters, digits, dots, underscores
+and hyphens, without spaces. It passes distro/user as unquoted arguments:
+quoted names caused `WSL_E_DISTRO_NOT_FOUND` on the tested Windows host.
+
+To repeat the real Task Scheduler lifecycle check without changing your
+installed task, run from PowerShell:
+
+```powershell
+.\scripts\smoke_wsl_task.ps1 -Distro Ubuntu-22.04 -LinuxUser your_linux_user
+```
+
+This creates a uniquely named temporary task, verifies the logon trigger and
+unlimited runtime, checks install/start/status/stop/re-enable/uninstall, and
+cleans up on failure. It holds each running state for three seconds before
+checking, so a launcher that immediately exits cannot pass. This full cycle
+passed on the development Windows/WSL host on 2026-10-08.
+
+If `systemctl --user` fails with `Failed to connect to bus`, confirm that
+`$XDG_RUNTIME_DIR/bus` exists and your distro provides a user D-Bus session.
+On Ubuntu/Debian, check/install `dbus-user-session`, then restart the WSL
+distro when its running work can be interrupted. Linger alone does not
+provide this socket. The current development host has systemd and linger
+enabled, but lacks this session bus; a real gateway user-service lifecycle
+could not be verified there. CLI and binary smoke report this limitation
+separately from Task Scheduler validation.
 
 After a real Windows reboot, sign in and verify `acpgw service status` and
 `acpgw status` without opening a WSL terminal first. Also verify disable,
 enable and shutdown behavior. The unit syntax and CLI paths are tested;
-the PowerShell task and reboot scenario still require validation on Windows.
+the PowerShell task lifecycle passed on Windows; the user-service lifecycle
+and actual reboot scenario still require validation after fixing the bus.
 Native Windows service control is planned with `P3.2`/`P3.5`.

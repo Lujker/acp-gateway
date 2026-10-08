@@ -1,5 +1,10 @@
 # Standalone Linux executable
 
+Local builds are the default and do not use GitHub Actions or its quotas.
+The optional `Linux binary` workflow runs only when you explicitly choose
+**Actions → Linux binary → Run workflow**. Pushes, pull requests, tags and
+release creation do not start a build.
+
 Build on the target Linux architecture with Python 3.12 and uv:
 
 ```bash
@@ -59,4 +64,22 @@ The container smoke mounts only the executable and private temporary test
 files, uses the current user's uid/gid and Linux host networking for the mock
 agent, and forwards only temporary HOME/XDG/PATH settings to the container.
 The checkout and the harness' Python environment are not mounted. CI runs
-this full scenario in the official Ubuntu image, which contains no Python.
+this full scenario in the official Ubuntu image, which contains no Python,
+when the optional workflow is started manually.
+
+## Publish a release manually
+
+Build and smoke-test locally with the commands above. In GitHub's Releases
+page, create a release for the intended commit/tag and attach these three
+files from `dist/` before publishing:
+
+- `acpgw-<version>-linux-<architecture>.tar.gz`
+- `acpgw-<version>-linux-<architecture>.tar.gz.sha256`
+- `acpgw-<version>-linux-<architecture>.tar.gz.build.json`
+
+The archive version comes from the package; ensure it matches the release
+tag. This route needs no Actions run. Releases and uploads are manual;
+the workflow does not publish or change releases. If you choose to run the
+manual workflow instead, download its artifact ZIP, extract it, and attach
+the same three files to your release. CI artifacts are temporary downloads;
+release assets are the distribution route for a published version.

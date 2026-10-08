@@ -246,8 +246,11 @@ Done из исходного плана (раздел 20), выполненны�
 **Статус:** PARTIAL — 2026-10-08: генерация systemd user unit и управление
 через `acpgw service`; unit проверен `systemd-analyze --user verify`.
 Есть Windows logon task, удерживающая WSL через `sleep infinity` и не
-обходящая отключение службы. Остаток: запуск PowerShell task и проверка
-health/enable/disable после настоящей перезагрузки Windows.
+обходящая отключение службы. Реальный Task Scheduler lifecycle проверен на
+текущем Windows/WSL-хосте через временную задачу; исправлен отказ
+`WSL_E_DISTRO_NOT_FOUND` из-за кавычек в аргументах. Остаток: восстановить
+user D-Bus в WSL и проверить service health/enable/disable, затем настоящий
+Windows reboot. Systemd/linger включены, но `/run/user/1000/bus` отсутствует.
 **Репозиторий:** `acp-gateway` (`service.py`, `deploy/windows/`, `docs/setup/`)
 
 systemd user unit для демона; запуск WSL при входе в Windows (Task Scheduler
@@ -284,7 +287,10 @@ ACP, approvals/cancel, restart persistence и frozen service commands.
 Linux x86_64 подтверждён полным smoke в чистом Ubuntu 22.04 без Python:
 [CI run 37748465084](https://github.com/Lujker/acp-gateway/actions/runs/37748465084),
 архив с checksum доступен в артефактах CI. Остаток: другие целевые платформы
-и версионированный выпуск. Рецепт — `docs/setup/binary.md`.
+и версионированный выпуск. Решение владельца: сборка локально вручную,
+GitHub Release и загрузка файлов вручную; Actions только по необязательному
+`workflow_dispatch`, без push/PR/tag/release триггеров.
+Рецепт — `docs/setup/binary.md`.
 **Репозиторий:** `acp-gateway` (`scripts/`, сборка и release artifacts)
 **Решение владельца:** 2026-10-08 — удобство установки как у Goose/Hermes.
 
@@ -308,7 +314,8 @@ Linux x86_64 подтверждён полным smoke в чистом Ubuntu 22
 
 **Статус:** PARTIAL — 2026-10-08: help со стартовым маршрутом; `setup`;
 `service install/enable/disable/start/stop/restart/status/uninstall` для
-Linux/WSL. Остаток: подтверждение жизненного цикла на настоящем хосте и
+Linux/WSL. Windows keepalive task проверена настоящим Task Scheduler.
+Остаток: user-service lifecycle после восстановления user D-Bus и reboot;
 native Windows (`P3.2`); macOS по `P4.6`.
 **Репозиторий:** `acp-gateway` (`cli/`, `service.py`, platform adapters, docs)
 **Решение владельца:** 2026-10-08 — автозапуск и его контроль должны быть
@@ -417,8 +424,9 @@ launchd-агент; ядро уже кроссплатформенное (см. 
 
 1. **P3.4/P3.5 — установка, настройка и контроль службы.** Основа Linux/WSL
    и самостоятельная Linux-сборка подтверждены чистым контейнерным CI;
-   подготовить версионированный выпуск и закрыть критерии платформенных служб.
-2. **P3.1 — проверка автозапуска в WSL на настоящем Windows-хосте.**
+   выпускать версии вручную из локальной сборки; Actions только по ручному запуску.
+2. **P3.1/P3.5 — WSL user bus, реальный lifecycle службы и reboot.** Windows
+   Task Scheduler lifecycle уже подтверждён на текущем хосте.
 3. **P2.3 — Telegram.** Основной канал подтверждений после CLI.
 4. **P3.3 — надёжность и наблюдаемость.**
 5. **P3.2 — Windows native**, вместе с Windows-частями `P3.4/P3.5`.

@@ -51,7 +51,7 @@ and the work queue are in [`road-map.md`](road-map.md) (in Russian).
 | Approvals: human routing, deadlines, audit; core policy limits | ✅ `P1.4` |
 | Daemon, local API, approvals from the CLI | ✅ `P1.5` |
 | Hermes MCP facade; actions approved through the CLI | ✅ `P2.1`, `P2.2` (Hermes MCP module + mock agent) |
-| Checkout installer, setup, Linux/WSL service CLI, standalone Linux binary recipe | Implemented; full binary smoke passed in Python-free Ubuntu CI; Windows reboot verification pending |
+| Checkout installer, setup, Linux/WSL service CLI, standalone Linux binary recipe | Implemented; binary and real Windows task lifecycle verified; WSL user bus/reboot verification pending |
 | Telegram | 🔜 `P2.3` |
 | Snikket/XMPP, e-mail, web UI | 🗓 `P4` |
 
@@ -91,6 +91,9 @@ To build a standalone Linux executable with no Python required on the runtime
 host, use `uv run --frozen --group build python scripts/build_binary.py`.
 Build artifacts, checksums, compatibility limits and installation:
 [`docs/setup/binary.md`](docs/setup/binary.md).
+Build locally and attach archives/checksums to a manually created GitHub
+release. The optional GitHub Actions build runs only on explicit manual
+dispatch; pushes, PRs, tags and releases do not consume build minutes.
 
 ### 1. Prepare the agent
 
