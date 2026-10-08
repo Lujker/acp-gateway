@@ -5,7 +5,9 @@ permission handling, cancel, load) before it is pointed at the real Work Goose.
 """
 
 import json
+import tempfile
 from pathlib import Path
+from unittest.mock import patch
 
 import pytest
 
@@ -36,13 +38,20 @@ def write_config(tmp_path: Path, url: str, fp: str = "", secret: str = SECRET) -
 
 
 def run_spike(*args: str) -> tuple[int, dict, str]:
-    code = spike_acp.main(list(args))
-    run_dir = max(Path("spike-runs").iterdir(), key=lambda p: p.stat().st_mtime_ns)
-    summary = json.loads((run_dir / "summary.json").read_text())
-    traffic = (
-        (run_dir / "traffic.jsonl").read_text() if (run_dir / "traffic.jsonl").exists() else ""
-    )
-    return code, summary, traffic
+    # Filesystem mtimes can lag or jump on WSL. Isolate each invocation instead
+    # of guessing which sibling run is newest (and reading another summary).
+    with tempfile.TemporaryDirectory(dir=Path.cwd()) as directory:
+        root = Path(directory)
+        with patch.object(spike_acp, "RUNS_DIR", root):
+            code = spike_acp.main(list(args))
+        runs = list(root.iterdir())
+        assert len(runs) == 1
+        run_dir = runs[0]
+        summary = json.loads((run_dir / "summary.json").read_text())
+        traffic = (
+            (run_dir / "traffic.jsonl").read_text() if (run_dir / "traffic.jsonl").exists() else ""
+        )
+        return code, summary, traffic
 
 
 def test_http_transport_ping_works_but_load_breaks(tmp_path):

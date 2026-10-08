@@ -10,6 +10,7 @@ from pydantic import SecretStr
 
 from acp_gateway.agents import AgentClient, AgentUnavailable, TransportDisconnected
 from acp_gateway.config import AgentProfile
+from acp_gateway.connectors.policy import LocalAgentPolicy, PolicyTransport
 from fakes.fake_goose import FakeGooseAgent
 
 
@@ -39,8 +40,8 @@ class MemoryTransport:
             self.inbox.put_nowait(None)
 
 
-@pytest.fixture
-async def harness(tmp_path, monkeypatch):
+@pytest.fixture(params=[False, True], ids=["plain", "local-policy"])
+async def harness(tmp_path, monkeypatch, request):
     # A real WSS-looking profile must never trigger probing or send its secret
     # when the factory supplies the stream. Routing/auth belong to the factory.
     probe = AsyncMock(side_effect=AssertionError("direct TLS probe used"))
@@ -48,6 +49,9 @@ async def harness(tmp_path, monkeypatch):
     monkeypatch.setattr("acp_gateway.agents.client.pin_certificate", probe)
     monkeypatch.setattr("acp_gateway.agents.client.PinnedWebSocketTransport.connect", direct)
     state = SimpleNamespace(sessions={}, log=[], agents=[], connections=[], streams=[])
+    profile = AgentProfile(
+        alias="work", kind="goose", url="wss://unused.invalid/acp", default_cwd="/local/work"
+    )
 
     async def factory():
         upstream, downstream = asyncio.Queue(), asyncio.Queue()
@@ -59,13 +63,15 @@ async def harness(tmp_path, monkeypatch):
         state.agents.append(agent)
         state.connections.append(connection)
         state.streams.append(local)
-        return local
+        return (
+            PolicyTransport(local, LocalAgentPolicy.from_profile(profile))
+            if request.param
+            else local
+        )
 
     state.factory = factory
     state.client = AgentClient(
-        AgentProfile(
-            alias="work", kind="goose", url="wss://unused.invalid/acp", default_cwd="/local/work"
-        ),
+        profile,
         SecretStr("local-" + "agent-credential"),
         pin_dir=tmp_path / "pins",
         transport_factory=factory,

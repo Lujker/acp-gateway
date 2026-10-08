@@ -135,6 +135,16 @@ dispatcher. Approvals remain human decisions; the connector does not grant
 permissions on its own. Reconnecting a computer does not by itself guarantee
 resuming an interrupted task or restoring a session.
 
+The first relay route has a local ACP policy boundary: explicit method allowlist,
+disabled client capabilities, empty MCP/additional workspace lists, exact locally
+chosen cwd values and the configured session mode. Live permission responses
+accept only once-only options. These restrictions are implemented and tested as
+a transport wrapper; the WSS registration command does not relay ACP yet.
+They constrain ACP parameters, not the agent's tool filesystem access. A trusted
+dispatcher can supply a valid approval decision; independent local approval
+authentication is outside this initial trust model. See
+[the local connector policy](items/connector.md#local-acp-policy-for-the-first-relay-route).
+
 The first target is one owner, Linux/WSL connectors and network ACP agents.
 Development stages and the protocol boundary are documented in
 [the connector design](items/connector.md). Multi-user access, stdio bridging

@@ -107,10 +107,60 @@ the recorded mock agent over an in-memory ACP stream, including a disconnected
 turn that fails without replay.
 
 This is the implemented seam for a future `RelayTransport`; it does not add
-task routing to the registration channel. The next independent step is local
-connector policy (allowed methods, cwd roots, empty `mcpServers`, disabled client
-capabilities). Integrating relay into the daemon still needs the process,
-duplicate-connection and domain TLS decisions recorded in `road-notes.md`.
+task routing to the registration channel. The local policy described below is
+also implemented and tested. Integrating relay into the daemon still needs the
+process, duplicate-connection and domain TLS decisions recorded in `road-notes.md`.
+
+## Local ACP policy for the first relay route
+
+`LocalAgentPolicy.from_profile(profile)` selects the local profile's
+`default_cwd` and `session_mode`. `PolicyTransport(local_transport, policy)`
+guards one computer-side ACP stream before it is exposed to the dispatcher.
+It implements the same transport interface as the direct WebSocket transport.
+The registration-only CLI does not forward ACP traffic yet; this boundary will
+be wired into its relay handler, not into the existing direct gateway mode.
+
+The request allowlist is `initialize`, `session/new`, `session/load`,
+`session/list`, `session/prompt`, `session/set_mode` and `session/cancel`.
+Requests are rebuilt from supported wire fields; extension metadata is dropped.
+Initialization always advertises disabled file/terminal capabilities and no
+client extensions. New/load requests always send empty `mcpServers` and
+`additionalDirectories`, even if the dispatcher supplies executable MCP servers
+or other workspace roots. The first route accepts text-only prompts with a
+local total character limit; file/resource/image/audio inputs are refused.
+
+Working directories are exact, locally selected absolute POSIX paths. The
+default allowlist contains only `default_cwd`; the policy constructor can take
+additional exact directories when a future local configuration exposes them.
+Child directories, traversal and unrelated directories are refused. Session
+listing also uses an allowed directory. The connector does not resolve paths
+on its own filesystem: a network ACP agent may run on a different machine.
+This check constrains the requested cwd, not filesystem access by the agent's
+tools; it does not resolve remote symlinks or sandbox an existing session.
+Subtree rules need an agent-side path/sandbox contract before being enabled.
+
+For a configured session mode, prompts are blocked until a new/load response
+reports that mode or the matching set-mode request succeeds. Changing to a
+different mode is refused. Failed reloads and mode changes invalidate readiness;
+an unsolicited mode update away from the configured mode blocks later prompts.
+One session cannot have parallel prompts on the same stream.
+
+Only permission requests associated with an active prompt are forwarded.
+`allow_always` and `reject_always` options are removed; duplicated option IDs are
+refused, including collisions with hidden always options. A decision must match
+a live request and an advertised once-only option. Cancel and prompt completion
+invalidate its options; a later cancelled outcome remains accepted, while a late
+selection or duplicate response is refused. Other client requests, including
+filesystem and terminal requests, are answered locally with method-not-found.
+The connector never manufactures an allow decision. The dispatcher remains
+trusted to supply the human's decision; this policy cannot authenticate a human
+independently of the dispatcher.
+
+Per-stream tracking is bounded to 64 outstanding ACP requests, 64 permissions
+and 1024 attached sessions. A violation closes that stream, clears tracking and
+fails outstanding work without replay; other streams remain independent.
+Wire frame limits, stream/epoch demultiplexing and reconnect scheduling are the
+next relay layer, not implemented by this policy wrapper.
 
 ## Stage 2: WSS registration channel
 
