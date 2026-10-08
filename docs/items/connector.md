@@ -13,7 +13,7 @@ tool credentials and work files stay on computers.
 | 2 | Implemented and mock-tested: ingress in serve, guarded ACP relay, requests/results/human approvals/cancel |
 | 3 | Namespaced configured routes implemented; multiple-computer/channel acceptance remains |
 | 4 | Native keepalive, reconnect, epoch fencing and bounded queues implemented; durable result recovery remains |
-| 5 | VPS deployment, connector services/upgrades and local stdio bridging |
+| 5 | Linux/WSL connector service and diagnostics implemented; live deployment/upgrades and local stdio bridging remain |
 
 Existing core, policy, approval audit, sessions, Telegram/MCP, ACP client,
 binary build and Linux user services are reused. Native Windows and macOS
@@ -85,6 +85,33 @@ agents. Unknown fields, duplicate JSON keys, invalid identifiers and unsupported
 versions are rejected with input-independent errors. Connection IDs are UUIDs.
 WS/WSS transport, authorization and heartbeat scheduling are implemented below.
 Relay frames and usage are described below.
+
+## Connection and route diagnostics
+
+On the VPS, `acpgw computers status` queries the authenticated owner API
+(`GET /computers`). Unlike the offline `computers list` enrollment command,
+it requires a running `serve` daemon with connector ingress enabled. Disabled
+ingress returns 503. The snapshot is read-only and never initializes an agent.
+
+Computer records include enrollment metadata, current `connected` state,
+epoch, active stream count, currently advertised aliases, and timestamps and
+reason for the last disconnection. SQLite schema 5 stores only the latest
+connection metadata per computer; it stores no URLs, credential values or ACP
+traffic. `agents` records the last accepted manifest, while
+`advertised_agents` is empty for an offline computer. Runtime connections are
+the authority for online status; persisted rows never make a computer online.
+After listener restart, previously open records become `listener_restarted`.
+Other reasons include `access_changed`, `replaced`, `connection_closed`,
+`connection_lost`, `protocol_rejected` and `access_check_failed`.
+
+Configured route states distinguish `offline`, `unadvertised`,
+`not_initialized` and `ready`. An online computer does not imply its agent is
+initialized or ready for a turn. `/health` also includes computer snapshots.
+Run only one dispatcher listener per data directory; the standalone diagnostic
+listener and `serve` must not use the same registry concurrently.
+
+For managed startup, logs and exit policies, see the
+[separate computer connector service](../setup/service.md#separate-computer-connector-service).
 
 ## Relay preparation: transport injection
 

@@ -93,6 +93,23 @@ async def test_registration_heartbeat_cleanup_and_new_epoch(ingress):
     await next_connection.close()
 
 
+async def test_persisted_diagnostics_survive_listener_restart_without_claiming_online(ingress):
+    dispatcher, registry, url, credential, pin, _ = ingress
+    connection, welcome = await connect_control(
+        url, credential=credential, hello=hello(), fingerprint=pin
+    )
+    await eventually(lambda: dispatcher.status()[0]["connected"])
+    row = dispatcher.status()[0]
+    assert row["epoch"] == str(welcome.connection_id) and row["connected_at"]
+    await connection.close()
+    await eventually(lambda: not dispatcher.active)
+    row = dispatcher.status()[0]
+    assert not row["connected"] and row["disconnect_reason"] == "connection_closed"
+    restarted = ControlDispatcher(registry)
+    assert restarted.status()[0]["connected_at"] == row["connected_at"]
+    assert not restarted.status()[0]["connected"]
+
+
 @pytest.mark.parametrize("identity,credential", [("other", None), ("work", "incorrect")])
 async def test_bad_credential_rejected_before_upgrade(ingress, identity, credential):
     with pytest.raises(InvalidStatus) as error:
@@ -137,6 +154,8 @@ async def test_new_authenticated_connection_replaces_active_registration(ingress
         assert first.close_code == 1008
         assert next_welcome.connection_id != welcome.connection_id
         assert dispatcher.active["work"].connection_id == next_welcome.connection_id
+        assert dispatcher.status()[0]["epoch"] == str(next_welcome.connection_id)
+        assert dispatcher.status()[0]["disconnect_reason"] is None
         # The replaced handler's cleanup must not remove the new registration.
         await asyncio.sleep(0.05)
         assert dispatcher.active["work"].connection_id == next_welcome.connection_id

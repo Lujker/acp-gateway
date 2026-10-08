@@ -1,7 +1,10 @@
 """Local enrollment; raw credentials are never stored in the database."""
 
+from __future__ import annotations
+
 import hashlib
 import hmac
+import json
 import os
 import re
 import secrets
@@ -39,6 +42,47 @@ class ComputerRegistry:
     def list(self) -> list[dict]:
         rows = self._conn.execute(f"SELECT {_PUBLIC} FROM computers ORDER BY computer_id")  # noqa: S608
         return [dict(row) for row in rows]
+
+    def connection_status(self) -> list[dict]:
+        rows = self._conn.execute(
+            "SELECT c.computer_id, c.display_name, c.enabled, "
+            "s.epoch, s.connected_at, s.disconnected_at, s.disconnect_reason, s.close_code, "
+            "s.agents_json FROM computers c LEFT JOIN computer_connections s "
+            "ON s.computer_id = c.computer_id ORDER BY c.computer_id"
+        )
+        result = []
+        for row in rows:
+            value = dict(row)
+            value["agents"] = json.loads(value.pop("agents_json") or "[]")
+            value["enabled"] = bool(value["enabled"])
+            result.append(value)
+        return result
+
+    def connection_opened(self, computer_id, epoch, aliases):
+        self._conn.execute(
+            "INSERT INTO computer_connections "
+            "(computer_id, epoch, connected_at, agents_json) VALUES (?, ?, ?, ?) "
+            "ON CONFLICT(computer_id) DO UPDATE SET epoch = excluded.epoch, "
+            "connected_at = excluded.connected_at, agents_json = excluded.agents_json, "
+            "disconnected_at = NULL, disconnect_reason = NULL, close_code = NULL",
+            (computer_id, str(epoch), utcnow().isoformat(), json.dumps(aliases)),
+        )
+
+    def connection_closed(self, computer_id, epoch, reason, close_code=None):
+        # Retired handlers must never mark a newer epoch as disconnected.
+        self._conn.execute(
+            "UPDATE computer_connections SET disconnected_at = ?, disconnect_reason = ?, "
+            "close_code = ? WHERE computer_id = ? AND epoch = ? AND disconnected_at IS NULL",
+            (utcnow().isoformat(), reason, close_code, computer_id, str(epoch)),
+        )
+
+    def settle_connections(self):
+        """A persisted open record cannot mean online after the listener restarts."""
+        self._conn.execute(
+            "UPDATE computer_connections SET disconnected_at = ?, "
+            "disconnect_reason = 'listener_restarted' WHERE disconnected_at IS NULL",
+            (utcnow().isoformat(),),
+        )
 
     def authenticate(self, computer_id: str, credential: str) -> bool:
         return self.authorize(computer_id, credential) is not None

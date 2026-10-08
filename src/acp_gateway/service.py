@@ -10,17 +10,32 @@ from pathlib import Path
 from dotenv import dotenv_values
 
 from acp_gateway.config import AppConfig
+from acp_gateway.connectors.control import read_credential
+from acp_gateway.connectors.launch import ConnectorLaunch
 from acp_gateway.daemon import owner_token
 
 UNIT = "acp-gateway.service"
 MARKER = "# Managed by acpgw service install.\n"
+CONNECTOR_UNIT = "acp-gateway-connector.service"
+CONNECTOR_MARKER = "# Managed by acpgw service --role connector install.\n"
 
 
-def unit_path() -> Path:
+def _unit(role):
+    if role not in {"gateway", "connector"}:
+        raise ValueError("unknown service role")
+    return CONNECTOR_UNIT if role == "connector" else UNIT
+
+
+def _marker(role):
+    _unit(role)
+    return CONNECTOR_MARKER if role == "connector" else MARKER
+
+
+def unit_path(role="gateway") -> Path:
     root = Path(os.environ.get("XDG_CONFIG_HOME") or Path.home() / ".config")
     if not root.is_absolute():
         raise ValueError("XDG_CONFIG_HOME must be an absolute path")
-    return root / "systemd" / "user" / UNIT
+    return root / "systemd" / "user" / _unit(role)
 
 
 def _quote(value: str) -> str:
@@ -31,7 +46,9 @@ def _quote(value: str) -> str:
     return '"' + value.replace("\\", "\\\\").replace('"', '\\"').replace("%", "%%") + '"'
 
 
-def render_unit(config: Path, env_file: Path | None) -> str:
+def render_unit(
+    config: Path, env_file: Path | None, *, launch: ConnectorLaunch | None = None
+) -> str:
     config = config.resolve()
     directory = str(config.parent)
     _quote(directory)  # reject control characters before writing a unit
@@ -43,10 +60,14 @@ def render_unit(config: Path, env_file: Path | None) -> str:
     command += ["--config", str(config)]
     if env_file is not None:
         command += ["--env-file", str(env_file.resolve())]
-    command += ["serve"]
+    role = "connector" if launch is not None else "gateway"
+    command += launch.arguments() if launch is not None else ["serve"]
+    restart = "RestartPreventExitStatus=2 78\nSuccessExitStatus=130\n" if launch else ""
     return (
-        MARKER
-        + "[Unit]\nDescription=ACP Gateway\n\n"
+        _marker(role)
+        + "[Unit]\nDescription=ACP Gateway"
+        + (" Connector" if launch else "")
+        + "\n\n"
         + "[Service]\nType=simple\n"
         + "ExecStart="
         + " ".join(_quote(value) for value in command)
@@ -54,7 +75,9 @@ def render_unit(config: Path, env_file: Path | None) -> str:
         + "WorkingDirectory="
         + directory.replace("%", "%%")
         + "\n"
-        + "Restart=on-failure\nRestartSec=5\nTimeoutStopSec=20\nUMask=0077\n\n"
+        + "Restart=on-failure\nRestartSec=5\n"
+        + restart
+        + "TimeoutStopSec=20\nUMask=0077\n\n"
         + "[Install]\nWantedBy=default.target\n"
     )
 
@@ -84,12 +107,13 @@ def _systemctl(*args: str, allow_not_found=False) -> str:
     return result.stdout
 
 
-def _owned(path: Path) -> None:
-    if path.is_symlink() or not path.read_text(encoding="utf-8").startswith(MARKER):
+def _owned(path: Path, role="gateway") -> None:
+    if path.is_symlink() or not path.read_text(encoding="utf-8").startswith(_marker(role)):
         raise ValueError(f"refusing to replace an unmanaged unit: {path}")
 
 
-def install(config: AppConfig) -> int:
+def install(config: AppConfig, *, launch: ConnectorLaunch | None = None) -> int:
+    role = "connector" if launch is not None else "gateway"
     if sys.platform != "linux":
         raise ValueError("service install currently supports Linux/WSL with systemd only")
     if config.config_path is None:
@@ -97,11 +121,11 @@ def install(config: AppConfig) -> int:
     if config.env_file is None:
         raise ValueError("a persistent .env file is required for unattended startup")
     values = dotenv_values(config.env_file, interpolate=False)
-    required = [config.settings.gateway.api_token_env]
-    if config.secrets.get(config.settings.gateway.mcp_token_env) is not None:
+    required = [] if launch else [config.settings.gateway.api_token_env]
+    if launch is None and config.secrets.get(config.settings.gateway.mcp_token_env) is not None:
         required.append(config.settings.gateway.mcp_token_env)
     required += [p.secret_env for p in config.settings.agents if p.secret_env]
-    if config.settings.telegram.enabled:
+    if launch is None and config.settings.telegram.enabled:
         required.append(config.settings.telegram.token_env)
     for name in required:
         secret = config.secrets.get(name)
@@ -111,15 +135,19 @@ def install(config: AppConfig) -> int:
         raise ValueError("service installation requires an absolute data_dir in config.yaml")
     if config.settings.logging.file is not None and not config.settings.logging.file.is_absolute():
         raise ValueError("service installation requires an absolute logging.file in config.yaml")
-    owner_token(config)
+    if launch is None:
+        owner_token(config)
+    else:
+        launch = ConnectorLaunch.from_args(launch, config)
+        read_credential(launch.token_file)
     missing = config.missing_agent_secrets()
     if missing:
         raise ValueError("missing agent secrets: " + ", ".join(missing))
     # Resolve before writing: start must work outside the current shell/repository.
-    content = render_unit(config.config_path, config.env_file)
-    path = unit_path()
+    content = render_unit(config.config_path, config.env_file, launch=launch)
+    path = unit_path(role)
     if path.exists() or path.is_symlink():
-        _owned(path)
+        _owned(path, role)
     # Ensure a working user manager before making persistent changes.
     _systemctl("show-environment")
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -136,43 +164,63 @@ def install(config: AppConfig) -> int:
             temp.unlink(missing_ok=True)
     _systemctl("daemon-reload")
     print(f"Installed: {path}")
-    print("Enable and start: acpgw service enable")
+    selector = " --role connector" if launch else ""
+    print(f"Enable and start: acpgw service{selector} enable")
     return 0
 
 
-def control(action: str) -> int:
+def control(action: str, *, role="gateway") -> int:
     if sys.platform != "linux":
         raise ValueError("service control currently supports Linux/WSL with systemd only")
+    unit = _unit(role)
+    if action == "logs":
+        executable = shutil.which("journalctl")
+        if executable is None:
+            raise ValueError("journalctl is unavailable")
+        try:
+            result = subprocess.run(  # noqa: S603 — fixed journal command; no shell
+                [executable, "--user", "--unit", unit, "--no-pager", "--lines=50"],
+                capture_output=True,
+                text=True,
+                timeout=20,
+            )
+        except subprocess.TimeoutExpired:
+            raise ValueError("journalctl timed out") from None
+        if result.returncode:
+            raise ValueError("cannot read the service journal")
+        print(result.stdout, end="")
+        return 0
     if action == "status":
         print(
             _systemctl(
                 "show",
-                UNIT,
+                unit,
                 "--no-pager",
-                "--property=LoadState,ActiveState,SubState,UnitFileState,MainPID",
+                "--property=LoadState,ActiveState,SubState,UnitFileState,MainPID,Result,ExecMainStatus",
                 allow_not_found=True,
             ).strip()
         )
-        print(f"Unit file: {unit_path()}")
+        print(f"Unit file: {unit_path(role)}")
         return 0
     if action == "uninstall":
-        path = unit_path()
+        path = unit_path(role)
         if not path.exists() and not path.is_symlink():
             print("Service is not installed.")
             return 0
-        _owned(path)
-        _systemctl("disable", "--now", UNIT)
+        _owned(path, role)
+        _systemctl("disable", "--now", unit)
         path.unlink()
         _systemctl("daemon-reload")
         print("Service uninstalled; configuration, secrets and data were kept.")
         return 0
     commands = {
-        "enable": ("enable", "--now", UNIT),
-        "disable": ("disable", "--now", UNIT),
-        "start": ("start", UNIT),
-        "stop": ("stop", UNIT),
-        "restart": ("restart", UNIT),
+        "enable": ("enable", "--now", unit),
+        "disable": ("disable", "--now", unit),
+        "start": ("start", unit),
+        "stop": ("stop", unit),
+        "restart": ("restart", unit),
     }
     _systemctl(*commands[action])
-    print(f"Service: {action} completed. Inspect with acpgw service status.")
+    selector = " --role connector" if role == "connector" else ""
+    print(f"Service: {action} completed. Inspect with acpgw service{selector} status.")
     return 0

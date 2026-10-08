@@ -48,6 +48,7 @@ def _build_parser() -> argparse.ArgumentParser:
         "enable/disable also start/stop it; start/stop leave autostart unchanged.",
     )
     service_sub = service.add_subparsers(dest="service_command", required=True)
+    service.add_argument("--role", choices=("gateway", "connector"), default="gateway")
     for action, help_text in (
         ("install", "install/update the unit using the selected config; do not start it"),
         ("enable", "enable autostart and start now"),
@@ -56,9 +57,17 @@ def _build_parser() -> argparse.ArgumentParser:
         ("stop", "stop now without changing autostart"),
         ("restart", "restart the running service"),
         ("status", "show installed, enabled and running states; works while stopped"),
+        ("logs", "show the last 50 journal entries for the selected service"),
         ("uninstall", "stop and remove the managed unit; keep configuration and data"),
     ):
-        service_sub.add_parser(action, help=help_text)
+        sub = service_sub.add_parser(action, help=help_text)
+        if action == "install":
+            sub.add_argument(
+                "--dispatcher-url", help="connector dispatcher ws[s]://host[:port][/path]"
+            )
+            sub.add_argument("--computer-id", help="connector computer identity")
+            sub.add_argument("--token-file", type=Path, help="private connector enrollment file")
+            sub.add_argument("--tls-fingerprint", help="optional connector WSS certificate pin")
 
     dispatcher = commands.add_parser("dispatcher", help="standalone WS ingress diagnostic listener")
     dispatcher.add_argument(
@@ -85,6 +94,7 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     computer_sub = computers.add_subparsers(dest="computer_command", required=True)
     computer_sub.add_parser("list", help="list computers without credentials")
+    computer_sub.add_parser("status", help="live computer and route diagnostics from owner API")
     for action in ("enroll", "rotate", "revoke"):
         cmd = computer_sub.add_parser(action, help=f"{action} a computer credential locally")
         cmd.add_argument("computer_id", help="stable lowercase computer identifier")
@@ -188,7 +198,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 return setup(args.config_dir)
             from acp_gateway.service import control
 
-            return control(args.service_command)
+            return control(args.service_command, role=args.role)
         except (OSError, ValueError) as exc:
             print(f"error: {redact_text(str(exc))}", file=sys.stderr)
             return 1
@@ -210,13 +220,26 @@ def main(argv: Sequence[str] | None = None) -> int:
 
             return run_connector_command(cfg, args)
         if args.command == "computers":
+            if args.computer_command == "status":
+                from acp_gateway.cli.client import run
+
+                return run(cfg, args)
             from acp_gateway.cli.computers import run_computers
 
             return run_computers(cfg, args)
         if args.command == "service":
             from acp_gateway.service import install
 
-            return install(cfg)
+            launch = None
+            if args.role == "connector":
+                from acp_gateway.connectors.launch import ConnectorLaunch
+
+                launch = ConnectorLaunch.from_args(args, cfg)
+            elif any(
+                (args.dispatcher_url, args.computer_id, args.token_file, args.tls_fingerprint)
+            ):
+                raise ValueError("connector launch options require service --role connector")
+            return install(cfg, launch=launch)
         if args.command == "serve":
             from acp_gateway.daemon import serve
 
@@ -229,7 +252,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         return 130
     except (OSError, ValueError, EOFError) as exc:
         print(f"error: {redact_text(str(exc))}", file=sys.stderr)
-        return 1
+        return 78 if args.command == "connector" else 1
     except httpx.HTTPError:
         print("error: the gateway API is unavailable; start acpgw serve", file=sys.stderr)
         return 1

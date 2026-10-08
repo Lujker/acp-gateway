@@ -77,6 +77,14 @@ The user D-Bus and real systemd lifecycle/crash recovery have been verified
 for source and binary installations. See [binary installation](setup/binary.md).
 See [installation and service control](setup/service.md).
 
+The computer connector has its own managed unit, `acp-gateway-connector.service`,
+selected by `service --role connector`. It needs persistent local agent secrets
+and an enrollment credential, with no owner API credentials. Network retries
+stay in the connector; fatal access/configuration failures stop the unit.
+The authenticated owner API exposes computer connection and configured route
+readiness separately. SQLite schema 5 keeps latest connection metadata only;
+online status always comes from the current runtime.
+
 ### 3.1. Networking in the LAN topology
 
 `goose serve` inside WSL sits behind NAT and is not reachable from the LAN by

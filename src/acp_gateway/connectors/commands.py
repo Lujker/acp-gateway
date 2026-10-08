@@ -1,7 +1,9 @@
 """Foreground registration modes; the owner API remains a separate listener."""
 
 import asyncio
+import signal
 import ssl
+import sys
 
 from filelock import FileLock, Timeout
 
@@ -12,20 +14,24 @@ from acp_gateway.connectors.control import (
     run_connector,
     validate_connect_path,
 )
-from acp_gateway.connectors.policy import LocalAgentPolicy, PolicyTransport
-from acp_gateway.connectors.protocol import AgentManifest, Hello
+from acp_gateway.connectors.launch import ConnectorLaunch, local_policies
+from acp_gateway.connectors.policy import PolicyTransport
+from acp_gateway.log import configure_logging, get_logger
 from acp_gateway.storage import Store
 
 
 def run(config, args):
     if args.command == "connector":
-        if not config.settings.agents:
-            raise ValueError("configure at least one local agent before registering a computer")
-        if any(p.backend != "remote" for p in config.settings.agents):
-            raise ValueError("a computer connector requires direct local agent profiles")
-        missing = config.missing_agent_secrets()
-        if missing:
-            raise ValueError("missing agent secrets: " + ", ".join(missing))
+        launch = ConnectorLaunch.from_args(args, config)
+        credential = read_credential(launch.token_file)
+        settings = config.settings.logging
+        configure_logging(
+            settings.level,
+            settings.format,
+            file=settings.file,
+            max_bytes=settings.max_bytes,
+            backup_count=settings.backup_count,
+        )
         clients = {
             p.alias: AgentClient(
                 p,
@@ -34,31 +40,42 @@ def run(config, args):
             )
             for p in config.settings.agents
         }
-        policies = {p.alias: LocalAgentPolicy.from_profile(p) for p in config.settings.agents}
+        policies = local_policies(config)
 
         async def local_factory(alias):
             transport, _ = await clients[alias].open_transport()
             return PolicyTransport(transport, policies[alias])
 
-        try:
-            hello = Hello(
-                computer_id=args.computer_id,
-                agents=[
-                    AgentManifest(alias=p.alias, display_name=p.display_name)
-                    for p in config.settings.agents
-                ],
-            )
-        except ValueError:
-            raise ValueError("invalid computer ID or agent manifest") from None
-        asyncio.run(
-            run_connector(
-                args.dispatcher_url,
-                credential=read_credential(args.token_file),
-                hello=hello,
-                fingerprint=args.tls_fingerprint,
-                local_factory=local_factory,
-            )
-        )
+        async def connect():
+            loop = asyncio.get_running_loop()
+            task = asyncio.current_task()
+            stopping = False
+
+            def terminate():
+                nonlocal stopping
+                stopping = True
+                task.cancel()
+
+            handles_sigterm = sys.platform != "win32"
+            if handles_sigterm:
+                loop.add_signal_handler(signal.SIGTERM, terminate)
+            try:
+                await run_connector(
+                    launch.dispatcher_url,
+                    credential=credential,
+                    hello=launch.hello(config),
+                    fingerprint=launch.tls_fingerprint,
+                    local_factory=local_factory,
+                )
+            except asyncio.CancelledError:
+                if not stopping:
+                    raise
+                get_logger(__name__).info("computer connector stopped")
+            finally:
+                if handles_sigterm:
+                    loop.remove_signal_handler(signal.SIGTERM)
+
+        asyncio.run(connect())
         return 0
 
     if not 1 <= args.port <= 65535:

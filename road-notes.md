@@ -1286,6 +1286,36 @@ Ruff check/format, scanner и git diff --check чистые. Первый пол
 Реальный Goose/VPS/nginx, несколько физических компьютеров и durable result
 recovery ещё не принимались; бинарник и работающая служба не обновлялись.
 
+## 2026-10-08 — P4.1: служба компьютера и диагностика без живой приёмки
+
+По поручению владельца реализована следующая часть кода; живая приёмка
+остаётся на владельце. Отдельный `acp-gateway-connector.service` управляется
+через `service --role connector`: install/enable/disable/start/stop/restart/
+status/logs/uninstall. Установка проверяет постоянные config/env, agent secrets
+и приватный credential-файл; owner/MCP/Telegram tokens компьютеру не нужны.
+Gateway unit не затрагивается, uninstall сохраняет конфигурацию/ключи/данные.
+Status и последние 50 journal entries доступны при сломанном app config.
+
+Сетевой reconnect остаётся внутри процесса. Fatal config/access/TLS/protocol
+ошибки завершают connector с 78, invalid YAML с 2; unit не перезапускает эти
+коды. Неожиданный crash перезапускается, SIGTERM закрывает streams и даёт 0.
+Логи подключений/retry используют настроенный формат и redaction.
+
+`computers status` запрашивает owner API `/computers`, без соединения к агенту.
+Отдельно видны online computer и ready route, unadvertised/not_initialized,
+epoch/streams, время/причина последнего отключения. Schema 5 хранит только
+последние connection metadata; старый epoch не может закрыть запись нового.
+После restart сохранённая запись не означает online. Enrollment schema 4
+мигрирует с сохранением доступа; URL, credentials и ACP traffic не пишутся.
+
+Реальные CLI-процессы проверяют маршрут до/после initialize, revoke и SIGTERM,
+offline diagnostics и отсутствие секретов в выводе. Systemd/journalctl в
+автотестах подменены. Работающие службы не устанавливались/не перезапускались,
+бинарник не пересобирался. Инструкция живой приёмки — docs/setup/service.md.
+
+Полный прогон: **678 passed, 3 optional Hermes skipped**, 158.95 с.
+Ruff check/format, secret scanner и git diff --check проходят.
+
 ## Незакрытые вопросы
 
 - **Публикация** — удалять ли старые коммиты с GitHub окончательно (GitHub

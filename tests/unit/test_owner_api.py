@@ -99,6 +99,14 @@ async def test_request_bounds_and_errors_do_not_echo_input(api):
     assert (await client.get("/openapi.json")).status_code == 404
 
 
+async def test_computer_diagnostics_require_owner_and_enabled_ingress(api):
+    client, _, _ = api
+    assert (
+        await client.get("/computers", headers={"Authorization": "Bearer wrong"})
+    ).status_code == 401
+    assert (await client.get("/computers")).status_code == 503
+
+
 async def test_cli_lease_is_live_only_until_detach(api):
     _, _, cli = api
     lease = cli.attach("owner")
@@ -175,7 +183,7 @@ def test_daemon_requires_separate_owner_credential(tmp_path):
 def test_second_daemon_is_blocked_and_lock_released(tmp_path):
     cfg = config(tmp_path, {"ACPGW_API_TOKEN": OWNER})
     with configured_app(cfg) as app:
-        assert app.state.core.store.schema_version == 4
+        assert app.state.core.store.schema_version == 5
         with pytest.raises(ValueError, match="another gateway daemon"), configured_app(cfg):
             pytest.fail("second daemon acquired the lock")
     with configured_app(cfg):

@@ -368,6 +368,11 @@ PolicyTransport на компьютере, ответы/permissions/cancel, од
 bounded queues, native keepalive, epoch fencing и reconnect без replay prompts.
 Проверен на recorded Goose mock, включая owner API и MCP. Живая приёмка на
 реальном агенте, несколько компьютеров и восстановление результатов ещё впереди.
+Добавлены отдельная Linux/WSL user-service коннектора, status/logs и политика
+остановки при fatal config/access ошибках. `computers status` через owner API
+различает online computer и готовность маршрута; schema 5 хранит последнее
+подключение без секретов/трафика. Автотесты — на нас, живая приёмка — на владельце;
+работающие службы и бинарник на этом этапе не обновляются.
 Решения ревью приняты владельцем: ingress в serve, ACP в конверте alias/stream/epoch,
 newest-wins, один demux-reader/keepalive и bounded queues, адрес computer/agent.
 TLS временно выключен для тестов; домен/root/subpath и nginx предусмотрены.

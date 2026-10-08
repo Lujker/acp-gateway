@@ -37,7 +37,7 @@ from acp_gateway.connectors.protocol import (
     encode_frame,
 )
 from acp_gateway.connectors.relay import RelayPeer
-from acp_gateway.log import register_secret
+from acp_gateway.log import get_logger, register_secret
 
 # Library DEBUG traces include handshake headers. Never enable wire tracing.
 _WIRE_LOG = logging.getLogger("acp_gateway.connectors.wire")
@@ -60,6 +60,7 @@ class Registration:
     agents: tuple[AgentManifest, ...]
     connection: object
     relay: RelayPeer | None = None
+    disconnect_reason: str | None = None
 
 
 class ControlDispatcher:
@@ -82,11 +83,41 @@ class ControlDispatcher:
         self.active: dict[str, Registration] = {}
         self._closing: set[asyncio.Task] = set()
         self.registry.subscribe(self._access_changed)
+        self.registry.settle_connections()
+
+    def status(self):
+        result = self.registry.connection_status()
+        for row in result:
+            registration = self.active.get(row["computer_id"])
+            row["connected"] = bool(
+                registration
+                and registration.relay.ready.is_set()
+                and not registration.relay.closed.is_set()
+            )
+            row["active_streams"] = len(registration.relay.streams) if row["connected"] else 0
+            row["advertised_agents"] = (
+                [a.alias for a in registration.agents] if row["connected"] else []
+            )
+        return result
+
+    def _disconnected(self, registration, reason, close_code=None):
+        if registration.disconnect_reason is None:
+            registration.disconnect_reason = reason
+        try:
+            self.registry.connection_closed(
+                registration.computer_id,
+                registration.connection_id,
+                registration.disconnect_reason,
+                close_code,
+            )
+        except sqlite3.Error:
+            get_logger(__name__).warning("computer connection diagnostics unavailable")
 
     def _access_changed(self, computer_id):
         registration = self.active.get(computer_id)
         if registration is not None and not registration.relay.closed.is_set():
             registration.relay.invalidate()
+            self._disconnected(registration, "access_changed", 1008)
             task = asyncio.create_task(
                 registration.connection.close(code=1008, reason="computer access changed")
             )
@@ -101,10 +132,12 @@ class ControlDispatcher:
             valid = self.registry.grant_valid(computer_id, registration.generation)
         except sqlite3.Error:
             registration.relay.invalidate()
+            self._disconnected(registration, "access_check_failed", 1011)
             await registration.connection.close(code=1011, reason="access check unavailable")
             raise AgentUnavailable("computer access check is unavailable") from None
         if not valid:
             registration.relay.invalidate()
+            self._disconnected(registration, "access_changed", 1008)
             await registration.connection.close(code=1008, reason="computer access changed")
             raise AgentUnavailable("computer access changed")
         return await registration.relay.open(alias)
@@ -138,11 +171,13 @@ class ControlDispatcher:
             except sqlite3.Error:
                 if registration.relay is not None:
                     registration.relay.invalidate()
+                self._disconnected(registration, "access_check_failed", 1011)
                 await registration.connection.close(code=1011, reason="access check unavailable")
                 return
             if not valid:
                 if registration.relay is not None:
                     registration.relay.invalidate()
+                self._disconnected(registration, "access_changed", 1008)
                 await registration.connection.close(code=1008, reason="computer access changed")
                 return
 
@@ -167,11 +202,15 @@ class ControlDispatcher:
             if previous is not None:
                 if previous.relay is not None:
                     previous.relay.invalidate()
+                self._disconnected(previous, "replaced", 1008)
                 await previous.connection.close(code=1008, reason="computer connection replaced")
             if self.active.get(identity) is not registration:
                 raise ProtocolError("computer connection replaced")
             if not self.registry.grant_valid(identity, generation):
                 raise ProtocolError("computer access changed")
+            self.registry.connection_opened(
+                identity, registration.connection_id, [agent.alias for agent in frame.agents]
+            )
             watcher = asyncio.create_task(self._watch_grant(registration))
             await connection.send(
                 encode_frame(
@@ -184,14 +223,24 @@ class ControlDispatcher:
             await connection.send(encode_frame(Ping(sequence=0)))
             await registration.relay.run()
         except (ProtocolError, TimeoutError):
+            if registration is not None:
+                self._disconnected(registration, "protocol_rejected", 1008)
             await connection.close(code=1008, reason="control protocol rejected")
         except sqlite3.Error:
+            if registration is not None:
+                self._disconnected(registration, "access_check_failed", 1011)
             await connection.close(code=1011, reason="access check unavailable")
         except (ConnectionClosed, ConnectionError):
             pass
         finally:
             if registration is not None and registration.relay is not None:
                 registration.relay.invalidate()
+                reason = (
+                    "connection_closed"
+                    if connection.close_code in (1000, 1001)
+                    else "connection_lost"
+                )
+                self._disconnected(registration, reason, connection.close_code)
             if watcher is not None:
                 watcher.cancel()
                 with contextlib.suppress(asyncio.CancelledError):
@@ -377,8 +426,12 @@ async def run_connector(
                 fingerprint=fingerprint,
                 local_factory=local_factory,
             )
-        except ConnectorUnavailable:
-            await asyncio.sleep(delays[min(attempt, len(delays) - 1)])
+        except ConnectorUnavailable as exc:
+            delay = delays[min(attempt, len(delays) - 1)]
+            get_logger(__name__).warning(
+                "dispatcher connection interrupted; retrying", retry_seconds=delay, error=str(exc)
+            )
+            await asyncio.sleep(delay)
             attempt += 1
 
 
@@ -390,7 +443,9 @@ async def _run_connection(url, *, credential, hello, fingerprint, local_factory)
         fingerprint=fingerprint,
     )
     try:
-        print(f"computer connected; epoch {welcome.connection_id}", flush=True)
+        get_logger(__name__).info(
+            "computer connected", computer_id=hello.computer_id, epoch=str(welcome.connection_id)
+        )
         if local_factory is None:
 
             async def local_factory(alias):

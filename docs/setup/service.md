@@ -64,6 +64,7 @@ acpgw status
 | `service start` / `stop` | Start/stop now without changing autostart |
 | `service restart` | Restart after a config or installation change |
 | `service status` | Report load, active, substate, enabled state and PID; works while stopped |
+| `service logs` | Print the latest 50 journal entries |
 | `service uninstall` | Disable, stop and remove the managed unit; keep config, secrets and SQLite data |
 
 `acpgw status` queries daemon health over the owner API. `acpgw service status`
@@ -93,6 +94,57 @@ Logs and low-level diagnostics:
 journalctl --user -u acp-gateway.service -n 100 --no-pager
 systemctl --user status acp-gateway.service
 ```
+
+## Separate computer connector service
+
+On the computer, prepare a persistent config containing direct network agent
+profiles, an environment file with their required secrets, and the private
+credential exported during VPS enrollment. An empty environment file is valid
+when the local agents need no secrets. Connector installation does not require
+owner, MCP or Telegram credentials. Use absolute paths for config, environment,
+credential, custom data directory and log file.
+
+```bash
+acpgw --config /absolute/path/computer.yaml --env-file /absolute/path/computer.env \
+  service --role connector install \
+  --dispatcher-url ws://192.0.2.10:8766/connect \
+  --computer-id work-laptop --token-file /private/path/work-laptop.key
+acpgw service --role connector enable
+acpgw service --role connector status
+acpgw service --role connector logs
+acpgw service --role connector restart
+acpgw service --role connector disable
+acpgw service --role connector uninstall
+```
+
+The separate unit is `acp-gateway-connector.service`. Install validates config
+and credential permissions, writes the unit and reloads the user manager;
+it leaves the service stopped. Lifecycle commands affect only the chosen role.
+Uninstall preserves config, secrets, credentials and local data. `status` and
+`logs` work without loading the application config; status includes the last
+process result and exit code. Connector output uses the configured logging
+format and optional rotating log file, with journal output available as above.
+
+Network failures retry inside the running connector with delays of
+1/2/5/10/30 seconds. Access, protocol and TLS failures stop with exit code 78;
+invalid configuration syntax exits with 2. The unit uses
+`RestartPreventExitStatus=2 78` to keep these failures stopped, following
+[systemd's service exit policy](https://github.com/systemd/systemd/blob/main/man/systemd.service.xml).
+Unexpected crashes restart automatically. SIGTERM closes active streams and
+exits successfully. Correct config or replace a revoked/rotated key, rerun
+install if launch arguments changed, then explicitly restart the connector.
+
+For the current test route, use plain WS by IP and port. A domain and nginx
+root/subpath are supported by `--dispatcher-url`; optional WSS also accepts
+`--tls-fingerprint`. See [connector configuration](../items/connector.md).
+The same WSL keepalive task below supports either service role; enable the
+connector unit separately. Installing the unit does not install the task.
+
+Live acceptance remains an owner check: install/enable with real files, verify
+`computers status` on the VPS, perform a real agent turn, stop/start the service,
+check reconnect after a network interruption, and verify Windows logon startup.
+Automated tests use mocked service managers and a real connector CLI process
+against a mock ACP agent; they do not install or restart your running services.
 
 ## WSL at Windows logon
 

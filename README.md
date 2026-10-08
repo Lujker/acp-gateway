@@ -57,7 +57,7 @@ and the work queue are in [`road-map.md`](road-map.md) (in Russian).
 | Checkout installer, setup, Linux/WSL service CLI, standalone Linux binary recipe | Binary, real user-service/crash recovery and Windows task lifecycle verified; actual reboot pending |
 | Telegram | Commands, private user allowlist and audited approval buttons implemented; live acceptance pending |
 | Runtime diagnostics | Component health/probes, private rotated JSON logs and Telegram throttling/recovery implemented |
-| [VPS connector](docs/items/connector.md) | Enrollment, namespaced ACP relay in serve, human approvals/cancel, reconnect and epoch fencing implemented; live acceptance next |
+| [VPS connector](docs/items/connector.md) | Enrollment, ACP relay, approvals/cancel, reconnect, Linux/WSL connector service and route diagnostics implemented; live acceptance next |
 | Snikket/XMPP, e-mail, web UI | 🗓 `P4` |
 
 ## Principles

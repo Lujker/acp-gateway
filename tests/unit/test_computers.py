@@ -109,7 +109,7 @@ def test_upgrade_preserves_channel_cursor(tmp_path):
     old.close()
     upgraded = Store.open(path)
     try:
-        assert upgraded.schema_version == 4
+        assert upgraded.schema_version == 5
         assert upgraded.channel_state("telegram", "cursor") == {"id": 77}
     finally:
         upgraded.close()

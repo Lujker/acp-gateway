@@ -178,6 +178,8 @@ def run(config: AppConfig, args) -> int:
         conv = {"agent": getattr(args, "agent", None), "thread": getattr(args, "thread", "default")}
         if command == "status":
             show_json(request(client, "GET", "/health"))
+        elif command == "computers":
+            show_json(request(client, "GET", "/computers"))
         elif command == "sessions":
             show_json(
                 request(

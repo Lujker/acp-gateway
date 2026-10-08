@@ -123,28 +123,49 @@ def create_app(
             raise UnknownSession("this conversation does not own that session")
         return conv, session
 
+    def computer_diagnostics():
+        dispatcher = getattr(app.state, "dispatcher", None)
+        if dispatcher is None:
+            raise HTTPException(503, "computer ingress is disabled")
+        computers = dispatcher.status()
+        indexed = {row["computer_id"]: row for row in computers}
+        routes = []
+        for address, client in core.agents.items():
+            if client.profile.backend != "connector":
+                continue
+            computer = indexed.get(client.profile.computer_id)
+            connected = bool(computer and computer["connected"])
+            advertised = bool(connected and client.profile.alias in computer["advertised_agents"])
+            ready = connected and advertised and client.connected
+            routes.append(
+                {
+                    "address": address,
+                    "computer_id": client.profile.computer_id,
+                    "alias": client.profile.alias,
+                    "computer_connected": connected,
+                    "advertised": advertised,
+                    "agent_ready": ready,
+                    "status": "ready"
+                    if ready
+                    else (
+                        "offline"
+                        if not connected
+                        else "unadvertised"
+                        if not advertised
+                        else "not_initialized"
+                    ),
+                }
+            )
+        return {"computers": computers, "routes": routes}
+
+    @app.get("/computers")
+    async def computers():
+        return computer_diagnostics()
+
     @app.get("/health")
     async def health():
         dispatcher = getattr(app.state, "dispatcher", None)
-        computers = []
-        if dispatcher is not None:
-            for row in core.store.computers.list():
-                registration = dispatcher.active.get(row["computer_id"])
-                connected = bool(
-                    registration
-                    and registration.relay.ready.is_set()
-                    and not registration.relay.closed.is_set()
-                )
-                computers.append(
-                    {
-                        "computer_id": row["computer_id"],
-                        "enabled": bool(row["enabled"]),
-                        "connected": connected,
-                        "agents": [agent.alias for agent in registration.agents]
-                        if connected
-                        else [],
-                    }
-                )
+        computers = dispatcher.status() if dispatcher is not None else []
         return {
             "gateway": {"version": __version__, "status": "running"},
             "database": {"schema_version": core.store.schema_version},

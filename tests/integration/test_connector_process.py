@@ -6,6 +6,7 @@ import sys
 import time
 
 import httpx
+import pytest
 import yaml
 from test_daemon_cli import daemon
 
@@ -14,7 +15,8 @@ from acp_gateway.storage import Store
 from fakes.fake_goose import FakeGooseServer
 
 
-def test_computer_cli_relays_prompt_to_shared_daemon_runtime(tmp_path):
+@pytest.mark.parametrize("stop", ["revoke", "sigterm"])
+def test_computer_cli_relays_prompt_to_shared_daemon_runtime(tmp_path, stop):
     secret = "mock-" + "process-local-agent-credential"
     owner = "mock-process-owner-credential"
     with FakeGooseServer(secret) as goose:
@@ -42,7 +44,13 @@ def test_computer_cli_relays_prompt_to_shared_daemon_runtime(tmp_path):
                             "computer_id": "work",
                             "kind": "goose",
                             "default_cwd": "/work",
-                        }
+                        },
+                        {
+                            "alias": "other",
+                            "backend": "connector",
+                            "computer_id": "work",
+                            "default_cwd": "/work",
+                        },
                     ],
                 }
             )
@@ -115,6 +123,13 @@ def test_computer_cli_relays_prompt_to_shared_daemon_runtime(tmp_path):
                     time.sleep(0.02)
                 else:
                     raise AssertionError("computer did not register")
+                diagnostics = api.get("/computers").json()
+                assert diagnostics["computers"][0]["connected_at"]
+                routes = {r["address"]: r for r in diagnostics["routes"]}
+                assert routes["work/goose"]["status"] == "not_initialized"
+                assert routes["work/other"]["status"] == "unadvertised"
+                # Diagnostics never connect to a local agent or disclose credentials.
+                assert not goose.sessions
                 for text, expected in [
                     ("code word process", "OK"),
                     ("What was the code word", "process"),
@@ -125,18 +140,55 @@ def test_computer_cli_relays_prompt_to_shared_daemon_runtime(tmp_path):
                     assert response.status_code == 202, response.text
                     assert response.json()["status"] == "completed"
                     assert response.json()["answer"] == expected
-                # Admin commands use another SQLite connection; the live daemon detects revoke.
-                registry = Store.open_in(tmp_path / "vps-data")
-                try:
-                    registry.computers.revoke("work")
-                finally:
-                    registry.close()
-                assert process.wait(timeout=5) == 1
+                routes = api.get("/computers").json()["routes"]
+                assert next(r for r in routes if r["address"] == "work/goose")["agent_ready"]
+                if stop == "revoke":
+                    # Admin commands use another SQLite connection; daemon detects revoke.
+                    registry = Store.open_in(tmp_path / "vps-data")
+                    try:
+                        registry.computers.revoke("work")
+                    finally:
+                        registry.close()
+                    assert process.wait(timeout=5) == 78
+                else:
+                    process.terminate()
+                    assert process.wait(timeout=5) == 0
+                deadline = time.monotonic() + 3
+                while time.monotonic() < deadline:
+                    diagnostics = api.get("/computers").json()
+                    if not diagnostics["computers"][0]["connected"]:
+                        break
+                    time.sleep(0.02)
+                row = diagnostics["computers"][0]
+                assert not row["connected"] and row["disconnected_at"]
+                assert row["disconnect_reason"] == (
+                    "access_changed" if stop == "revoke" else "connection_closed"
+                )
+                assert all(r["status"] == "offline" for r in diagnostics["routes"])
+                result = subprocess.run(
+                    [
+                        sys.executable,
+                        "-m",
+                        "acp_gateway",
+                        "--config",
+                        str(vps),
+                        "--env-file",
+                        str(vps_env),
+                        "computers",
+                        "status",
+                    ],
+                    capture_output=True,
+                    text=True,
+                    timeout=10,
+                )
+                assert result.returncode == 0, result.stderr
+                assert '"disconnect_reason"' in result.stdout and '"work/goose"' in result.stdout
                 log.seek(0)
                 output = log.read()
                 assert "computer connected" in output
                 assert all(
-                    value not in output for value in (secret, owner, key.read_text().strip())
+                    value not in output + result.stdout
+                    for value in (secret, owner, key.read_text().strip())
                 )
             finally:
                 if process.poll() is None:

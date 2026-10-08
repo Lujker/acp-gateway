@@ -132,7 +132,9 @@ def main():
                 time.sleep(0.1)
             run("computers", "revoke", "work")
             processes[1].wait(timeout=10)
-            require(processes[1].returncode == 1, "revoked connector did not stop with an error")
+            require(
+                processes[1].returncode == 78, "revoked connector did not stop with config error"
+            )
             require(processes[0].poll() is None, "revocation stopped the dispatcher")
             for path, _ in logs:
                 require(credential not in path.read_text(), "computer credential leaked into logs")
