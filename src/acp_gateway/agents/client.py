@@ -48,7 +48,11 @@ from acp_gateway.agents.errors import (
 )
 from acp_gateway.agents.events import AgentEvent, MessageChunk, TurnFinished, normalize
 from acp_gateway.agents.tls import TlsPin, pin_certificate
-from acp_gateway.agents.transport import PinnedWebSocketTransport
+from acp_gateway.agents.transport import (
+    AgentTransport,
+    PinnedWebSocketTransport,
+    TransportFactory,
+)
 from acp_gateway.config import AgentProfile
 from acp_gateway.log import get_logger
 
@@ -173,6 +177,7 @@ class AgentClient:
         request_timeout: float = 60,
         reconnect_delays: Sequence[float] = DEFAULT_RECONNECT_DELAYS,
         client_name: str = "acp-gateway",
+        transport_factory: TransportFactory | None = None,
     ) -> None:
         self.profile = profile
         self._secret = secret
@@ -182,10 +187,11 @@ class AgentClient:
         self._request_timeout = request_timeout
         self._reconnect_delays = tuple(reconnect_delays)
         self._client_name = client_name
+        self._transport_factory = transport_factory
         self._log = get_logger(__name__).bind(agent=profile.alias)
 
         self._conn: Any = None
-        self._transport: PinnedWebSocketTransport | None = None
+        self._transport: AgentTransport | None = None
         self._connect_lock = asyncio.Lock()
         self._attached: set[str] = set()  # sessions usable on the current connection
         self._uncertain: set[str] = set()  # cancellation not confirmed on this connection
@@ -238,22 +244,10 @@ class AgentClient:
             raise AgentUnavailable(f"{self.profile.display_name} is unavailable: {last}") from last
 
     async def _connect_once(self) -> None:
-        endpoint = self.profile.acp_endpoint
-        parts = urlsplit(endpoint)
-        pin = None
-        if parts.scheme == "wss":
-            pin = await pin_certificate(
-                parts.hostname or "",
-                parts.port or 443,
-                configured=self.profile.tls_fingerprint,
-                pin_file=self._pin_file,
-                timeout=self._open_timeout,
-            )
-        transport = await PinnedWebSocketTransport.connect(
-            endpoint, headers=self._auth_headers(), pin=pin, open_timeout=self._open_timeout
-        )
-        conn = connect_to_agent(_AcpClientSide(self), transport)
+        transport, pin = await self._open_transport()
+        conn = None
         try:
+            conn = connect_to_agent(_AcpClientSide(self), transport)
             init = await asyncio.wait_for(
                 conn.initialize(
                     protocol_version=PROTOCOL_VERSION,
@@ -267,8 +261,9 @@ class AgentClient:
             )
         except BaseException as exc:
             # Includes cancellation: the socket and the receive task must not leak.
-            with contextlib.suppress(Exception):
-                await conn.close()
+            if conn is not None:
+                with contextlib.suppress(Exception):
+                    await conn.close()
             await transport.close()
             if isinstance(exc, ValidationError):
                 reason = "invalid initialize response"
@@ -290,10 +285,30 @@ class AgentClient:
         watcher.add_done_callback(self._watchers.discard)
         self._log.info(
             "agent connected",
-            endpoint=endpoint,
+            endpoint=self.profile.acp_endpoint if self._transport_factory is None else "injected",
             agent_info=self.agent_info,
-            tls=pin.source if pin else "none",
+            tls=pin.source if pin else ("transport-managed" if self._transport_factory else "none"),
         )
+
+    async def _open_transport(self) -> tuple[AgentTransport, TlsPin | None]:
+        """Open one stream; injected factories own authentication and endpoint policy."""
+        if self._transport_factory is not None:
+            return await self._transport_factory(), None
+        endpoint = self.profile.acp_endpoint
+        parts = urlsplit(endpoint)
+        pin = None
+        if parts.scheme == "wss":
+            pin = await pin_certificate(
+                parts.hostname or "",
+                parts.port or 443,
+                configured=self.profile.tls_fingerprint,
+                pin_file=self._pin_file,
+                timeout=self._open_timeout,
+            )
+        transport = await PinnedWebSocketTransport.connect(
+            endpoint, headers=self._auth_headers(), pin=pin, open_timeout=self._open_timeout
+        )
+        return transport, pin
 
     def _auth_headers(self) -> dict[str, str]:
         if self._secret is None:
@@ -303,7 +318,7 @@ class AgentClient:
             return {"X-Secret-Key": value}
         return {"Authorization": f"Bearer {value}"}
 
-    async def _watch(self, transport: PinnedWebSocketTransport) -> None:
+    async def _watch(self, transport: AgentTransport) -> None:
         await transport.closed.wait()
         if self._transport is transport:
             self._attached.clear()
@@ -323,7 +338,7 @@ class AgentClient:
             await transport.close()
         self._attached.clear()
 
-    async def _abandon(self, transport: PinnedWebSocketTransport | None) -> None:
+    async def _abandon(self, transport: AgentTransport | None) -> None:
         """Close a connection whose ACP side failed so the next call reconnects.
 
         The SDK stops reading on some errors while the socket stays open; without
@@ -589,9 +604,7 @@ class AgentClient:
         finally:
             self._requests -= 1
 
-    async def _result(
-        self, request: asyncio.Future[Any], transport: PinnedWebSocketTransport | None
-    ) -> Any:
+    async def _result(self, request: asyncio.Future[Any], transport: AgentTransport | None) -> Any:
         try:
             return request.result()
         except ConnectionError as exc:

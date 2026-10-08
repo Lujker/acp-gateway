@@ -85,6 +85,33 @@ versions are rejected with input-independent errors. Connection IDs are UUIDs.
 WSS transport, authorization and heartbeat scheduling are implemented below.
 Task routing is the next increment of stage 2.
 
+## Relay preparation: transport injection
+
+`AgentClient` accepts an optional asynchronous `transport_factory`. Each call
+must open a fresh ACP stream implementing `AgentTransport`: `send`, `receive`,
+idempotent `close`, and a `closed` event. EOF returns `None`; delivery failures
+raise `ConnectionError`. Factories own routing, authentication, TLS policy,
+connection timeouts and cleanup of partially opened resources; normalize open
+failures to the existing agent error types for retry/fatal-error handling.
+Once a stream is returned, the client owns its lifecycle, including closing it
+on failed or cancelled initialization. Closing a future relay stream must not
+close the shared computer connection.
+
+Without a factory the existing direct WebSocket connection, authentication and
+certificate pinning are used. With a factory the client does not probe the local
+agent endpoint or transmit its configured secret; `tls_pin` is `None`, and
+connection logs mark TLS as transport-managed. ACP initialization, session modes,
+load/replay suppression, updates, permissions, cancellation and reconnection
+remain in the same client. Integration tests exercise these operations against
+the recorded mock agent over an in-memory ACP stream, including a disconnected
+turn that fails without replay.
+
+This is the implemented seam for a future `RelayTransport`; it does not add
+task routing to the registration channel. The next independent step is local
+connector policy (allowed methods, cwd roots, empty `mcpServers`, disabled client
+capabilities). Integrating relay into the daemon still needs the process,
+duplicate-connection and domain TLS decisions recorded in `road-notes.md`.
+
 ## Stage 2: WSS registration channel
 
 Two foreground modes now establish a real control connection. They register a

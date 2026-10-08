@@ -11,7 +11,8 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import json
-from typing import Any
+from collections.abc import Awaitable, Callable
+from typing import Any, Protocol
 
 from websockets.asyncio.client import connect as ws_connect
 from websockets.exceptions import ConnectionClosed, InvalidHandshake, InvalidStatus
@@ -27,6 +28,27 @@ from acp_gateway.log import get_logger
 MAX_MESSAGE_BYTES = 64 * 1024 * 1024
 
 _log = get_logger(__name__)
+
+
+class AgentTransport(Protocol):
+    """One ACP stream owned by AgentClient.
+
+    Implementations signal EOF or delivery failure through ``closed`` and
+    return None from receive on EOF. Close must be idempotent. A relay stream
+    closes independently of its shared computer connection.
+    """
+
+    closed: asyncio.Event
+
+    async def send(self, message: dict[str, Any]) -> None: ...
+
+    async def receive(self) -> dict[str, Any] | None: ...
+
+    async def close(self) -> None: ...
+
+
+# Each call opens a fresh stream; credentials and routing belong to the factory.
+TransportFactory = Callable[[], Awaitable[AgentTransport]]
 
 
 def _acceptable(message: Any) -> bool:
