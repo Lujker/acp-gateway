@@ -37,14 +37,15 @@ replaces it nor depends on it.
 
 ## 3. Deployment topologies
 
-One program supports three topologies; only configuration and security
-profile differ.
+The current LAN and co-located topologies are followed by a planned VPS
+dispatcher topology (`P4.1`, before channel extensions `P4.2`–`P4.4`). The connector is a launch
+mode of the same program; it is not implemented yet.
 
 | Topology | Gateway runs on | Work Goose runs on | Transport | Status |
 |---|---|---|---|---|
 | **LAN** (initial default) | home host, WSL | work laptop, WSL | `wss://<work-host>:<port>/acp`, TLS + secret + pinning | MVP target |
 | **Co-located** | the same machine as Work Goose | WSL | `ws://127.0.0.1:3284/acp` (loopback), secret | supported from MVP |
-| **Anywhere** | any host | work laptop outside the LAN | overlay network or tunnel | research, see `P4.1` |
+| **VPS dispatcher** | VPS with a stable IP and/or domain | multiple computers, any ACP-compatible agents | computers initiate WSS connections through our own connector | planned before channel extensions, `P4.1` |
 
 Gateway platforms: **WSL (Linux) is the primary and recommended path**,
 native Windows is supported, macOS is planned. Hence the code requirements:
@@ -71,6 +72,48 @@ name). Corporate policy restrictions (GPO on the firewall and `.wslconfig`)
 are checked under `P0.1`.
 
 Outbound connections from the home WSL into the LAN work without any setup.
+
+### 3.2. Planned VPS dispatcher and WSS connector
+
+Owner decision, 2026-10-08: implement after `P3.2`, before channel extensions
+`P4.2`–`P4.4`. Use
+our own connector, not Tailscale, VPN, SSH or frp tunnels.
+
+```mermaid
+flowchart TB
+    telegram["Telegram"] --> gateway
+    channels["Web / CLI / other channels"] --> gateway
+    gateway["VPS: ACP Gateway<br/>routing · sessions · approvals · audit"]
+    connector1["Computer A: connector"] -->|"outbound WSS connection"| gateway
+    connector2["Computer B: connector"] -->|"outbound WSS connection"| gateway
+    connector1 <-->|"local ACP transport"| agent1["ACP agent A"]
+    connector2 <-->|"local ACP transport"| agent2["ACP agent B"]
+    connector2 <-->|"local ACP transport"| agent3["ACP agent C"]
+```
+
+WSS arrows show which side establishes the connection; requests, responses,
+events and approvals travel in both directions. A computer needs no public
+IP or inbound port forwarding. The connector (working command name:
+`acpgw connector`) starts automatically, reconnects after network loss or
+sleep, and retains its identity across restarts. Computer connectivity and
+individual agent readiness are separate states.
+
+One computer can expose multiple agents. Channels let users choose a
+computer and agent while keeping their sessions and approval routing distinct.
+Any ACP-compatible agent is a target, subject to its advertised capabilities
+and supported transport. Goose and Hermes are validation candidates, not
+required dependencies or an exhaustive agent list. Plan for local network ACP
+connections and a stdio bridge.
+
+Execution, work files, tools and their credentials remain on agent computers.
+The VPS handles prompts, answers and approval data, so it is a trusted
+dispatcher. Approvals remain human decisions; the connector does not grant
+permissions on its own. Reconnecting a computer does not by itself guarantee
+resuming an interrupted task or restoring a session.
+
+Enrollment, authentication, protocol framing, reconnect semantics, task and
+session recovery, authorization and deployment details remain open until work
+on `P4.1` begins; see the 2026-10-08 entry in `road-notes.md`.
 
 ## 4. ACP: how the protocol actually behaves
 
@@ -99,8 +142,9 @@ settings.
 | `remote` (WebSocket) | the agent already listens on the network, like `goose serve` | Work Goose over LAN and co-located | MVP |
 | `stdio` | the gateway spawns the agent as a process (`goose acp`, Gemini CLI, Claude Code / Codex adapters, Kiro…) | co-located only: the agent on the same machine | `P4.7`, CONDITIONAL |
 
-Almost every ACP agent except goose speaks stdio only, so remotely they are
-reachable only through a wrapper on their side — out of scope.
+Agents that expose only stdio need a local bridge for remote access. This is
+outside the current remote backend and planned through the connector in
+`P4.1`; the local stdio backend remains under `P4.7`.
 
 Specifics of the `goose` profile (`remote` backend):
 
