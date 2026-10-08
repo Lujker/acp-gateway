@@ -835,6 +835,24 @@ approvals/watch/reject, cancel, persistence и frozen service commands
 Python harness в контейнер не попадают. Проверку запускает CI, поскольку
 локальный Docker engine в WSL недоступен.
 
+## 2026-10-08 — P3.4: подтверждение чистого Linux runtime в CI
+
+- Коммиты `1568082` и `f78a804` отправлены в main.
+- [CI run 37748465084](https://github.com/Lujker/acp-gateway/actions/runs/37748465084)
+  завершился успешно: lint/format, полный pytest, сборка, полный smoke на
+  runner и полный smoke в чистом `ubuntu:22.04` без Python.
+- В контейнер монтируются только готовый executable и временные runtime
+  config/data; checkout и Python проверяющего скрипта не монтируются.
+  Проверены CLI, daemon/API/SSE/MCP, pinned TLS ACP к mock Goose, approvals
+  (включая интерактивный watch/reject), cancel, restart persistence и команды
+  службы с systemctl stand-in. Настоящий service manager/reboot этим не подтверждён.
+- [Артефакт acpgw-linux-x86_64](https://github.com/Lujker/acp-gateway/actions/runs/37748465084/artifacts/11536473791)
+  содержит versioned tar.gz, SHA-256 и build metadata; размер CI ZIP около 24 MB.
+- Локальный полный pytest: **345 passed, 3 skipped**, 92.85 с.
+- Linux x86_64 часть бинарной дистрибуции подтверждена; весь P3.4 остаётся
+  PARTIAL до других целевых платформ и версионированного выпуска. Проверка
+  настоящего WSL/Windows автозапуска остаётся в P3.1/P3.5.
+
 ## Незакрытые вопросы
 
 - **Публикация** — удалять ли старые коммиты с GitHub окончательно (GitHub
