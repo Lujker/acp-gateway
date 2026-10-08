@@ -1,5 +1,9 @@
 # Gateway daemon and owner CLI
 
+For checkout installation, initial configuration and autostart commands, see
+[installation and service control](service.md). `acpgw setup` preserves existing
+files; `acpgw service status` reports the service even while the daemon is stopped.
+
 Configure an agent as described in [Work Goose setup](work-goose.md). Put
 the agent secret and a separate `ACPGW_API_TOKEN` in `.env`; secrets never
 belong in `config.yaml`. Generate an owner token with:

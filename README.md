@@ -51,6 +51,7 @@ and the work queue are in [`road-map.md`](road-map.md) (in Russian).
 | Approvals: human routing, deadlines, audit; core policy limits | ✅ `P1.4` |
 | Daemon, local API, approvals from the CLI | ✅ `P1.5` |
 | Hermes MCP facade; actions approved through the CLI | ✅ `P2.1`, `P2.2` (Hermes MCP module + mock agent) |
+| Checkout installer, initial setup, Linux/WSL service CLI | Implemented; Windows reboot verification and standalone binaries pending |
 | Telegram | 🔜 `P2.3` |
 | Snikket/XMPP, e-mail, web UI | 🗓 `P4` |
 
@@ -80,6 +81,11 @@ git clone git@github.com:Lujker/acp-gateway.git
 cd acp-gateway
 uv sync
 ```
+
+For an installed `acpgw` command outside the checkout, run
+`sh scripts/install.sh`, then configure the files created by `acpgw setup`.
+The installer keeps existing configuration and tokens. Installation and
+service commands: [`docs/setup/service.md`](docs/setup/service.md).
 
 ### 1. Prepare the agent
 
@@ -171,6 +177,20 @@ support sessions, explicit threads, asynchronous jobs and cancellation.
 Actions still require a human in `acpgw approvals watch`.
 Configuration, tool arguments and compatibility checks:
 [`docs/setup/hermes.md`](docs/setup/hermes.md).
+
+### 6. Manage autostart on Linux/WSL
+
+```bash
+acpgw service install   # install/update the user unit using the selected config
+acpgw service enable    # enable autostart and start now
+acpgw service status    # service state, including when the daemon is stopped
+acpgw service disable   # disable autostart and stop now
+acpgw service --help    # start, stop, restart and uninstall too
+```
+
+WSL also needs a Windows logon task and a user manager that starts with the
+distro. Instructions and the remaining reboot check:
+[`docs/setup/service.md`](docs/setup/service.md).
 
 ## Configuration
 

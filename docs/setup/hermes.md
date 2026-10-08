@@ -83,7 +83,7 @@ loopback Host validation, body bounds and credential separation apply before
 MCP parsing. The owner API continues to require its own token.
 
 ```bash
-uv run pytest tests/integration/test_mcp.py tests/unit/test_mcp.py
+uv run pytest tests/integration/test_mcp.py tests/unit/test_mcp_safety.py
 HERMES_TEST_REPO=/path/to/hermes-agent \
 HERMES_TEST_PYTHON=/path/to/hermes-dependency-venv/bin/python \
   uv run pytest tests/integration/test_hermes_compat.py

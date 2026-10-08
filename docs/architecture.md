@@ -24,6 +24,14 @@ The gateway is not a second AI agent: it makes no decisions on the agent's
 behalf, stores no work MCP credentials and has no access to the work file
 system.
 
+Installation is part of the product goal (`P3.4`, owner decision 2026-10-08):
+provide a standalone executable with the complete CLI, plus a supported
+checkout installation and initial setup command. Configuration, credentials,
+pins and SQLite data remain outside distributable artifacts and survive updates.
+Clear help and service install/enable/disable/status commands form a separate
+operational goal (`P3.5`), with platform-specific service adapters behind the CLI.
+Linux/WSL is first; native Windows follows `P3.2`, macOS follows `P4.6`.
+
 ## 2. Roles
 
 - **Agent (Work Goose) — execution plane.** The only component that sees work
@@ -52,6 +60,15 @@ native Windows is supported, macOS is planned. Hence the code requirements:
 plain Python without OS-specific dependencies in the core, paths via
 `platformdirs`, service wrappers (systemd / Task Scheduler / launchd) as
 separate files under `deploy/`.
+
+The initial Linux/WSL service control is implemented in `service.py`, generating
+a systemd user unit with absolute executable/config paths. `setup` creates
+private configuration and independent owner/MCP tokens, preserving existing
+files. `scripts/install.sh` installs the checkout as an isolated uv tool.
+The Windows logon task under `deploy/windows/` keeps the WSL distro alive;
+gateway autostart remains controlled by the systemd unit. Windows reboot
+verification and standalone binary builds remain outstanding.
+See [installation and service control](setup/service.md).
 
 ### 3.1. Networking in the LAN topology
 

@@ -16,7 +16,13 @@ from acp_gateway.log import redact_text
 
 
 def _build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(prog="acpgw", description="ACP Gateway")
+    parser = argparse.ArgumentParser(
+        prog="acpgw",
+        description="ACP Gateway: route conversations to ACP agents with human approvals.",
+        epilog="Getting started: acpgw setup → edit configuration → acpgw config check → "
+        "acpgw serve (foreground) or acpgw service install / enable (autostart). "
+        "Use acpgw <command> --help for details.",
+    )
     parser.add_argument("--version", action="version", version=f"acpgw {__version__}")
     parser.add_argument("--config", type=Path, help="path to config.yaml")
     parser.add_argument("--env-file", type=Path, help="path to the .env file with secrets")
@@ -29,6 +35,30 @@ def _build_parser() -> argparse.ArgumentParser:
     commands.add_parser("paths", help="show platform directories used by the gateway")
     commands.add_parser("serve", help="run the gateway daemon on loopback")
     commands.add_parser("status", help="show gateway, agents and channels")
+    setup_cmd = commands.add_parser(
+        "setup", help="create initial config and private tokens; keep existing files"
+    )
+    setup_cmd.add_argument(
+        "--config-dir", type=Path, help="destination (default: platform config dir)"
+    )
+    service = commands.add_parser(
+        "service",
+        help="install and manage autostart (Linux/WSL systemd user service)",
+        description="Control the systemd user service independently of the gateway API. "
+        "enable/disable also start/stop it; start/stop leave autostart unchanged.",
+    )
+    service_sub = service.add_subparsers(dest="service_command", required=True)
+    for action, help_text in (
+        ("install", "install/update the unit using the selected config; do not start it"),
+        ("enable", "enable autostart and start now"),
+        ("disable", "disable autostart and stop now"),
+        ("start", "start now without changing autostart"),
+        ("stop", "stop now without changing autostart"),
+        ("restart", "restart the running service"),
+        ("status", "show installed, enabled and running states; works while stopped"),
+        ("uninstall", "stop and remove the managed unit; keep configuration and data"),
+    ):
+        service_sub.add_parser(action, help=help_text)
 
     def conversation_options(cmd):
         cmd.add_argument("--agent", help="agent alias (optional with one configured agent)")
@@ -108,6 +138,18 @@ def main(argv: Sequence[str] | None = None) -> int:
     args = _build_parser().parse_args(argv)
     if args.command == "paths":
         return _cmd_paths()
+    if args.command == "setup" or (args.command == "service" and args.service_command != "install"):
+        try:
+            if args.command == "setup":
+                from acp_gateway.setup import setup
+
+                return setup(args.config_dir)
+            from acp_gateway.service import control
+
+            return control(args.service_command)
+        except (OSError, ValueError) as exc:
+            print(f"error: {redact_text(str(exc))}", file=sys.stderr)
+            return 1
 
     try:
         cfg = load_config(args.config, args.env_file)
@@ -121,6 +163,10 @@ def main(argv: Sequence[str] | None = None) -> int:
     if args.command == "config" and args.config_command == "check":
         return _cmd_config_check(cfg)
     try:
+        if args.command == "service":
+            from acp_gateway.service import install
+
+            return install(cfg)
         if args.command == "serve":
             from acp_gateway.daemon import serve
 

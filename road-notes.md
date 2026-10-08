@@ -724,6 +724,66 @@ ACP capabilities; нужны локальный сетевой транспор�
 очереди — `P3.1`, автозапуск в WSL. Реальный model-driven smoke сохранён
 как дополнительная ручная проверка, а не выдан за выполненный прогон.
 
+## 2026-10-08 — P3: установка, help и контроль службы
+
+Решение владельца: делать коммиты и push по ходу работы; отдельно включить
+в P3 самостоятельный бинарник со всеми командами либо установку checkout
+одной командой настройки, а также понятные help и команды установки,
+включения, отключения и статуса службы. Выделены `P3.4` (дистрибуция и
+настройка) и `P3.5` (CLI/служба); сначала Linux/WSL, native Windows вместе
+с `P3.2`, macOS по триггеру `P4.6`. Бинарник — целевой результат, не обещание
+уже существующего артефакта.
+
+Реализованный шаг:
+
+- `sh scripts/install.sh` ставит checkout как изолированный uv tool с Python
+  3.12 и ограничениями версий из `uv.lock`, затем вызывает `acpgw setup`.
+  Скрипт можно повторять для обновления. Config и .env остаются вне пакета.
+- `setup` создаёт platform config/.env, независимые случайные API/MCP-токены,
+  POSIX права 600/700, не печатает секреты и не заменяет существующие файлы.
+  Создаётся стартовый конфиг без агента; дальнейшие команды показываются
+  с явными путями, чтобы config из cwd не перехватил настройку.
+- Help объясняет стартовый маршрут, foreground serve и службы.
+  `service install/enable/disable/start/stop/restart/status/uninstall`
+  управляют systemd user unit на Linux/WSL. Enable/disable также запускают/
+  останавливают службу; start/stop сохраняют выбор автозапуска. Status читает
+  systemd, не зависит от API или исправности app config.
+- Unit содержит абсолютные interpreter/config/.env paths, restart on failure
+  и UMask=0077, но не секреты. Install требует сохранённых credentials и
+  абсолютного custom data_dir. Чужой unit или symlink не заменяется/удаляется;
+  uninstall сохраняет конфиг, токены и SQLite data. Frozen executable уже
+  учитывается при выборе ExecStart; самой binary-сборки пока нет.
+- Для Windows logon подготовлен `deploy/windows/wsl-task.ps1`: управление
+  отдельной Task Scheduler задачей, которая запускает WSL и `sleep infinity`.
+  Gateway не запускается этой задачей напрямую: отключение systemd службы
+  сохраняет смысл. Нужны systemd в WSL и linger user manager. PowerShell task
+  и перезагрузка Windows в этой среде не проверены, поэтому `P3.1`/`P3.5`
+  остаются PARTIAL; инструкция — `docs/setup/service.md`.
+
+Проверки:
+
+- Полный pytest: **345 passed, 3 skipped**, 97.99 с. Восемь service/setup
+  тестов дополнительно пройдены после проверки связки CLI → install.
+  Три optional Hermes проверки были пройдены на предыдущем шаге; здесь
+  установленный Hermes повторно не вызывался.
+- При полном сборе найден конфликт названий прежних `test_mcp.py` в unit
+  и integration. Unit-файл переименован в `test_mcp_safety.py`, документация
+  обновлена; полный набор снова собирается и проходит.
+- Unit проверен настоящим `systemd-analyze --user verify`. Именно эта
+  проверка обнаружила, что WorkingDirectory не принимает кавычки как
+  ExecStart: формат исправлен, в том числе раздельное экранирование `%`/`$`.
+- Установка и переустановка реально выполнены в `/tmp` tool/bin/config
+  каталогах. Повторный setup сохранил файлы. Установленный пакет из wheel
+  запущен вне checkout: config check, daemon, SQL migrations, authenticated
+  health и MCP channel — работают. Рабочие файлы и службы владельца не менялись.
+- Ruff, format check, `git diff --check`, shell syntax check и скан изменённых
+  файлов на секреты — чисто. Context7 callable недоступен; CLI uv проверен
+  по встроенному help/официальным docs, WSL/ScheduledTasks — по Microsoft docs.
+
+Остаток: самостоятельная Linux/WSL-сборка и clean-machine smoke (`P3.4`),
+настоящий Windows reboot/task lifecycle (`P3.1`), затем native Windows
+adapter и binary (`P3.2` + Windows-части `P3.4/P3.5`).
+
 ## Незакрытые вопросы
 
 - **Публикация** — удалять ли старые коммиты с GitHub окончательно (GitHub
