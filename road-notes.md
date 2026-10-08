@@ -1241,6 +1241,51 @@ scanner и git diff --check проходят. Первый полный прог
 таймаут готовности старой MCP daemon fixture; этот тест отдельно прошёл,
 повторный полный прогон чистый. Бинарник и работающая служба не обновлялись.
 
+## 2026-10-08 — P4.1: первый ACP relay в serve
+
+По поручению владельца продолжен согласованный этап: ingress теперь второй
+listener в lifespan `serve`, в одном event loop с core/channels/approvals.
+Новый `connector`-раздел YAML включает адрес/порт/путь и опциональные TLS-файлы;
+plain WS остаётся тестовым режимом. `backend: connector` + `computer_id` задают
+маршрут `computer/agent`, без URL/секрета локального агента на VPS. Одинаковые
+agent aliases разных компьютеров не конфликтуют; MCP использует prefix
+`computer__agent`, конфигурация отказывает при коллизии имён tools.
+
+Добавлены `open/opened/data/close` с alias/stream/epoch. VPS использует
+RelayTransport через прежний AgentClient; компьютер открывает локальный socket
+и PolicyTransport, проверяет cwd/mode/методы/permissions. Каждый поток независим;
+один reader и один FIFO writer обслуживают компьютер. Control limit 64 KiB,
+data limit 1 MiB, inbox/outgoing data budget 2 MiB, inbox 128 сообщений;
+32 одновременных потока, 4096 stream IDs на epoch, без повторного использования.
+Переполнение закрывает свой поток. Writer timeout 5 с; ingress ограничивает
+handshake/соединения до 64, opening timeout 5 с. Keepalive native WS, один
+application ping оставлен для совместимости v1.
+
+Newest-wins немедленно fence-ит старые потоки; неверный epoch/alias не попадёт
+в агент. AgentClient привязывает updates/permissions к своему transport.
+In-process revoke/rotate немедленно закрывает потоки, внешние CLI-изменения
+registry проверяются раз в секунду. Computer connector автоматически повторяет
+сетевое подключение с backoff 1/2/5/10/30 с; access/TLS/protocol/replacement
+ошибки требуют исправления. Uncertain prompts не повторяются; следующий явный
+запрос может восстановить соединение/session load.
+
+Добавлены real-WS/mock-ACP сценарии sessions/mode/streamed response,
+human allow/reject, cancel pending permission, replacement во время prompt без
+replay, stream isolation, policy denial, byte/item overflow, oversized message,
+cancelled local open, fatal local auth, epoch fencing и immediate revoke.
+Общий runtime проверен через owner API и MCP, включая human approval.
+Отдельный CLI-процесс компьютера проверен с настоящим HTTP API демона:
+два хода сохраняют историю; revoke из другой SQLite connection останавливает
+процесс, credentials отсутствуют в его выводе.
+
+Финальный полный прогон: **663 passed, 3 optional Hermes skipped**, 167.11 с.
+Ruff check/format, scanner и git diff --check чистые. Первый полный прогон:
+661 passed, один отказ scanner на фиктивные credential literals в новых tests;
+запись mock-значений исправлена, отдельно scanner suite прошёл 42 теста.
+
+Реальный Goose/VPS/nginx, несколько физических компьютеров и durable result
+recovery ещё не принимались; бинарник и работающая служба не обновлялись.
+
 ## Незакрытые вопросы
 
 - **Публикация** — удалять ли старые коммиты с GitHub окончательно (GitHub

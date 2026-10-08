@@ -190,7 +190,7 @@ class McpChannel(Channel):
         ):
             self.server.add_tool(
                 fn,
-                name=f"{alias}_{suffix}",
+                name=f"{alias.replace('/', '__')}_{suffix}",
                 description=description,
                 annotations=ToolAnnotations(readOnlyHint=readonly, openWorldHint=True),
             )

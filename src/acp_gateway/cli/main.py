@@ -60,7 +60,7 @@ def _build_parser() -> argparse.ArgumentParser:
     ):
         service_sub.add_parser(action, help=help_text)
 
-    dispatcher = commands.add_parser("dispatcher", help="WS computer ingress (registration only)")
+    dispatcher = commands.add_parser("dispatcher", help="standalone WS ingress diagnostic listener")
     dispatcher.add_argument(
         "--host", default="127.0.0.1", help="bind address; explicit for public ingress"
     )
@@ -69,7 +69,7 @@ def _build_parser() -> argparse.ArgumentParser:
     dispatcher.add_argument("--tls-cert", type=Path, help="optional certificate to enable TLS")
     dispatcher.add_argument("--tls-key", type=Path, help="private key paired with --tls-cert")
     connector = commands.add_parser(
-        "connector", help="outgoing WS/WSS computer registration (no task relay yet)"
+        "connector", help="outgoing WS/WSS computer connection and local ACP relay"
     )
     connector.add_argument("--dispatcher-url", required=True, help="ws[s]://host[:port][/path]")
     connector.add_argument("--computer-id", required=True)
@@ -152,10 +152,14 @@ def _cmd_config_check(cfg: AppConfig) -> int:
         if agent.secret_env:
             state = "set" if agent.secret_env in cfg.secrets else "missing"
             secret = f"{agent.secret_env} ({state})"
-        print(f"  - {agent.alias} [{agent.kind}/{agent.backend}] {agent.display_name}")
-        print(f"    url: {agent.url}  tls: {tls}")
+        print(f"  - {agent.address} [{agent.kind}/{agent.backend}] {agent.display_name}")
+        if agent.backend == "connector":
+            print(f"    route: {agent.address} (computer credentials remain on the computer)")
+        else:
+            print(f"    url: {agent.url}  tls: {tls}")
         print(f"    secret: {secret}  cwd: {agent.default_cwd}")
-        print(f"    endpoint: {agent.acp_endpoint}  session mode: {agent.session_mode or '-'}")
+        if agent.backend == "remote":
+            print(f"    endpoint: {agent.acp_endpoint}  session mode: {agent.session_mode or '-'}")
 
     missing = cfg.missing_agent_secrets()
     if missing:

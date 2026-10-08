@@ -46,7 +46,9 @@ def _sse(kind: str, data) -> str:
     return f"event: {kind}\ndata: {encoded}\n\n"
 
 
-def create_app(core: GatewayCore, cli: CliChannel, token: SecretStr, *, mcp=None) -> FastAPI:
+def create_app(
+    core: GatewayCore, cli: CliChannel, token: SecretStr, *, mcp=None, ingress=None
+) -> FastAPI:
     if not token.get_secret_value():
         raise ValueError("the owner API token is required")
 
@@ -57,6 +59,8 @@ def create_app(core: GatewayCore, cli: CliChannel, token: SecretStr, *, mcp=None
                 if mcp is not None:
                     await stack.enter_async_context(mcp.server.session_manager.run())
                 await core.start()
+                if ingress is not None:
+                    await stack.enter_async_context(ingress())
                 yield
         finally:
             await core.close()
@@ -121,6 +125,26 @@ def create_app(core: GatewayCore, cli: CliChannel, token: SecretStr, *, mcp=None
 
     @app.get("/health")
     async def health():
+        dispatcher = getattr(app.state, "dispatcher", None)
+        computers = []
+        if dispatcher is not None:
+            for row in core.store.computers.list():
+                registration = dispatcher.active.get(row["computer_id"])
+                connected = bool(
+                    registration
+                    and registration.relay.ready.is_set()
+                    and not registration.relay.closed.is_set()
+                )
+                computers.append(
+                    {
+                        "computer_id": row["computer_id"],
+                        "enabled": bool(row["enabled"]),
+                        "connected": connected,
+                        "agents": [agent.alias for agent in registration.agents]
+                        if connected
+                        else [],
+                    }
+                )
         return {
             "gateway": {"version": __version__, "status": "running"},
             "database": {"schema_version": core.store.schema_version},
@@ -138,6 +162,7 @@ def create_app(core: GatewayCore, cli: CliChannel, token: SecretStr, *, mcp=None
                 for c in core.channels.values()
             ],
             "running_jobs": len(core.running_jobs()),
+            "computers": computers,
         }
 
     async def agent_health(alias: str, check: bool = False):
@@ -174,10 +199,10 @@ def create_app(core: GatewayCore, cli: CliChannel, token: SecretStr, *, mcp=None
             status_code=200 if channel.connected else 503,
         )
 
-    app.get("/health/agents/{alias}")(agent_health)
+    app.get("/health/agents/{alias:path}")(agent_health)
     app.get("/health/channels/{name}")(channel_health)
 
-    @app.get("/health/{target}")
+    @app.get("/health/{target:path}")
     async def component_health(target: str, check: bool = False):
         if target in core.agents and target in core.channels:
             raise HTTPException(400, "use /health/agents/ or /health/channels/ for this name")

@@ -10,16 +10,16 @@ tool credentials and work files stay on computers.
 | Stage | Deliverable |
 |---|---|
 | 1 | Implemented: versioned control frames, stable computer IDs, local enrollment, credential rotation/revocation |
-| 2 | In progress: WS/WSS registration, heartbeats and newest-wins implemented; ACP route, requests/results/human approvals next |
-| 3 | Multiple computers/agents, selection in channels, isolated session mappings |
-| 4 | Heartbeats, reconnect/connection epochs, bounded queues, deduplication and uncertain task outcomes |
+| 2 | Implemented and mock-tested: ingress in serve, guarded ACP relay, requests/results/human approvals/cancel |
+| 3 | Namespaced configured routes implemented; multiple-computer/channel acceptance remains |
+| 4 | Native keepalive, reconnect, epoch fencing and bounded queues implemented; durable result recovery remains |
 | 5 | VPS deployment, connector services/upgrades and local stdio bridging |
 
 Existing core, policy, approval audit, sessions, Telegram/MCP, ACP client,
 binary build and Linux user services are reused. Native Windows and macOS
 are separate platform work; they do not block the Linux/WSL route.
-Enrollment and frame validation alone do not constitute an operational
-connector. The relay and deployment are subsequent stages.
+The first network ACP relay is implemented and tested against the recorded
+Goose mock. Real Goose end-to-end acceptance and deployment remain outstanding.
 
 Enrollment is an owner operation on the VPS. Each computer has its own
 random credential, independent of owner/MCP/Telegram/agent tokens. The
@@ -84,7 +84,7 @@ Frames are bounded to 64 KiB of UTF-8 JSON; hello contains 1–100 uniquely name
 agents. Unknown fields, duplicate JSON keys, invalid identifiers and unsupported
 versions are rejected with input-independent errors. Connection IDs are UUIDs.
 WS/WSS transport, authorization and heartbeat scheduling are implemented below.
-Task routing is the next increment of stage 2.
+Relay frames and usage are described below.
 
 ## Relay preparation: transport injection
 
@@ -95,7 +95,7 @@ raise `ConnectionError`. Factories own routing, authentication, TLS policy,
 connection timeouts and cleanup of partially opened resources; normalize open
 failures to the existing agent error types for retry/fatal-error handling.
 Once a stream is returned, the client owns its lifecycle, including closing it
-on failed or cancelled initialization. Closing a future relay stream must not
+on failed or cancelled initialization. Closing a relay stream does not
 close the shared computer connection.
 
 Without a factory the existing direct WebSocket connection, authentication and
@@ -107,29 +107,30 @@ remain in the same client. Integration tests exercise these operations against
 the recorded mock agent over an in-memory ACP stream, including a disconnected
 turn that fails without replay.
 
-This is the implemented seam for a future `RelayTransport`; it does not add
-task routing to the registration channel. The local policy described below is
-also implemented and tested. The owner accepted the architecture below on
-2026-10-08; those decisions no longer block relay implementation.
+`RelayTransport` now implements this seam over the computer connection.
+The computer's local ACP socket is wrapped in the policy below. The owner
+accepted the architecture below on 2026-10-08.
 
 ## Accepted relay architecture
 
-- Connector ingress becomes a second listener in `serve`, sharing the runtime
-  with core/channels/approvals; the current standalone registration listener is
-  an interim diagnostic mode, not the future routing process.
+- Connector ingress is a second listener in `serve`, sharing the runtime
+  with core/channels/approvals. The standalone `dispatcher` listener remains
+  a diagnostic mode; use `serve` for task routing.
 - Relay carries ACP JSON-RPC in a multiplexed envelope with agent alias, stream
   ID and connection epoch. The VPS reuses AgentClient with RelayTransport; the
   computer applies PolicyTransport before forwarding traffic to its local agent.
 - The newest fully authenticated registration replaces the old connection and
   receives a fresh epoch. Old stream results and approvals must be rejected.
-  Registration replacement is implemented; relay epoch fencing is still pending.
+  Registration replacement and relay epoch fencing are implemented.
 - One reader demultiplexes traffic, with WebSocket keepalive, separate control/data
   limits and byte-bounded stream queues. Overflow fails the affected stream.
 - Core addresses remote agents as `computer/agent`, distinguishing computer
   connectivity from agent readiness. Network failures retry with backoff;
   access/TLS failures require correction, and uncertain prompts are not replayed.
-- In-process access revocation notifies connections immediately. Public ingress
-  gets handshake/connection limits as deployment work.
+- In-process access revocation fences streams immediately; commands from another
+  process are detected within one second. Ingress limits concurrent connections
+  and handshakes to 64 and opening handshakes to five seconds. Deployment-specific
+  rate limits remain nginx/VPS acceptance work.
 - TLS is disabled for current IP/port tests. Domains, root paths and subpaths
   remain supported for a later nginx front end. TLS can be enabled explicitly on
   the listener or terminated at nginx; plaintext upstream stays on loopback in
@@ -141,8 +142,8 @@ also implemented and tested. The owner accepted the architecture below on
 `default_cwd` and `session_mode`. `PolicyTransport(local_transport, policy)`
 guards one computer-side ACP stream before it is exposed to the dispatcher.
 It implements the same transport interface as the direct WebSocket transport.
-The registration-only CLI does not forward ACP traffic yet; this boundary will
-be wired into its relay handler, not into the existing direct gateway mode.
+The `connector` CLI applies this boundary on every local relay stream.
+The existing direct gateway mode keeps its original behavior.
 
 The request allowlist is `initialize`, `session/new`, `session/load`,
 `session/list`, `session/prompt`, `session/set_mode` and `session/cancel`.
@@ -183,16 +184,60 @@ independently of the dispatcher.
 Per-stream tracking is bounded to 64 outstanding ACP requests, 64 permissions
 and 1024 attached sessions. A violation closes that stream, clears tracking and
 fails outstanding work without replay; other streams remain independent.
-Wire frame limits, stream/epoch demultiplexing and reconnect scheduling are the
-next relay layer, not implemented by this policy wrapper.
+The relay layer adds wire frame limits, stream/epoch demultiplexing and reconnect
+scheduling independently of this policy wrapper.
 
-## Stage 2: WS/WSS registration channel
+## Stage 2: WS/WSS connection and ACP relay
 
-Two foreground modes now establish a real control connection. They register a
-computer and its configured agent aliases; they do not relay tasks yet.
+`serve` owns the computer listener alongside the owner API and channels.
+On the VPS configure the listener and explicit remote routes. A route names
+the computer and its local agent alias; no agent URL or agent secret belongs
+in the VPS profile. The cwd and requested mode must match the computer's policy.
 
-On the dispatcher host, enroll the computer with the stage 1 commands. For
-current IP/port tests, start the listener without TLS:
+```yaml
+# dispatcher.yaml (VPS)
+connector:
+  enabled: true
+  host: 0.0.0.0
+  port: 8766
+  connect_path: /
+agents:
+  - alias: goose
+    computer_id: work-laptop
+    backend: connector
+    kind: goose
+    default_cwd: /work
+```
+
+Set the owner API token in the VPS environment or private `.env`, enroll the
+computer, then start the gateway:
+
+```bash
+acpgw --config /path/to/dispatcher.yaml serve
+```
+
+The owner API and MCP remain loopback-only. `connector.enabled` defaults to
+false, `connector.host` to `127.0.0.1`, and the path to `/connect`. TLS is off
+unless both `connector.tls_cert` and `connector.tls_key` are provided. Existing
+direct agent profiles can coexist with connector routes. Core/CLI/Telegram/API
+address a route as `work-laptop/goose`; MCP names its tools
+`work-laptop__goose_ask`, `work-laptop__goose_sessions`, etc. Conflicting tool
+names are refused at configuration time. `/health` distinguishes enrolled
+computer connectivity from successful ACP initialization, and
+`/health/agents/work-laptop/goose` reports the agent's readiness.
+
+After the computer connects, submit a test prompt through the existing owner CLI:
+
+```bash
+acpgw --config /path/to/dispatcher.yaml ask --agent work-laptop/goose "say pong"
+```
+
+Keep `acpgw ... approvals watch` connected for actions requiring human permission,
+or use the configured Telegram approver. No available approver means deny.
+
+For registration diagnostics alone, a standalone listener remains available:
+
+Enroll the computer with the stage 1 commands. For current IP/port tests:
 
 ```bash
 acpgw --config /path/to/dispatcher.yaml dispatcher \
@@ -205,11 +250,22 @@ accepts exactly `--connect-path` (default `/connect`, `/` in the example); the o
 remain on their existing loopback listener. It uses a separate dispatcher lock
 in `data_dir`. Its SQLite registry can be administered by `computers` commands
 while it runs. `computers list` shows enrolled/enabled identities, not online
-connection status. There is no public registration-status API yet.
+connection status. The standalone mode has no owner API or core task routing;
+do not run it on the same ingress port as `serve`.
 
 Securely copy the enrollment credential to the computer and keep it in a file
 owned by its local Linux user with mode `0600`. Configure local agent profiles
 in the computer's YAML, then run using the dispatcher's IP and port:
+
+```yaml
+# computer.yaml (computer; .env holds LOCAL_GOOSE_SECRET)
+agents:
+  - alias: goose
+    kind: goose
+    url: ws://127.0.0.1:3000/acp
+    secret_env: LOCAL_GOOSE_SECRET
+    default_cwd: /work
+```
 
 ```bash
 acpgw --config /path/to/computer.yaml connector \
@@ -228,23 +284,50 @@ HTTP redirects are refused. The credential is sent in the authorization header
 after the selected transport connects (and validates TLS when WSS is selected).
 Wire DEBUG traces are disabled
 to keep authorization headers out of logs. No local agent URL/credential is sent
-in the manifest, and registering does not connect to the ACP agent yet.
+in the manifest. Registration advertises configured aliases; each relay stream
+opens its own local ACP socket on demand. Local agent secrets are checked for
+presence before registration. The computer accepts only direct agent profiles.
 
 Authorization occurs before WebSocket upgrade and is checked again when hello
 arrives. Hello must match the authenticated computer ID. Each accepted
 connection gets a new UUID epoch. A new authenticated hello for an active computer
 replaces its old connection. Invalid credentials or hello cannot displace it.
-The old handler's cleanup cannot remove the new registration. Heartbeats default to 20 seconds;
-missing or mismatched replies close the connection. Rotation/revocation closes
-an active connection on the next access check, normally within one second.
+The old handler's cleanup cannot remove the new registration. Native WebSocket
+ping/pong defaults to 20 seconds. A single application ping remains for v1
+compatibility; subsequent liveness does not depend on application heartbeat
+traffic. In-process rotation/revocation fences streams immediately; external
+CLI changes close an active connection on the next access check, within one second.
 Failure to read the access registry also closes it. One computer's revocation
-leaves other registrations running. No reconnect or prompt replay is automatic.
+leaves other registrations running. The computer retries transient network/5xx
+failures with 1/2/5/10/30-second backoff. Access, TLS, protocol and replacement
+errors stop it for correction. Interrupted prompts are never replayed automatically;
+a later explicit request can reconnect/load a stored session if the agent supports it.
 Use Ctrl+C for foreground shutdown; dedicated service modes are stage 5 work.
 
 Rebuild locally to include these modes in a standalone binary. The opt-in smoke
 `scripts/smoke_connector.py /path/to/acpgw` runs both modes outside the checkout
-with no Python on the child PATH, checks two heartbeats, live revocation and
+with no Python on the child PATH, checks connection liveness, live revocation and
 interrupt shutdown. It uses only temporary certificates, config, DB and keys.
+
+### Relay wire boundary
+
+Control frames remain limited to 64 KiB; data envelopes are limited to 1 MiB of
+UTF-8 JSON. `open`, `opened`, `data` and `close` carry alias, stream UUID and
+epoch UUID. The computer opens a local transport before acknowledging a stream;
+ACP initialize determines readiness afterwards. Unknown aliases, mismatched
+epochs/aliases, malformed ACP IDs and reused stream IDs cannot reach another
+stream. Retired-stream traffic is discarded. Each epoch has at most 32 active
+streams and 4096 lifetime stream IDs.
+
+One reader demultiplexes traffic. Local streams have independent workers and
+2-MiB/128-message inbox limits. The shared FIFO writer has a 2-MiB data limit,
+64 control slots and a five-second send deadline. Overflow or policy violations
+close the affected stream; a broken computer socket fences all its streams.
+Closing a stream does not close other streams. Local open errors distinguish
+retryable unavailability from access/TLS failures. User decisions remain bound
+to their live stream; AgentClient also discards updates/permissions from a
+retired transport. Durable deduplication and recovery of uncertain results
+remain future work.
 
 ## Domain and nginx path layout
 
@@ -252,6 +335,8 @@ The dispatcher URL accepts IP addresses, DNS names, `/` or a configured subpath.
 For example, use `--connect-path /gateway/connect` and connect to
 `ws://dispatcher.example/gateway/connect`. The nginx upstream can stay on
 `127.0.0.1:8766`; the owner API/MCP are not proxied by this location.
+For `serve`, set `connector.connect_path: /gateway/connect` in the VPS YAML;
+the CLI flag above applies to the standalone diagnostic listener.
 
 Example inside an existing nginx `server` block:
 

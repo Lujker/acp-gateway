@@ -74,12 +74,31 @@ class GatewaySettings(_Section):
         return _validate_env_name(name)
 
 
+class ConnectorSettings(_Section):
+    enabled: bool = False
+    host: str = "127.0.0.1"
+    port: int = Field(default=8766, ge=1, le=65535)
+    connect_path: str = "/connect"
+    tls_cert: Path | None = None
+    tls_key: Path | None = None
+
+    @model_validator(mode="after")
+    def _listener(self):
+        from acp_gateway.connectors.control import validate_connect_path
+
+        validate_connect_path(self.connect_path)
+        if bool(self.tls_cert) != bool(self.tls_key):
+            raise ValueError("provide both connector.tls_cert and connector.tls_key")
+        return self
+
+
 class AgentProfile(_Section):
     alias: str = Field(pattern=r"^[a-z][a-z0-9_]{0,31}$")
     title: str | None = None
     kind: Literal["goose", "generic"] = "generic"
-    backend: Literal["remote"] = "remote"
-    url: str
+    backend: Literal["remote", "connector"] = "remote"
+    computer_id: str | None = Field(default=None, pattern=r"^[a-z][a-z0-9_-]{0,63}$")
+    url: str = ""
     secret_env: str | None = None
     tls_fingerprint: str | None = None
     allow_insecure_transport: bool = False
@@ -90,7 +109,11 @@ class AgentProfile(_Section):
 
     @property
     def display_name(self) -> str:
-        return self.title or self.alias
+        return self.title or self.address
+
+    @property
+    def address(self) -> str:
+        return f"{self.computer_id}/{self.alias}" if self.backend == "connector" else self.alias
 
     @property
     def uses_tls(self) -> bool:
@@ -133,6 +156,14 @@ class AgentProfile(_Section):
 
     @model_validator(mode="after")
     def _check_transport(self) -> AgentProfile:
+        if self.backend == "connector":
+            if self.computer_id is None:
+                raise ValueError("connector agent requires computer_id")
+            if self.url or self.secret_env or self.tls_fingerprint or self.allow_insecure_transport:
+                raise ValueError("connector agent credentials and URL belong on the computer")
+            return self
+        if self.computer_id is not None:
+            raise ValueError("computer_id requires backend: connector")
         parts = urlsplit(self.url)
         if parts.scheme not in ("ws", "wss", "http", "https"):
             raise ValueError(
@@ -223,6 +254,7 @@ class Settings(BaseSettings):
     )
 
     gateway: GatewaySettings = Field(default_factory=GatewaySettings)
+    connector: ConnectorSettings = Field(default_factory=ConnectorSettings)
     agents: list[AgentProfile] = Field(default_factory=list)
     policy: PolicySettings = Field(default_factory=PolicySettings)
     logging: LoggingSettings = Field(default_factory=LoggingSettings)
@@ -231,10 +263,15 @@ class Settings(BaseSettings):
 
     @model_validator(mode="after")
     def _unique_aliases(self) -> Settings:
-        aliases = [a.alias for a in self.agents]
+        aliases = [a.address for a in self.agents]
         duplicates = sorted({a for a in aliases if aliases.count(a) > 1})
         if duplicates:
             raise ValueError(f"duplicate agent aliases: {', '.join(duplicates)}")
+        tool_prefixes = [alias.replace("/", "__") for alias in aliases]
+        if len(tool_prefixes) != len(set(tool_prefixes)):
+            raise ValueError("agent addresses have conflicting MCP tool names")
+        if any(a.backend == "connector" for a in self.agents) and not self.connector.enabled:
+            raise ValueError("connector agents require connector.enabled: true")
         return self
 
     @classmethod
@@ -255,7 +292,7 @@ class Settings(BaseSettings):
 
     def agent(self, alias: str) -> AgentProfile:
         for profile in self.agents:
-            if profile.alias == alias:
+            if profile.address == alias:
                 return profile
         raise KeyError(alias)
 

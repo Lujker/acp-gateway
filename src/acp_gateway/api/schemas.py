@@ -5,7 +5,9 @@ from pydantic import BaseModel, ConfigDict, Field
 
 class ConversationRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
-    agent: str | None = Field(default=None, pattern=r"^[a-z][a-z0-9_]{0,31}$")
+    agent: str | None = Field(
+        default=None, pattern=r"^(?:[a-z][a-z0-9_-]{0,63}/)?[a-z][a-z0-9_]{0,31}$"
+    )
     thread: str = Field(default="default", min_length=1, max_length=256)
 
 

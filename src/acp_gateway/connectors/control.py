@@ -1,7 +1,7 @@
 """Computer ingress and an outgoing registration client over WS or WSS.
 
-This control channel advertises agents and monitors identity/liveness. Task
-relay will use this connection in the next increment; no prompts run here.
+The connection advertises agents, monitors identity/liveness, and multiplexes
+guarded ACP streams. The owner API remains a separate loopback listener.
 """
 
 from __future__ import annotations
@@ -21,27 +21,35 @@ from uuid import UUID, uuid4
 
 from websockets.asyncio.server import serve
 from websockets.datastructures import MultipleValuesError
-from websockets.exceptions import ConnectionClosed, InvalidHandshake
+from websockets.exceptions import ConnectionClosed, InvalidHandshake, InvalidStatus
 
-from acp_gateway.agents.errors import AgentError
+from acp_gateway.agents.errors import AgentError, AgentUnavailable, TLSFingerprintMismatch
 from acp_gateway.agents.tls import fingerprint_of, pin_certificate
 from acp_gateway.agents.transport import _NoRedirectConnect
 from acp_gateway.connectors.protocol import (
-    MAX_FRAME_BYTES,
+    MAX_DATA_BYTES,
     AgentManifest,
     Hello,
     Ping,
-    Pong,
     ProtocolError,
     Welcome,
     decode_frame,
     encode_frame,
 )
+from acp_gateway.connectors.relay import RelayPeer
 from acp_gateway.log import register_secret
 
 # Library DEBUG traces include handshake headers. Never enable wire tracing.
 _WIRE_LOG = logging.getLogger("acp_gateway.connectors.wire")
 _WIRE_LOG.setLevel(logging.WARNING)
+
+
+class ConnectorUnavailable(ValueError):
+    """Transient computer connection failure; safe to retry registration."""
+
+
+class ConnectorAccessError(ValueError):
+    """Credentials, TLS or protocol need correction; do not retry automatically."""
 
 
 @dataclass
@@ -51,18 +59,59 @@ class Registration:
     generation: int
     agents: tuple[AgentManifest, ...]
     connection: object
+    relay: RelayPeer | None = None
 
 
 class ControlDispatcher:
-    def __init__(self, registry, *, heartbeat_seconds: int = 20, connect_path: str = "/connect"):
+    def __init__(
+        self,
+        registry,
+        *,
+        heartbeat_seconds: int = 20,
+        connect_path: str = "/connect",
+        max_connections: int = 64,
+    ):
         if not 5 <= heartbeat_seconds <= 300:
             raise ValueError("heartbeat must be between 5 and 300 seconds")
         self.registry = registry
         self.connect_path = validate_connect_path(connect_path)
         self.heartbeat_seconds = heartbeat_seconds
+        if not 1 <= max_connections <= 1024:
+            raise ValueError("ingress connection limit must be between 1 and 1024")
+        self.max_connections = max_connections
         self.active: dict[str, Registration] = {}
+        self._closing: set[asyncio.Task] = set()
+        self.registry.subscribe(self._access_changed)
+
+    def _access_changed(self, computer_id):
+        registration = self.active.get(computer_id)
+        if registration is not None and not registration.relay.closed.is_set():
+            registration.relay.invalidate()
+            task = asyncio.create_task(
+                registration.connection.close(code=1008, reason="computer access changed")
+            )
+            self._closing.add(task)
+            task.add_done_callback(self._closing.discard)
+
+    async def open_agent(self, computer_id: str, alias: str):
+        registration = self.active.get(computer_id)
+        if registration is None or registration.relay is None:
+            raise AgentUnavailable("computer is offline")
+        try:
+            valid = self.registry.grant_valid(computer_id, registration.generation)
+        except sqlite3.Error:
+            registration.relay.invalidate()
+            await registration.connection.close(code=1011, reason="access check unavailable")
+            raise AgentUnavailable("computer access check is unavailable") from None
+        if not valid:
+            registration.relay.invalidate()
+            await registration.connection.close(code=1008, reason="computer access changed")
+            raise AgentUnavailable("computer access changed")
+        return await registration.relay.open(alias)
 
     def authenticate(self, connection, request):
+        if len(connection.server.handler_tasks) > self.max_connections:
+            return connection.respond(503, "Computer ingress is full\n")
         if request.path != self.connect_path:
             return connection.respond(404, "Not found\n")
         try:
@@ -87,9 +136,13 @@ class ControlDispatcher:
             try:
                 valid = self.registry.grant_valid(registration.computer_id, registration.generation)
             except sqlite3.Error:
+                if registration.relay is not None:
+                    registration.relay.invalidate()
                 await registration.connection.close(code=1011, reason="access check unavailable")
                 return
             if not valid:
+                if registration.relay is not None:
+                    registration.relay.invalidate()
                 await registration.connection.close(code=1008, reason="computer access changed")
                 return
 
@@ -107,8 +160,13 @@ class ControlDispatcher:
             registration = Registration(
                 identity, uuid4(), generation, tuple(frame.agents), connection
             )
+            registration.relay = RelayPeer(
+                connection, registration.connection_id, [agent.alias for agent in frame.agents]
+            )
             self.active[identity] = registration
             if previous is not None:
+                if previous.relay is not None:
+                    previous.relay.invalidate()
                 await previous.connection.close(code=1008, reason="computer connection replaced")
             if self.active.get(identity) is not registration:
                 raise ProtocolError("computer connection replaced")
@@ -123,30 +181,17 @@ class ControlDispatcher:
                     )
                 )
             )
-            sequence = 0
-            while True:
-                await connection.send(encode_frame(Ping(sequence=sequence)))
-                frame = decode_frame(
-                    await asyncio.wait_for(
-                        connection.recv(),
-                        timeout=self.heartbeat_seconds,
-                    )
-                )
-                if not isinstance(frame, Pong) or frame.sequence != sequence:
-                    raise ProtocolError("invalid heartbeat")
-                sequence += 1
-                try:
-                    await asyncio.wait_for(connection.wait_closed(), timeout=self.heartbeat_seconds)
-                    break
-                except TimeoutError:
-                    pass
+            await connection.send(encode_frame(Ping(sequence=0)))
+            await registration.relay.run()
         except (ProtocolError, TimeoutError):
             await connection.close(code=1008, reason="control protocol rejected")
         except sqlite3.Error:
             await connection.close(code=1011, reason="access check unavailable")
-        except ConnectionClosed:
+        except (ConnectionClosed, ConnectionError):
             pass
         finally:
+            if registration is not None and registration.relay is not None:
+                registration.relay.invalidate()
             if watcher is not None:
                 watcher.cancel()
                 with contextlib.suppress(asyncio.CancelledError):
@@ -166,10 +211,12 @@ class ControlDispatcher:
             port,
             ssl=tls,
             process_request=self.authenticate,
-            max_size=MAX_FRAME_BYTES,
+            max_size=MAX_DATA_BYTES,
             max_queue=4,
             compression=None,
-            ping_interval=None,
+            ping_interval=self.heartbeat_seconds,
+            ping_timeout=self.heartbeat_seconds,
+            open_timeout=5,
             close_timeout=2,
             origins=[None],
             logger=_WIRE_LOG,
@@ -265,16 +312,24 @@ async def connect_control(
             },
             ssl=tls,
             proxy=None,
-            max_size=MAX_FRAME_BYTES,
+            max_size=MAX_DATA_BYTES,
             max_queue=4,
             compression=None,
-            ping_interval=None,
+            ping_interval=20,
+            ping_timeout=20,
             close_timeout=2,
             open_timeout=10,
             logger=_WIRE_LOG,
         )
+    except InvalidStatus as exc:
+        error = ConnectorAccessError if exc.response.status_code < 500 else ConnectorUnavailable
+        raise error("cannot connect to dispatcher: verify endpoint and computer access") from None
+    except (TLSFingerprintMismatch, ssl.SSLCertVerificationError):
+        raise ConnectorAccessError(
+            "cannot connect to dispatcher: verify TLS pin or certificate trust"
+        ) from None
     except (AgentError, OSError, TimeoutError, InvalidHandshake):
-        raise ValueError(
+        raise ConnectorUnavailable(
             "cannot connect to dispatcher: verify TLS pin, reachability and computer access"
             if parts.scheme == "wss"
             else "cannot connect to dispatcher: verify reachability and computer access"
@@ -283,20 +338,51 @@ async def connect_control(
         if pin is not None:
             der = connection.transport.get_extra_info("ssl_object").getpeercert(binary_form=True)
             if fingerprint_of(der) != pin.fingerprint:
-                raise ValueError("dispatcher TLS certificate changed between probe and connect")
+                raise ConnectorAccessError(
+                    "dispatcher TLS certificate changed between probe and connect"
+                )
         await connection.send(encode_frame(hello))
         welcome = decode_frame(await asyncio.wait_for(connection.recv(), timeout=5))
         if not isinstance(welcome, Welcome):
             raise ProtocolError("dispatcher did not welcome this computer")
         return connection, welcome
     except BaseException as exc:
+        close_code = connection.close_code
         await connection.close()
-        if isinstance(exc, (ConnectionClosed, TimeoutError, ProtocolError)):
-            raise ValueError("dispatcher rejected computer registration") from None
+        if isinstance(exc, TimeoutError) or (
+            isinstance(exc, ConnectionClosed) and close_code != 1008
+        ):
+            raise ConnectorUnavailable("dispatcher registration interrupted") from None
+        if isinstance(exc, (ConnectionClosed, ProtocolError)):
+            raise ConnectorAccessError("dispatcher rejected computer registration") from None
         raise
 
 
-async def run_connector(url: str, *, credential: str, hello: Hello, fingerprint: str | None = None):
+async def run_connector(
+    url: str,
+    *,
+    credential: str,
+    hello: Hello,
+    fingerprint: str | None = None,
+    local_factory=None,
+):
+    delays = (1, 2, 5, 10, 30)
+    attempt = 0
+    while True:
+        try:
+            await _run_connection(
+                url,
+                credential=credential,
+                hello=hello,
+                fingerprint=fingerprint,
+                local_factory=local_factory,
+            )
+        except ConnectorUnavailable:
+            await asyncio.sleep(delays[min(attempt, len(delays) - 1)])
+            attempt += 1
+
+
+async def _run_connection(url, *, credential, hello, fingerprint, local_factory):
     connection, welcome = await connect_control(
         url,
         credential=credential,
@@ -304,18 +390,28 @@ async def run_connector(url: str, *, credential: str, hello: Hello, fingerprint:
         fingerprint=fingerprint,
     )
     try:
-        print(f"computer connected; epoch {welcome.connection_id}; registration only", flush=True)
-        while True:
-            frame = decode_frame(
-                await asyncio.wait_for(
-                    connection.recv(),
-                    timeout=welcome.heartbeat_seconds * 2 + 5,
-                )
-            )
-            if not isinstance(frame, Ping):
-                raise ProtocolError("unexpected dispatcher control frame")
-            await connection.send(encode_frame(Pong(sequence=frame.sequence)))
-    except (ConnectionClosed, TimeoutError):
-        raise ValueError("dispatcher connection ended; reconnect explicitly") from None
+        print(f"computer connected; epoch {welcome.connection_id}", flush=True)
+        if local_factory is None:
+
+            async def local_factory(alias):
+                raise AgentUnavailable("local agent relay is not configured")
+
+        peer = RelayPeer(
+            connection,
+            welcome.connection_id,
+            [agent.alias for agent in hello.agents],
+            local_factory=local_factory,
+        )
+        await peer.run()
+    except ProtocolError:
+        raise ConnectorAccessError("dispatcher protocol rejected; correct configuration") from None
+    except (ConnectionClosed, ConnectionError, TimeoutError):
+        if connection.close_code == 1008:
+            raise ConnectorAccessError("computer access changed or connection replaced") from None
+        raise ConnectorUnavailable("dispatcher connection ended") from None
+    else:
+        if connection.close_code == 1008:
+            raise ConnectorAccessError("computer access changed or connection replaced")
+        raise ConnectorUnavailable("dispatcher connection ended")
     finally:
         await connection.close()

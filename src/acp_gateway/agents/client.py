@@ -113,16 +113,26 @@ class _AcpClientSide:
     answer "method not found" if an agent calls them anyway.
     """
 
-    def __init__(self, owner: AgentClient) -> None:
+    def __init__(self, owner: AgentClient, transport: AgentTransport) -> None:
         self._owner = owner
+        self._transport = transport
+
+    def _current(self) -> bool:
+        return self._owner._transport is self._transport and not self._transport.closed.is_set()
 
     async def session_update(self, session_id: str, update: Any, **kwargs: Any) -> None:
-        self._owner._on_update(session_id, update)
+        if self._current():
+            self._owner._on_update(session_id, update)
 
     async def request_permission(
         self, session_id: str, tool_call: Any, options: list[Any], **kwargs: Any
     ) -> RequestPermissionResponse:
-        return await self._owner._on_permission(session_id, tool_call, options)
+        if not self._current():
+            return RequestPermissionResponse(outcome=DeniedOutcome(outcome="cancelled"))
+        response = await self._owner._on_permission(session_id, tool_call, options)
+        if not self._current():
+            return RequestPermissionResponse(outcome=DeniedOutcome(outcome="cancelled"))
+        return response
 
     async def _refuse(self, method: str) -> Any:
         self._owner._log.warning("agent called a client capability it was not given", method=method)
@@ -179,6 +189,8 @@ class AgentClient:
         client_name: str = "acp-gateway",
         transport_factory: TransportFactory | None = None,
     ) -> None:
+        if profile.backend == "connector" and transport_factory is None:
+            raise ValueError("connector agent requires a relay transport factory")
         self.profile = profile
         self._secret = secret
         self._pin_file = pin_dir / f"{profile.alias}.sha256"
@@ -188,7 +200,7 @@ class AgentClient:
         self._reconnect_delays = tuple(reconnect_delays)
         self._client_name = client_name
         self._transport_factory = transport_factory
-        self._log = get_logger(__name__).bind(agent=profile.alias)
+        self._log = get_logger(__name__).bind(agent=profile.address)
 
         self._conn: Any = None
         self._transport: AgentTransport | None = None
@@ -244,10 +256,10 @@ class AgentClient:
             raise AgentUnavailable(f"{self.profile.display_name} is unavailable: {last}") from last
 
     async def _connect_once(self) -> None:
-        transport, pin = await self._open_transport()
+        transport, pin = await self.open_transport()
         conn = None
         try:
-            conn = connect_to_agent(_AcpClientSide(self), transport)
+            conn = connect_to_agent(_AcpClientSide(self, transport), transport)
             init = await asyncio.wait_for(
                 conn.initialize(
                     protocol_version=PROTOCOL_VERSION,
@@ -290,7 +302,7 @@ class AgentClient:
             tls=pin.source if pin else ("transport-managed" if self._transport_factory else "none"),
         )
 
-    async def _open_transport(self) -> tuple[AgentTransport, TlsPin | None]:
+    async def open_transport(self) -> tuple[AgentTransport, TlsPin | None]:
         """Open one stream; injected factories own authentication and endpoint policy."""
         if self._transport_factory is not None:
             return await self._transport_factory(), None

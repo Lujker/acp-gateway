@@ -363,7 +363,11 @@ native Windows; первоначальная граница — один вла�
 регистрация, heartbeat и отключение при ротации/отзыве.
 После решения владельца поддержаны plain WS по IP/порту, root/subpath для nginx,
 опциональный WSS (CA/hostname либо pin) и newest-wins с новым epoch.
-Передача ACP-запросов, маршрутизация в core и восстановление задач ещё не реализованы.
+Реализован первый ACP relay: ingress в `serve`, маршруты `computer/agent` в core,
+PolicyTransport на компьютере, ответы/permissions/cancel, один reader/writer,
+bounded queues, native keepalive, epoch fencing и reconnect без replay prompts.
+Проверен на recorded Goose mock, включая owner API и MCP. Живая приёмка на
+реальном агенте, несколько компьютеров и восстановление результатов ещё впереди.
 Решения ревью приняты владельцем: ingress в serve, ACP в конверте alias/stream/epoch,
 newest-wins, один demux-reader/keepalive и bounded queues, адрес computer/agent.
 TLS временно выключен для тестов; домен/root/subpath и nginx предусмотрены.
@@ -463,8 +467,8 @@ launchd-агент; ядро уже кроссплатформенное (см. 
    без WebSocket; локальная политика ACP реализована и проверена (методы,
    точные cwd, режимы, MCP/capabilities, live once-only approvals). Решения ревью
    приняты; TLS выключен для IP/port тестов, paths и будущий nginx поддержаны.
-   Дальше: relay framing/demux → ingress в serve и computer/agent в core
-   → ACP relay → несколько узлов → recovery
+   Первый guarded ACP relay в serve готов и mock-tested.
+   Дальше: живая приёмка → несколько узлов → recovery
    → stdio/эксплуатация.
 6. **P3.2 — Windows native**, после первого маршрута коннектора, вместе с
    Windows-частями `P3.4/P3.5`.

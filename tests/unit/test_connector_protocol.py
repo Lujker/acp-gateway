@@ -6,10 +6,15 @@ from uuid import uuid4
 import pytest
 
 from acp_gateway.connectors.protocol import (
+    MAX_DATA_BYTES,
     MAX_FRAME_BYTES,
     AgentManifest,
+    Close,
+    Data,
     Error,
     Hello,
+    Open,
+    Opened,
     Ping,
     Pong,
     ProtocolError,
@@ -29,6 +34,15 @@ from acp_gateway.connectors.protocol import (
         Ping(sequence=0),
         Pong(sequence=19),
         Error(code="unavailable"),
+        Open(epoch=uuid4(), stream=uuid4(), alias="goose"),
+        Opened(epoch=uuid4(), stream=uuid4(), alias="goose"),
+        Data(
+            epoch=uuid4(),
+            stream=uuid4(),
+            alias="goose",
+            message={"jsonrpc": "2.0", "id": 1, "result": {}},
+        ),
+        Close(epoch=uuid4(), stream=uuid4(), alias="goose", code="policy_denied"),
     ],
 )
 def test_round_trip(frame):
@@ -63,7 +77,11 @@ def test_unknown_version_and_size_limits():
     with pytest.raises(ProtocolError, match="unsupported protocol version"):
         decode_frame('{"version":2,"type":"ping","sequence":0}')
     with pytest.raises(ProtocolError, match="too large"):
-        decode_frame("ж" * MAX_FRAME_BYTES)
+        decode_frame("ж" * MAX_DATA_BYTES)
+    with pytest.raises(ProtocolError, match="too large"):
+        decode_frame(
+            json.dumps(dict(version=1, type="ping", sequence=0, extra="x" * MAX_FRAME_BYTES))
+        )
 
 
 def test_manifest_unique_aliases_no_urls_or_secrets():
@@ -95,3 +113,18 @@ def test_manifest_bounds_and_control_fields():
         decode_frame(
             '{"version":1,"type":"welcome","connection_id":"00000000-0000-0000-0000-000000000000","heartbeat_seconds":0}'
         )
+
+
+def test_relay_has_separate_control_and_data_limits_and_rejects_nonfinite_json():
+    message = {"jsonrpc": "2.0", "method": "notice", "params": {"text": "ж" * 40_000}}
+    frame = Data(epoch=uuid4(), stream=uuid4(), alias="goose", message=message)
+    encoded = encode_frame(frame)
+    assert len(encoded.encode()) > MAX_FRAME_BYTES
+    assert decode_frame(encoded) == frame
+    frame.message["params"]["text"] = "x" * MAX_DATA_BYTES
+    with pytest.raises(ProtocolError, match="too large"):
+        encode_frame(frame)
+    payload = json.loads(encoded)
+    payload["message"]["params"]["number"] = float("nan")
+    with pytest.raises(ProtocolError):
+        decode_frame(json.dumps(payload))

@@ -48,13 +48,14 @@ replaces it nor depends on it.
 The current LAN and co-located topologies are followed by a planned VPS
 dispatcher topology (`P4.1`, before channel extensions `P4.2`–`P4.4`). The connector is a launch
 mode of the same program. Computer enrollment and a separate WS/WSS
-registration/heartbeat channel are implemented. ACP task relay is next.
+registration and guarded ACP relay in `serve` are implemented and mock-tested.
+Real Goose relay acceptance and VPS deployment remain outstanding.
 
 | Topology | Gateway runs on | Work Goose runs on | Transport | Status |
 |---|---|---|---|---|
 | **LAN** (initial default) | home host, WSL | work laptop, WSL | `wss://<work-host>:<port>/acp`, TLS + secret + pinning | MVP target |
 | **Co-located** | the same machine as Work Goose | WSL | `ws://127.0.0.1:3284/acp` (loopback), secret | supported from MVP |
-| **VPS dispatcher** | VPS with a stable IP and/or domain | multiple computers, any ACP-compatible agents | computers initiate WS/WSS connections through our own connector | registration channel implemented; task relay next, `P4.1` |
+| **VPS dispatcher** | VPS with a stable IP and/or domain | multiple computers, any ACP-compatible agents | computers initiate WS/WSS connections through our own connector | guarded ACP relay in serve mock-tested; live acceptance next, `P4.1` |
 
 Gateway platforms: **WSL (Linux) is the primary and recommended path**,
 native Windows and macOS adapters are planned. Hence the code requirements:
@@ -138,21 +139,25 @@ resuming an interrupted task or restoring a session.
 The first relay route has a local ACP policy boundary: explicit method allowlist,
 disabled client capabilities, empty MCP/additional workspace lists, exact locally
 chosen cwd values and the configured session mode. Live permission responses
-accept only once-only options. These restrictions are implemented and tested as
-a transport wrapper; the registration command does not relay ACP yet.
+accept only once-only options. These restrictions wrap every local stream in
+the implemented computer-side relay.
 They constrain ACP parameters, not the agent's tool filesystem access. A trusted
 dispatcher can supply a valid approval decision; independent local approval
 authentication is outside this initial trust model. See
 [the local connector policy](items/connector.md#local-acp-policy-for-the-first-relay-route).
 
-Accepted by the owner on 2026-10-08: ingress becomes a second listener in `serve`,
+Accepted by the owner and implemented on 2026-10-08: ingress is a second listener in `serve`,
 sharing core/channels/approvals. Relay uses ACP JSON-RPC in an alias/stream/epoch
 envelope with AgentClient/RelayTransport on the VPS, one demux reader, native
 WebSocket keepalive and byte-bounded queues. Remote agent addresses are
 `computer/agent`, with connectivity/readiness tracked separately. New fully
 authenticated registrations replace old connections and receive new epochs;
-late traffic from old streams must be refused. Replacement is implemented;
-relay fencing and the unified runtime are subsequent work.
+late traffic from old streams is refused. In-process revoke fences streams
+immediately; external registry changes are polled every second. The computer
+retries transient network failures, stops on access/TLS/replacement errors,
+and never automatically repeats a disconnected prompt. Core/owner API/CLI use
+`computer/agent`; MCP uses `computer__agent` tool prefixes. Health reports
+computer connectivity separately from ACP readiness.
 
 TLS is disabled for current IP/port tests by the owner's decision. Listener paths
 are configurable (`/`, `/connect` or a proxy subpath), and connector URLs support

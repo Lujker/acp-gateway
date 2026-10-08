@@ -123,7 +123,7 @@ def main():
                     )
                 )
                 require(process.poll() is None, "foreground registration mode failed to start")
-            # The default interval is 20s; surviving 22s verifies the second heartbeat.
+            # Survive the first native keepalive interval (20s by default).
             deadline = time.monotonic() + 22
             while time.monotonic() < deadline:
                 require(

@@ -26,6 +26,15 @@ def _validate_id(computer_id: str) -> None:
 class ComputerRegistry:
     def __init__(self, conn: sqlite3.Connection):
         self._conn = conn
+        self._listeners = []
+
+    def subscribe(self, callback):
+        """Notify in-process consumers after a committed access change."""
+        self._listeners.append(callback)
+
+    def _changed(self, computer_id):
+        for callback in self._listeners:
+            callback(computer_id)
 
     def list(self) -> list[dict]:
         rows = self._conn.execute(f"SELECT {_PUBLIC} FROM computers ORDER BY computer_id")  # noqa: S608
@@ -109,6 +118,7 @@ class ComputerRegistry:
                 except FileNotFoundError:
                     pass
             raise
+        self._changed(computer_id)
 
     def revoke(self, computer_id: str) -> None:
         _validate_id(computer_id)
@@ -118,3 +128,4 @@ class ComputerRegistry:
         )
         if not cursor.rowcount:
             raise ValueError("computer is unknown")
+        self._changed(computer_id)

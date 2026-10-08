@@ -1,12 +1,13 @@
 """Bounded, versioned control frames with input-independent errors."""
 
 import json
-from typing import Annotated, Literal
+from typing import Annotated, Any, Literal
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, TypeAdapter, model_validator
 
 MAX_FRAME_BYTES = 65_536
+MAX_DATA_BYTES = 1_048_576
 ComputerId = Annotated[str, Field(pattern=r"^[a-z][a-z0-9_-]{0,63}$")]
 AgentAlias = Annotated[str, Field(pattern=r"^[a-z][a-z0-9_]{0,31}$")]
 
@@ -61,7 +62,31 @@ class Error(_Frame):
     code: Literal["invalid_frame", "unsupported_version", "unauthorized", "unavailable"]
 
 
-ControlFrame = Hello | Welcome | Ping | Pong | Error
+class _StreamFrame(_Frame):
+    epoch: UUID
+    stream: UUID
+    alias: AgentAlias
+
+
+class Open(_StreamFrame):
+    type: Literal["open"] = "open"
+
+
+class Opened(_StreamFrame):
+    type: Literal["opened"] = "opened"
+
+
+class Data(_StreamFrame):
+    type: Literal["data"] = "data"
+    message: dict[str, Any]
+
+
+class Close(_StreamFrame):
+    type: Literal["close"] = "close"
+    code: Literal["closed", "unavailable", "access_denied", "policy_denied", "overflow"] = "closed"
+
+
+ControlFrame = Hello | Welcome | Ping | Pong | Error | Open | Opened | Data | Close
 _ADAPTER = TypeAdapter(Annotated[ControlFrame, Field(discriminator="type")])
 
 
@@ -77,14 +102,16 @@ def _unique_object(pairs):
 def decode_frame(payload: str | bytes) -> ControlFrame:
     try:
         encoded = payload.encode("utf-8") if isinstance(payload, str) else payload
-        if len(encoded) > MAX_FRAME_BYTES:
+        if len(encoded) > MAX_DATA_BYTES:
             raise ProtocolError("control frame too large")
         value = json.loads(encoded, object_pairs_hook=_unique_object)
         if not isinstance(value, dict) or type(value.get("version")) is not int:
             raise ProtocolError("invalid control frame")
         if value["version"] != 1:
             raise ProtocolError("unsupported protocol version")
-        return _ADAPTER.validate_json(json.dumps(value))
+        if value.get("type") != "data" and len(encoded) > MAX_FRAME_BYTES:
+            raise ProtocolError("control frame too large")
+        return _ADAPTER.validate_json(json.dumps(value, allow_nan=False))
     except (ValueError, UnicodeError, RecursionError) as exc:
         if isinstance(exc, ProtocolError):
             raise

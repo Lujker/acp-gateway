@@ -5,12 +5,14 @@ import ssl
 
 from filelock import FileLock, Timeout
 
+from acp_gateway.agents import AgentClient
 from acp_gateway.connectors.control import (
     ControlDispatcher,
     read_credential,
     run_connector,
     validate_connect_path,
 )
+from acp_gateway.connectors.policy import LocalAgentPolicy, PolicyTransport
 from acp_gateway.connectors.protocol import AgentManifest, Hello
 from acp_gateway.storage import Store
 
@@ -19,6 +21,25 @@ def run(config, args):
     if args.command == "connector":
         if not config.settings.agents:
             raise ValueError("configure at least one local agent before registering a computer")
+        if any(p.backend != "remote" for p in config.settings.agents):
+            raise ValueError("a computer connector requires direct local agent profiles")
+        missing = config.missing_agent_secrets()
+        if missing:
+            raise ValueError("missing agent secrets: " + ", ".join(missing))
+        clients = {
+            p.alias: AgentClient(
+                p,
+                config.secrets.get(p.secret_env) if p.secret_env else None,
+                pin_dir=config.settings.resolved_data_dir() / "pins",
+            )
+            for p in config.settings.agents
+        }
+        policies = {p.alias: LocalAgentPolicy.from_profile(p) for p in config.settings.agents}
+
+        async def local_factory(alias):
+            transport, _ = await clients[alias].open_transport()
+            return PolicyTransport(transport, policies[alias])
+
         try:
             hello = Hello(
                 computer_id=args.computer_id,
@@ -35,6 +56,7 @@ def run(config, args):
                 credential=read_credential(args.token_file),
                 hello=hello,
                 fingerprint=args.tls_fingerprint,
+                local_factory=local_factory,
             )
         )
         return 0

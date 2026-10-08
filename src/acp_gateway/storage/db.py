@@ -15,6 +15,7 @@ import sqlite3
 import time
 from collections.abc import Iterator
 from datetime import datetime
+from functools import cached_property
 from importlib import resources
 from pathlib import Path
 from typing import Any
@@ -127,7 +128,7 @@ class Store:
     def open_in(cls, data_dir: Path) -> Store:
         return cls.open(data_dir / DB_FILENAME)
 
-    @property
+    @cached_property
     def computers(self):
         from acp_gateway.storage.computers import ComputerRegistry
 

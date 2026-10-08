@@ -9,7 +9,12 @@ from websockets.asyncio.client import connect
 from websockets.exceptions import InvalidStatus
 
 from acp_gateway.agents.tls import pinned_context
-from acp_gateway.connectors.control import ControlDispatcher, connect_control, run_connector
+from acp_gateway.connectors.control import (
+    ConnectorAccessError,
+    ControlDispatcher,
+    connect_control,
+    run_connector,
+)
 from acp_gateway.connectors.protocol import (
     AgentManifest,
     Hello,
@@ -96,6 +101,21 @@ async def test_bad_credential_rejected_before_upgrade(ingress, identity, credent
     assert not ingress[0].active
 
 
+async def test_ingress_connection_limit_rejects_new_handshakes(ingress):
+    dispatcher = ingress[0]
+    dispatcher.max_connections = 1
+    connection, _ = await connect_control(
+        ingress[2], credential=ingress[3], hello=hello(), fingerprint=ingress[4]
+    )
+    try:
+        with pytest.raises(InvalidStatus) as error:
+            await raw_connect(ingress)
+        assert error.value.response.status_code == 503
+        assert dispatcher.active["work"].connection is not None
+    finally:
+        await connection.close()
+
+
 async def test_hello_cannot_impersonate_another_computer(ingress):
     connection = await raw_connect(ingress)
     await connection.send(encode_frame(hello("other")))
@@ -163,14 +183,17 @@ async def test_wrong_heartbeat_sequence_closes_connection(ingress):
     assert connection.close_code == 1008
 
 
-async def test_missing_heartbeat_times_out(ingress):
-    _, _, url, credential, pin, _ = ingress
+async def test_native_keepalive_does_not_require_application_heartbeat(ingress):
+    dispatcher, _, url, credential, pin, _ = ingress
     connection, _ = await connect_control(
         url, credential=credential, hello=hello(), fingerprint=pin
     )
-    async with asyncio.timeout(8):
-        await connection.wait_closed()
-    assert connection.close_code == 1008
+    try:
+        await asyncio.sleep(5.2)
+        assert dispatcher.active["work"].connection is not None
+        assert connection.close_code is None
+    finally:
+        await connection.close()
 
 
 async def test_pin_mismatch_sends_no_authorization_header(ingress, monkeypatch):
@@ -204,6 +227,28 @@ async def test_connector_runs_heartbeats_and_cancels_cleanly(ingress, capsys):
         with pytest.raises(asyncio.CancelledError):
             await task
     await eventually(lambda: not dispatcher.active)
+
+
+async def test_connector_retries_network_drop_but_stops_after_revocation(ingress):
+    dispatcher, registry, url, credential, pin, _ = ingress
+    task = asyncio.create_task(
+        run_connector(url, credential=credential, hello=hello(), fingerprint=pin)
+    )
+    try:
+        await eventually(lambda: "work" in dispatcher.active)
+        previous = dispatcher.active["work"]
+        await previous.connection.close(code=1012, reason="test restart")
+        await eventually(
+            lambda: "work" in dispatcher.active and dispatcher.active["work"] is not previous
+        )
+        registry.revoke("work")
+        with pytest.raises(ConnectorAccessError):
+            await asyncio.wait_for(task, 3)
+        await asyncio.sleep(0.05)
+        assert not dispatcher.active
+    finally:
+        task.cancel()
+        await asyncio.gather(task, return_exceptions=True)
 
 
 async def test_binary_and_oversized_frames_rejected(ingress):
