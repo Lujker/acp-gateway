@@ -94,7 +94,15 @@ def main():
             return result.stdout
 
         require("0.0.0" not in run("--version"), "package version metadata was not bundled")
-        for command in ((), ("config",), ("service",), ("approvals",), ("ask",), ("result",)):
+        for command in (
+            (),
+            ("config",),
+            ("service",),
+            ("computers",),
+            ("approvals",),
+            ("ask",),
+            ("result",),
+        ):
             require("usage:" in run(*command, "--help"), "missing command help")
         run("paths")
         run("setup")
@@ -104,6 +112,29 @@ def main():
         original = env_file.read_bytes()
         run("setup")
         require(env_file.read_bytes() == original, "setup replaced existing tokens")
+        first_key, next_key = root / "computer.key", root / "computer-next.key"
+        output = run(
+            "computers",
+            "enroll",
+            "smoke",
+            "--name",
+            "Smoke computer",
+            "--token-file",
+            str(first_key),
+        )
+        credential = first_key.read_text().strip()
+        require(credential not in output, "computer credential was printed")
+        require(first_key.stat().st_mode & 0o077 == 0, "computer credential file is public")
+        enrolled = json.loads(run("computers", "list"))
+        require(len(enrolled) == 1 and enrolled[0]["generation"] == 1, "computer not enrolled")
+        run("computers", "rotate", "smoke", "--token-file", str(next_key))
+        require(next_key.read_text().strip() != credential, "computer credential not rotated")
+        run("computers", "revoke", "smoke")
+        revoked = json.loads(run("computers", "list"))
+        require(
+            not revoked[0]["enabled"] and revoked[0]["generation"] == 2,
+            "computer revocation failed",
+        )
         tokens = dotenv_values(env_file)
         cert, key = make_cert(root)
         with FakeGooseServer("mock-binary-agent-credential", certfile=cert, keyfile=key) as goose:
@@ -162,7 +193,7 @@ def main():
                             response = owner.get("/health")
                             if response.status_code == 200:
                                 require(
-                                    response.json()["database"]["schema_version"] == 3,
+                                    response.json()["database"]["schema_version"] == 4,
                                     "SQL migrations were not bundled",
                                 )
                                 return
@@ -298,7 +329,8 @@ def main():
                 run("service", action)
             require(env_file.is_file(), "uninstall deleted configuration")
         print(
-            "Binary smoke passed: help, setup, migrations, CLI/API/SSE, pinned TLS ACP, "
+            "Binary smoke passed: help, setup, computer credential lifecycle, migrations, "
+            "CLI/API/SSE, pinned TLS ACP, "
             "approvals, cancel, "
             "MCP, restart persistence and frozen service commands; no Python on child PATH."
         )

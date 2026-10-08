@@ -963,6 +963,35 @@ smoke passed. Live bot readiness и pinned ACP initialize не объявляю�
 и VPS deployment не выдаются за существующие. Native Windows/macOS, Telegram
 streaming и audit/delivery retention остаются явными незавершёнными пунктами.
 
+## 2026-10-08 — P4.1: протокол и регистрация компьютеров
+
+Первый этап коннектора реализован: control frames v1 (`hello`, `welcome`,
+`ping`, `pong`, `error`), лимит 64 KiB, уникальные aliases и безопасные ошибки
+без отражения входных данных. Локальные owner-команды
+`computers enroll/list/rotate/revoke` работают без HTTP API. На компьютер
+выдаётся отдельный случайный ключ в новый файл `0600`; в SQLite schema 4
+сохраняется только SHA-256 digest. Ротация заменяет старый ключ, отзыв терминален
+для ID; ошибки записи/SQL откатывают операцию. Проверены сохранность cursor
+Telegram при миграции, межсоединительная видимость ротации/отзыва, отказ для
+существующих файлов и symlinks. Команды и ограничения —
+[`docs/items/connector.md`](docs/items/connector.md).
+
+WSS relay, CLI-режим `connector`, ingress на VPS, маршрутизация задач и
+принудительное закрытие активного соединения при отзыве ещё не реализованы.
+Следующий шаг — отдельный аутентифицированный WSS ingress и исходящий connector
+для одного сетевого ACP-агента, с отказом новой работе при offline и без
+автоматического повторения prompt после обрыва.
+
+Финальный набор: **396 passed, 3 optional Hermes skipped**, 112.30 с;
+ruff check/format и git diff --check проходят. Отдельная Linux/WSL сборка
+проверена вне checkout с пустым Python PATH, включая полный lifecycle ключа
+компьютера и прежний CLI/API/SSE/MCP/approval smoke.
+
+Проверки выполняются на временных конфигурациях, БД и ключах; работающая
+служба остаётся на предыдущей сборке с Telegram/schema 3 до отдельного обновления.
+Read-only проверка службы после разработки: ActiveState=active, SubState=running,
+UnitFileState=enabled. GitHub Actions и публикация релиза не запускались.
+
 ## Незакрытые вопросы
 
 - **Публикация** — удалять ли старые коммиты с GitHub окончательно (GitHub

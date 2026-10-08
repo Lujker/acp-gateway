@@ -60,6 +60,24 @@ def _build_parser() -> argparse.ArgumentParser:
     ):
         service_sub.add_parser(action, help=help_text)
 
+    computers = commands.add_parser(
+        "computers", help="local enrollment and credential control (connector foundation)"
+    )
+    computer_sub = computers.add_subparsers(dest="computer_command", required=True)
+    computer_sub.add_parser("list", help="list computers without credentials")
+    for action in ("enroll", "rotate", "revoke"):
+        cmd = computer_sub.add_parser(action, help=f"{action} a computer credential locally")
+        cmd.add_argument("computer_id", help="stable lowercase computer identifier")
+        if action == "enroll":
+            cmd.add_argument("--name", required=True, help="human-readable computer name")
+        if action != "revoke":
+            cmd.add_argument(
+                "--token-file",
+                type=Path,
+                required=True,
+                help="new private credential file; existing files are refused",
+            )
+
     def conversation_options(cmd):
         cmd.add_argument("--agent", help="agent alias (optional with one configured agent)")
         cmd.add_argument("--thread", default="default", help="conversation name")
@@ -163,6 +181,10 @@ def main(argv: Sequence[str] | None = None) -> int:
     if args.command == "config" and args.config_command == "check":
         return _cmd_config_check(cfg)
     try:
+        if args.command == "computers":
+            from acp_gateway.cli.computers import run_computers
+
+            return run_computers(cfg, args)
         if args.command == "service":
             from acp_gateway.service import install
 

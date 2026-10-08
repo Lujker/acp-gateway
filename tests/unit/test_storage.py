@@ -44,7 +44,7 @@ def test_upgrade_from_initial_schema_preserves_existing_sessions_and_jobs(tmp_pa
     old.close()
     upgraded = Store.open(path)
     try:
-        assert upgraded.schema_version == 3
+        assert upgraded.schema_version == 4
         assert upgraded.active_session(CLI).acp_session_id == "old-session"
         assert upgraded.job("old-job").status is JobStatus.RUNNING
         assert upgraded.approval_audit() == []

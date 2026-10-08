@@ -167,7 +167,7 @@ def test_daemon_requires_separate_owner_credential(tmp_path):
 def test_second_daemon_is_blocked_and_lock_released(tmp_path):
     cfg = config(tmp_path, {"ACPGW_API_TOKEN": OWNER})
     with configured_app(cfg) as app:
-        assert app.state.core.store.schema_version == 3
+        assert app.state.core.store.schema_version == 4
         with pytest.raises(ValueError, match="another gateway daemon"), configured_app(cfg):
             pytest.fail("second daemon acquired the lock")
     with configured_app(cfg):

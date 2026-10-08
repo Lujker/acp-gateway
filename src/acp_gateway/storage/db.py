@@ -89,6 +89,12 @@ class Store:
     def open_in(cls, data_dir: Path) -> Store:
         return cls.open(data_dir / DB_FILENAME)
 
+    @property
+    def computers(self):
+        from acp_gateway.storage.computers import ComputerRegistry
+
+        return ComputerRegistry(self._conn)
+
     def close(self) -> None:
         self._conn.close()
 

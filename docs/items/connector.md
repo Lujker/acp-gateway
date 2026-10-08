@@ -9,7 +9,7 @@ tool credentials and work files stay on computers.
 
 | Stage | Deliverable |
 |---|---|
-| 1 | Versioned control frames, stable computer IDs, local enrollment, credential rotation/revocation |
+| 1 | Implemented: versioned control frames, stable computer IDs, local enrollment, credential rotation/revocation |
 | 2 | Outbound WSS route to one network ACP agent, requests/results/human approvals |
 | 3 | Multiple computers/agents, selection in channels, isolated session mappings |
 | 4 | Heartbeats, reconnect/connection epochs, bounded queues, deduplication and uncertain task outcomes |
@@ -50,3 +50,38 @@ The planning estimate is 8–12 implementation iterations: roughly 1–2 develop
 weeks for a restricted first route, 3–5 for the broader requirements. These
 are preliminary estimates, not release dates; recovery and stdio interoperability
 are the main uncertainties. Releases and binary builds remain manual.
+
+## Stage 1 usage
+
+Run these commands locally on the future dispatcher host. They use the selected
+configuration's `data_dir` and work without a running gateway API:
+
+```bash
+acpgw --config /path/to/config.yaml computers enroll work-laptop \
+  --name "Work laptop" --token-file /private/path/work-laptop.key
+acpgw --config /path/to/config.yaml computers list
+acpgw --config /path/to/config.yaml computers rotate work-laptop \
+  --token-file /private/path/work-laptop-next.key
+acpgw --config /path/to/config.yaml computers revoke work-laptop
+```
+
+Use `uv run acpgw` for a source checkout. Credential file parents must already
+exist; choose a directory controlled by the owner. Files are created exclusively
+with POSIX mode `0600`; existing files and symlinks are refused. Credentials
+contain 256 bits of randomness. Only a domain-separated SHA-256 digest is stored
+in SQLite schema 4. Listing returns metadata and generation, never a digest or
+credential. Rotation invalidates the previous credential immediately for future
+authentication. Revocation is idempotent and terminal for that computer ID;
+rotating or enrolling a revoked ID is refused. Use a new ID for a replacement.
+Issued files stay on disk until the owner removes them. Normal write/database
+failures roll back issuance and remove the new file; process termination or a
+power failure can interrupt the file/database handoff; inspect the registry and
+rotate to a new file if the exported credential is missing or unusable.
+
+Control protocol v1 implements `hello`, `welcome`, `ping`, `pong` and `error`.
+Frames are bounded to 64 KiB of UTF-8 JSON; hello contains 1–100 uniquely named
+agents. Unknown fields, duplicate JSON keys, invalid identifiers and unsupported
+versions are rejected with input-independent errors. Connection IDs are UUIDs.
+These models do not yet implement transport, authorization handshakes, heartbeat
+scheduling or task routing. Revocation of an active connection will be wired
+into the relay in stage 2.

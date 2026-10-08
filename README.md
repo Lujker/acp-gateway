@@ -39,7 +39,9 @@ Early development. The foundation is done: the connection to a real goose
 and session restore. The daemon, local HTTP/SSE API and human CLI channel are
 implemented and verified against Work Goose. The Hermes MCP facade is implemented
 and checked with Hermes' installed MCP module against the recorded Goose mock.
-WSL autostart and Telegram are next. The plan
+Linux/WSL service lifecycle and Telegram commands/approval buttons are implemented;
+actual reboot and the live human Telegram acceptance remain pending. Connector
+development has started with local computer enrollment and control frames. The plan
 and the work queue are in [`road-map.md`](road-map.md) (in Russian).
 
 | Area | State |
@@ -54,6 +56,7 @@ and the work queue are in [`road-map.md`](road-map.md) (in Russian).
 | Checkout installer, setup, Linux/WSL service CLI, standalone Linux binary recipe | Binary, real user-service/crash recovery and Windows task lifecycle verified; actual reboot pending |
 | Telegram | Commands, private user allowlist and audited approval buttons implemented; live acceptance pending |
 | Runtime diagnostics | Component health/probes, private rotated JSON logs and Telegram throttling/recovery implemented |
+| [VPS connector](docs/items/connector.md) | Control protocol and local enrollment/rotation/revocation implemented; WSS relay next |
 | Snikket/XMPP, e-mail, web UI | 🗓 `P4` |
 
 ## Principles
