@@ -1,5 +1,6 @@
 """SQLite store: migrations, session mapping, jobs."""
 
+import multiprocessing
 import os
 import sqlite3
 from datetime import timedelta
@@ -7,7 +8,7 @@ from importlib import resources
 
 import pytest
 
-from acp_gateway.storage import Conversation, JobStatus, Store
+from acp_gateway.storage import Conversation, JobStatus, Store, db
 from acp_gateway.storage.records import utcnow
 
 CLI = Conversation("cli", "default", "work")
@@ -50,6 +51,106 @@ def test_upgrade_from_initial_schema_preserves_existing_sessions_and_jobs(tmp_pa
         assert upgraded.approval_audit() == []
     finally:
         upgraded.close()
+
+
+LATEST = max(version for version, _ in db._migrations())
+
+
+def _open_concurrently(paths, barrier, results):
+    """Child process: open each database at the same moment as the other children."""
+    for path in paths:
+        barrier.wait(timeout=30)
+        try:
+            store = Store.open(path)
+            results.put(("ok", store.schema_version))
+            store.close()
+        except Exception as exc:  # reported to the parent
+            results.put(("error", repr(exc)))
+
+
+def _initial_schema(path):
+    conn = sqlite3.connect(path)
+    script = resources.files("acp_gateway.storage.migrations").joinpath("0001_initial.sql")
+    conn.executescript(script.read_text() + "\nPRAGMA user_version = 1;")
+    conn.close()
+
+
+def test_concurrent_open_migrates_once(tmp_path):
+    """A daemon restart racing `acpgw computers enroll` must not fail or double-migrate."""
+    paths = [tmp_path / f"fresh-{n}" / "gateway.db" for n in range(3)]
+    for n in range(2):  # pending migrations on an existing database
+        pending = tmp_path / f"pending-{n}" / "gateway.db"
+        pending.parent.mkdir()
+        _initial_schema(pending)
+        paths.append(pending)
+    workers = 4
+    context = multiprocessing.get_context("spawn")
+    barrier = context.Barrier(workers)
+    results = context.Queue()
+    processes = [
+        context.Process(target=_open_concurrently, args=(paths, barrier, results))
+        for _ in range(workers)
+    ]
+    for process in processes:
+        process.start()
+    outcomes = [results.get(timeout=60) for _ in range(workers * len(paths))]
+    for process in processes:
+        process.join(timeout=30)
+    assert outcomes == [("ok", LATEST)] * len(outcomes)
+    for path in paths:
+        conn = sqlite3.connect(path)
+        assert conn.execute("PRAGMA journal_mode").fetchone()[0] == "wal"
+        conn.close()
+
+
+def test_failing_migration_rolls_back_fully(tmp_path, monkeypatch):
+    path = tmp_path / "gateway.db"
+    Store.open(path).close()
+    real = db._migrations
+    broken = "CREATE TABLE half_done (a);\nCREATE TABLE half_done (a);\n"
+    monkeypatch.setattr(db, "_migrations", lambda: [*real(), (LATEST + 1, broken)])
+    with pytest.raises(sqlite3.OperationalError, match="already exists"):
+        Store.open(path)
+    conn = sqlite3.connect(path)
+    try:
+        assert conn.execute("PRAGMA user_version").fetchone()[0] == LATEST
+        assert (
+            conn.execute("SELECT 1 FROM sqlite_master WHERE name = 'half_done'").fetchone() is None
+        )
+    finally:
+        conn.close()
+
+
+def test_migration_statements_may_contain_semicolons(tmp_path, monkeypatch):
+    real = db._migrations
+    script = (
+        "-- a comment; with a semicolon\n"
+        "CREATE TABLE notes (body TEXT DEFAULT 'a;b');\n"
+        "CREATE TABLE note_log (body TEXT);\n"
+        "CREATE TRIGGER notes_log AFTER INSERT ON notes BEGIN\n"
+        "    INSERT INTO note_log (body) VALUES (new.body || ';');\n"
+        "END;\n"
+        "-- trailing comment\n"
+    )
+    monkeypatch.setattr(db, "_migrations", lambda: [*real(), (LATEST + 1, script)])
+    store = Store.open(tmp_path / "gateway.db")
+    try:
+        assert store.schema_version == LATEST + 1
+        store._conn.execute("INSERT INTO notes DEFAULT VALUES")
+        assert store._conn.execute("SELECT body FROM note_log").fetchone()[0] == "a;b;"
+    finally:
+        store.close()
+
+
+def test_database_from_newer_release_is_refused(tmp_path):
+    path = tmp_path / "gateway.db"
+    Store.open(path).close()
+    conn = sqlite3.connect(path)
+    conn.execute(f"PRAGMA user_version = {LATEST + 1}")
+    conn.close()
+    with pytest.raises(db.SchemaTooNewError, match="newer than this acpgw supports") as error:
+        Store.open(path)
+    assert isinstance(error.value, ValueError)  # the CLI reports ValueError as a clean error
 
 
 @pytest.mark.skipif(os.name != "posix", reason="POSIX permissions")

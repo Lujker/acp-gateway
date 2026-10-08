@@ -33,14 +33,16 @@ from acp_gateway.log import get_logger, redact_value
 from acp_gateway.storage import Conversation, JobStatus
 
 from .schemas import ApprovalDecision, ConversationRequest, NewSessionRequest, PromptRequest
-from .security import OwnerAccess
+from .security import OwnerAccess, body_limit
 
 Wait = Annotated[float, Query(ge=0, le=300, allow_inf_nan=False)]
 
 
 def _sse(kind: str, data) -> str:
     # Escape Unicode line separators too: common SSE readers split them as lines.
-    encoded = json.dumps(jsonable_encoder(data), ensure_ascii=True, separators=(",", ":"))
+    encoded = json.dumps(
+        redact_value(jsonable_encoder(data)), ensure_ascii=True, separators=(",", ":")
+    )
     return f"event: {kind}\ndata: {encoded}\n\n"
 
 
@@ -65,7 +67,7 @@ def create_app(core: GatewayCore, cli: CliChannel, token: SecretStr, *, mcp=None
     app.add_middleware(
         OwnerAccess,
         token=token.get_secret_value(),
-        max_body_bytes=4 * core.policy.settings.max_prompt_length + 8192,
+        max_body_bytes=body_limit(core.policy.settings.max_prompt_length),
         mcp_app=mcp.app if mcp is not None else None,
     )
 
@@ -264,7 +266,7 @@ def create_app(core: GatewayCore, cli: CliChannel, token: SecretStr, *, mcp=None
                 data = jsonable_encoder(event)
                 if isinstance(event, JobProgress):
                     data["event_type"] = type(event.event).__name__
-                yield _sse(type(event).__name__, redact_value(data))
+                yield _sse(type(event).__name__, data)
                 if isinstance(event, JobFinished) and job_id:
                     return
         finally:
@@ -304,7 +306,7 @@ def create_app(core: GatewayCore, cli: CliChannel, token: SecretStr, *, mcp=None
     @app.get("/approvals")
     async def approvals():
         pending = core.pending_approvals("cli") if core.policy.can_approve(cli) else []
-        return {"approvals": jsonable_encoder(pending)}
+        return {"approvals": redact_value(jsonable_encoder(pending))}
 
     @app.get("/approvals/events")
     async def approval_events():

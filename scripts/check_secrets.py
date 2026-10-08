@@ -20,7 +20,10 @@ from pathlib import Path, PurePosixPath
 IGNORE_MARKER = "secrets-check: ignore"
 
 # Files that must never be committed, whatever their content.
-FORBIDDEN_NAMES = re.compile(r"^(\.env(\..+)?|config\.yaml|.+\.(pem|key|p12|pfx))$")
+# SSH private keys (id_rsa, id_ed25519, ...; the .pub halves are fine) and any *.env.
+FORBIDDEN_NAMES = re.compile(
+    r"^(\.env(\..+)?|.+\.env|config\.yaml|.+\.(pem|key|p12|pfx)|id_(rsa|dsa|ecdsa|ed25519)(_sk)?)$"
+)
 ALLOWED_NAMES = {".env.example"}
 
 _NAME = r"[\w-]*(?:secret|token|passw(?:or)?d|api_?key)[\w-]*"
@@ -31,7 +34,12 @@ _REFERENCE = r"[A-Z][A-Z0-9_]*(?:[\s'\",]|$)"
 
 PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = (
     ("private key", re.compile(r"-----BEGIN [A-Z ]*PRIVATE KEY-----")),
-    ("telegram bot token", re.compile(r"\b\d{8,10}:[A-Za-z0-9_-]{35}\b")),
+    # no \b: tokens follow "/bot" in API URLs and may end in "-"
+    (
+        "telegram bot token",
+        re.compile(r"(?<![0-9])\d{8,10}:[A-Za-z0-9_-]{35}(?![A-Za-z0-9_-])"),
+    ),
+    ("bearer token", re.compile(r"\bBearer\s+[A-Za-z0-9._~+/-]{32,}=*")),
     ("github token", re.compile(r"\b(?:gh[pousr]_[A-Za-z0-9]{36,}|github_pat_[A-Za-z0-9_]{60,})")),
     ("anthropic/openai key", re.compile(r"\bsk-(?:ant-)?[A-Za-z0-9_-]{32,}")),
     ("aws access key", re.compile(r"\bAKIA[0-9A-Z]{16}\b")),

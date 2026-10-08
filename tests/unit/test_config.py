@@ -212,3 +212,48 @@ def test_goose_session_mode_defaults_to_smart_approve():
     assert agent(kind="goose").session_mode == "smart_approve"
     assert agent(kind="goose", session_mode="approve").session_mode == "approve"
     assert agent().session_mode is None
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        "wss://alice:hunter2pass@work.lan:3284/acp",
+        "wss://only-user@work.lan/acp",
+        "ws://127.0.0.1@evil.example/acp",
+        "ws://evil.example\\@127.0.0.1/acp",
+    ],
+)
+def test_agent_url_with_credentials_is_rejected(url):
+    with pytest.raises(ValidationError, match="must not contain credentials") as error:
+        agent(url=url)
+    assert "hunter2pass" not in str(error.value)
+
+
+def test_config_error_does_not_echo_url_credentials(tmp_path):
+    write_config(
+        tmp_path / "config.yaml",
+        """
+        agents:
+          - {alias: work, url: "wss://alice:hunter2pass@work.lan/acp", default_cwd: /w}
+        """,
+    )
+    with pytest.raises(ValidationError, match="must not contain credentials") as error:
+        load_config()
+    assert "hunter2pass" not in str(error.value)
+
+
+def test_env_file_values_are_not_interpolated(tmp_path, monkeypatch):
+    monkeypatch.setenv("AGENT_EXPANDED", "expanded")
+    write_config(
+        tmp_path / "config.yaml",
+        """
+        agents:
+          - alias: work
+            url: ws://127.0.0.1:3284/acp
+            secret_env: AGENT_WORK_SECRET
+            default_cwd: /w
+        """,
+    )
+    (tmp_path / ".env").write_text("AGENT_WORK_SECRET=pa${AGENT_EXPANDED}word\n")
+    secret = load_config().secrets.get("AGENT_WORK_SECRET").get_secret_value()
+    assert secret == "pa${AGENT_EXPANDED}word"

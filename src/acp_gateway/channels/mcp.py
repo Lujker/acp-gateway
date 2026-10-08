@@ -9,7 +9,7 @@ from mcp.types import CallToolResult, TextContent, ToolAnnotations
 from pydantic import Field, SecretStr, ValidationError
 
 from acp_gateway.agents import AgentError
-from acp_gateway.api.security import OwnerAccess
+from acp_gateway.api.security import OwnerAccess, body_limit
 from acp_gateway.channels.base import Channel
 from acp_gateway.core import GatewayCore, GatewayError, JobNotFound, UnknownSession
 from acp_gateway.log import get_logger
@@ -18,6 +18,7 @@ from acp_gateway.storage import Conversation, Job
 Thread = Annotated[str, Field(min_length=1, max_length=256, strict=True)]
 Wait = Annotated[float, Field(ge=0, le=300, allow_inf_nan=False)]
 SessionId = Annotated[int, Field(gt=0, strict=True)]
+Cwd = Annotated[str, Field(min_length=1, max_length=4096, strict=True)]
 
 
 class _SafeMCP(FastMCP):
@@ -68,7 +69,7 @@ class McpChannel(Channel):
         self.app = OwnerAccess(
             self.server.streamable_http_app(),
             token=token.get_secret_value(),
-            max_body_bytes=4 * core.policy.settings.max_prompt_length + 8192,
+            max_body_bytes=body_limit(core.policy.settings.max_prompt_length),
         )
 
     @property
@@ -129,7 +130,7 @@ class McpChannel(Channel):
                 "active_session_id": active.id if active else None,
             }
 
-        async def new_session(thread: Thread = "default", cwd: str | None = None) -> dict[str, Any]:
+        async def new_session(thread: Thread = "default", cwd: Cwd | None = None) -> dict[str, Any]:
             return jsonable_encoder(await core.new_session(conversation(thread), cwd))
 
         async def ask(

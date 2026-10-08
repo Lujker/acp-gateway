@@ -40,8 +40,10 @@ tokens must be independent.
 | `/stop` | Cancel this chat's selected agent jobs |
 | `/approvals` | Redisplay pending human approval buttons |
 
-Human approvals from any originating channel, including MCP, are delivered
-to known authorized private chats. Buttons offer only `allow_once` and
+Human approvals from other originating channels, including MCP and CLI, are
+delivered to known authorized private chats. Approvals for a Telegram chat's
+own job go only to that chat, like its answers and `/result`; each card names
+its origin. Buttons offer only `allow_once` and
 `reject_once`; the gateway checks user, chat, message, request and deadline.
 Every decision is audited before it reaches the agent. Settled/expired
 requests cannot be approved again; their buttons are removed. The MCP

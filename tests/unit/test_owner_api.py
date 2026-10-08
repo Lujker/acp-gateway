@@ -1,5 +1,7 @@
 """Owner authentication and request bounds, without opening network sockets."""
 
+import json
+
 import httpx
 import pytest
 from pydantic import SecretStr
@@ -73,7 +75,13 @@ async def test_loopback_health_without_human_lease(api, host):
 
 async def test_request_bounds_and_errors_do_not_echo_input(api):
     client, _, _ = api
-    assert (await client.post("/messages", content=b"x" * 210_000)).status_code == 413
+    assert (await client.post("/messages", content=b"x" * 700_000)).status_code == 413
+    # A prompt within policy fits even when a client escapes it as \uXXXX.
+    escaped = json.dumps({"text": "ж" * 50_000, "agent": "missing"})
+    response = await client.post(
+        "/messages", content=escaped, headers={"Content-Type": "application/json"}
+    )
+    assert response.status_code == 404
     response = await client.post("/messages", json={"text": OWNER, "unexpected": OWNER})
     assert response.status_code == 422
     assert OWNER not in response.text
@@ -196,3 +204,25 @@ async def test_sse_overflow_discards_chunks_before_resync(api):
     with pytest.raises(StopAsyncIteration):
         await anext(iterator)
     assert core.bus.subscriber_count == 0
+
+
+async def test_websocket_scope_cannot_bypass_owner_checks():
+    from acp_gateway.api.security import OwnerAccess
+
+    reached = []
+
+    async def inner(scope, receive, send):
+        reached.append(scope["type"])
+
+    sent = []
+
+    async def send(message):
+        sent.append(message)
+
+    async def receive():
+        return {"type": "websocket.connect"}
+
+    app = OwnerAccess(inner, token=OWNER, max_body_bytes=1024)
+    await app({"type": "websocket", "path": "/ws", "headers": []}, receive, send)
+    assert not reached
+    assert sent == [{"type": "websocket.close", "code": 1008}]

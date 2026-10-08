@@ -21,10 +21,10 @@ from uuid import UUID, uuid4
 
 from websockets.asyncio.server import serve
 from websockets.datastructures import MultipleValuesError
-from websockets.exceptions import ConnectionClosed, InvalidStatus
+from websockets.exceptions import ConnectionClosed, InvalidHandshake
 
 from acp_gateway.agents.errors import AgentError
-from acp_gateway.agents.tls import pin_certificate
+from acp_gateway.agents.tls import fingerprint_of, pin_certificate
 from acp_gateway.agents.transport import _NoRedirectConnect
 from acp_gateway.connectors.protocol import (
     MAX_FRAME_BYTES,
@@ -171,8 +171,9 @@ class ControlDispatcher:
 
 
 def read_credential(path: Path) -> str:
-    fd = os.open(path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | os.O_NONBLOCK)
-    with os.fdopen(fd, "r", encoding="ascii") as stream:
+    flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0)
+    fd = os.open(path, flags)
+    with os.fdopen(fd, "rb") as stream:
         info = os.fstat(stream.fileno())
         if not stat.S_ISREG(info.st_mode) or info.st_size > 256:
             raise ValueError("credential must be a small regular file")
@@ -180,7 +181,8 @@ def read_credential(path: Path) -> str:
             raise ValueError(
                 "credential file must belong to this user and have private permissions"
             )
-        credential = stream.read(257).strip()
+        # Decode errors would echo credential bytes; reject them uniformly.
+        credential = stream.read(257).decode("ascii", errors="replace").strip()
     if not re.fullmatch(r"acpc_[A-Za-z0-9_-]{43}", credential):
         raise ValueError("invalid computer credential file")
     register_secret(credential)
@@ -241,10 +243,14 @@ async def connect_control(url: str, *, credential: str, hello: Hello, fingerprin
             open_timeout=10,
             logger=_WIRE_LOG,
         )
-    except (AgentError, OSError, TimeoutError, InvalidStatus):
+    except (AgentError, OSError, TimeoutError, InvalidHandshake):
         raise ValueError(
             "cannot connect to dispatcher: verify TLS pin, reachability and computer access"
         ) from None
+    der = connection.transport.get_extra_info("ssl_object").getpeercert(binary_form=True)
+    if fingerprint_of(der) != pin.fingerprint:  # defence in depth after the probe
+        await connection.close()
+        raise ValueError("dispatcher TLS certificate changed between probe and connect")
     try:
         await connection.send(encode_frame(hello))
         welcome = decode_frame(await asyncio.wait_for(connection.recv(), timeout=5))

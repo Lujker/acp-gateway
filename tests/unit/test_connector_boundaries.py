@@ -58,3 +58,11 @@ def test_credential_reader_rejects_public_symlink_directory_and_fifo(tmp_path):
             read_credential(fifo)
     finally:
         store.close()
+
+
+def test_credential_reader_does_not_echo_undecodable_content(tmp_path):
+    key = tmp_path / "key"
+    key.write_bytes(b"acpc_\xd0\x9f")
+    key.chmod(0o600)
+    with pytest.raises(ValueError, match=r"^invalid computer credential file$"):
+        read_credential(key)

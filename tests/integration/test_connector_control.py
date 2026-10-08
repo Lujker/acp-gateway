@@ -276,3 +276,26 @@ async def test_access_database_failure_closes_active_connection(ingress, monkeyp
         await connection.wait_closed()
     assert connection.close_code == 1011
     await eventually(lambda: not dispatcher.active)
+
+
+async def test_non_websocket_tls_endpoint_reports_safe_error(tmp_path):
+    cert, key = make_cert(tmp_path)
+    tls = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+    tls.load_cert_chain(cert, key)
+
+    async def not_websocket(reader, writer):
+        await reader.readuntil(b"\r\n\r\n")
+        writer.write(b"garbage\r\n\r\n")
+        await writer.drain()
+        writer.close()
+
+    server = await asyncio.start_server(not_websocket, "127.0.0.1", 0, ssl=tls)
+    async with server:
+        port = server.sockets[0].getsockname()[1]
+        with pytest.raises(ValueError, match="cannot connect to dispatcher"):
+            await connect_control(
+                f"wss://127.0.0.1:{port}/connect",
+                credential="acpc_" + "a" * 43,
+                hello=hello(),
+                fingerprint=fingerprint(cert),
+            )

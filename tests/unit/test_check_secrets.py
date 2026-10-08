@@ -17,6 +17,9 @@ PRIVATE_KEY_HEADER = "-----BEGIN " + "OPENSSH PRIVATE KEY-----"
         ("api_token: " + "q" * 16, "assigned secret"),
         ("key = 'sk-ant-" + "a" * 40 + "'", "anthropic/openai key"),
         ("token = 'ghp_" + "b" * 36 + "'", "github token"),
+        (f"curl https://api.telegram.org/bot{TELEGRAM_TOKEN}/getMe", "telegram bot token"),
+        ("bot " + "123456789:" + "A" * 34 + "-", "telegram bot token"),
+        ("-H 'Authorization: Bearer " + "c" * 40 + "'", "bearer token"),
     ],
 )
 def test_detects_secrets(line, kind):
@@ -36,6 +39,10 @@ def test_detects_secrets(line, kind):
         "secret = <your-secret-goes-here>",
         "WORK_GOOSE_SECRET=change-me-please-now",
         "TELEGRAM_BOT_TOKEN=" + TELEGRAM_TOKEN + "  # secrets-check: ignore",
+        "1234567890123:" + "A" * 35,  # longer number: not a bot id
+        "123456789:" + "A" * 36,  # longer secret: not a bot token
+        "Authorization: Bearer ***",
+        'f"Bearer {token}"',
     ],
 )
 def test_ignores_placeholders_and_references(line):
@@ -43,13 +50,36 @@ def test_ignores_placeholders_and_references(line):
 
 
 @pytest.mark.parametrize(
-    "path", [".env", ".env.local", "deploy/.env", "config.yaml", "certs/server.pem", "id.key"]
+    "path",
+    [
+        ".env",
+        ".env.local",
+        "deploy/.env",
+        "config.yaml",
+        "certs/server.pem",
+        "id.key",
+        "prod.env",
+        "deploy/staging.env",
+        "id_rsa",
+        "home/.ssh/id_ed25519",
+        "id_ecdsa_sk",
+    ],
 )
 def test_forbidden_file_names(path):
     assert check_secrets.scan_name(path) is not None
 
 
-@pytest.mark.parametrize("path", [".env.example", "config.example.yaml", "src/keys.py"])
+@pytest.mark.parametrize(
+    "path",
+    [
+        ".env.example",
+        "config.example.yaml",
+        "src/keys.py",
+        "id_rsa.pub",
+        "id_ed25519.pub",
+        "env.py",
+    ],
+)
 def test_allowed_file_names(path):
     assert check_secrets.scan_name(path) is None
 

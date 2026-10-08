@@ -280,3 +280,83 @@ def test_configuration_requires_allowlist_and_positive_unique_ids():
     for ids in ([0], [-1], [OWNER, OWNER]):
         with pytest.raises(ValidationError):
             TelegramSettings(allowed_user_ids=ids)
+
+
+async def test_chat_approval_stays_private_to_its_owner(telegram):
+    core, channel, session, _ = telegram
+    await feed(channel, 1, "/start", user=OWNER)
+    await feed(channel, 2, "/start", user=OTHER)
+    await feed(channel, 3, "run exactly: echo hi .", user=OTHER)
+    await eventually(lambda: bool(channel._buttons))
+    assert {chat for chat, _ in channel._buttons} == {OTHER}
+    assert not any(m.reply_markup and m.chat.id == OWNER for m in session.sent)
+    await feed(channel, 4, "/approvals", user=OWNER)
+    assert session.sent[-1].text == "No pending approvals."
+    button_message = next(m for m in session.sent if m.reply_markup and m.chat.id == OTHER)
+    assert "From: this chat" in button_message.text
+    await click(
+        channel,
+        5,
+        button_message,
+        button_message.reply_markup.inline_keyboard[0][0].callback_data,
+        user=OTHER,
+    )
+    (job,) = core.store._conn.execute("SELECT id FROM jobs").fetchall()
+    result = await core.wait(job[0], 5)
+    assert result.answer == "hi"
+    assert core.store.approval_audit(job[0])[0].actor == f"telegram:{OTHER}"
+
+
+async def test_blocked_chat_does_not_starve_other_approvers(telegram):
+    from aiogram.exceptions import TelegramForbiddenError
+
+    core, channel, session, _ = telegram
+    await feed(channel, 1, "/start", user=OWNER)
+    await feed(channel, 2, "/start", user=OTHER)
+    original = session.make_request
+
+    async def blocked_by_owner(bot, method, timeout=None):
+        if isinstance(method, SendMessage) and method.chat_id == OWNER:
+            raise TelegramForbiddenError(method=method, message="bot was blocked by the user")
+        return await original(bot, method, timeout)
+
+    session.make_request = blocked_by_owner
+    job = await core.submit(Conversation("mcp", "test", "work"), "run exactly: echo hi .")
+    await eventually(lambda: bool(channel._buttons))
+    assert {chat for chat, _ in channel._buttons} == {OTHER}
+    button_message = next(m for m in session.sent if m.reply_markup)
+    assert "From: mcp:test" in button_message.text
+    await core.cancel(job.conversation)
+
+
+async def test_secret_is_redacted_before_truncation_and_blank_text_is_sent(telegram):
+    from acp_gateway.log import register_secret
+
+    _, channel, session, _ = telegram
+    leaked = "S3CRETVALUE-" + "abcdefghijklmnop"
+    register_secret(leaked)
+    approval = type(
+        "A",
+        (),
+        {
+            "conversation": Conversation("mcp", "t", "work"),
+            "job_id": "job",
+            "id": "approval",
+            "expires_at": datetime.now(UTC),
+            "request": type(
+                "R",
+                (),
+                {
+                    "title": "x" * 1760 + leaked,
+                    "raw_input": {},
+                    "options": [
+                        type("O", (), {"kind": "allow_once", "name": "Allow", "option_id": "o"})()
+                    ],
+                },
+            )(),
+        },
+    )()
+    await channel._approval(OWNER, approval)
+    assert leaked[:10] not in session.sent[-1].text
+    await channel._send(OWNER, " \n ")
+    assert session.sent[-1].text == "(empty response)"

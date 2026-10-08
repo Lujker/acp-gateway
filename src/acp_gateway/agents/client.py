@@ -32,7 +32,7 @@ from acp.schema import (
     SessionModeState,
     TextContentBlock,
 )
-from pydantic import SecretStr
+from pydantic import SecretStr, ValidationError
 
 from acp_gateway import __version__
 from acp_gateway.agents.errors import (
@@ -194,6 +194,7 @@ class AgentClient:
         self._turns: dict[str, asyncio.Queue[AgentEvent | _TurnDone]] = {}
         self._permission_tasks: defaultdict[str, set[asyncio.Task[str | None]]] = defaultdict(set)
         self._watchers: set[asyncio.Task[None]] = set()
+        self._requests = 0  # requests in flight outside prompt turns
 
         self.agent_info: dict[str, Any] | None = None
         self.agent_capabilities: Any = None
@@ -264,10 +265,17 @@ class AgentClient:
                 ),
                 timeout=self._request_timeout,
             )
-        except (ConnectionError, TimeoutError, RequestError) as exc:
+        except BaseException as exc:
+            # Includes cancellation: the socket and the receive task must not leak.
             with contextlib.suppress(Exception):
                 await conn.close()
-            reason = str(exc) or type(exc).__name__
+            await transport.close()
+            if isinstance(exc, ValidationError):
+                reason = "invalid initialize response"
+            elif isinstance(exc, ConnectionError | TimeoutError | RequestError):
+                reason = str(exc) or type(exc).__name__
+            else:
+                raise
             raise AgentUnavailable(
                 f"ACP handshake with {self.profile.display_name} failed: {reason}"
             ) from exc
@@ -315,6 +323,33 @@ class AgentClient:
             await transport.close()
         self._attached.clear()
 
+    async def _abandon(self, transport: PinnedWebSocketTransport | None) -> None:
+        """Close a connection whose ACP side failed so the next call reconnects.
+
+        The SDK stops reading on some errors while the socket stays open; without
+        this the client would look connected and fail every call.
+        """
+        if transport is None or transport is not self._transport or transport.closed.is_set():
+            return
+        conn = self._conn
+        await transport.close()
+        with contextlib.suppress(Exception):
+            await conn.close()
+
+    async def _release_quarantine(self, session_id: str) -> None:
+        """Reconnect to unblock a session whose cancellation was never confirmed.
+
+        Only a fresh connection clears the quarantine. It is made when nothing else
+        runs on this connection, so other sessions' turns are never cut off.
+        """
+        async with self._connect_lock:
+            busy = self._turns or self._loading or self._requests or self._permission_tasks
+            if session_id not in self._uncertain or busy:
+                return
+            self._log.info("reconnecting to release a cancelled session", session_id=session_id)
+            await self.close()
+        await self.ensure_connected()
+
     # ---------------------------------------------------------------- sessions
 
     def set_permission_handler(self, handler: PermissionHandler) -> None:
@@ -337,6 +372,8 @@ class AgentClient:
     async def load_session(self, session_id: str, cwd: str | None = None) -> None:
         """Attach an existing session to this connection; its history replay is dropped."""
         await self.ensure_connected()
+        if session_id in self._uncertain:
+            await self._release_quarantine(session_id)
         if session_id in self._uncertain:
             raise SessionBusy(
                 f"session {session_id} has an unconfirmed cancellation; reconnect first"
@@ -388,6 +425,8 @@ class AgentClient:
         Closing the iterator before the end cancels the turn on the agent.
         """
         await self.ensure_connected()
+        if session_id in self._uncertain and session_id not in self._turns:
+            await self._release_quarantine(session_id)
         if session_id in self._turns or session_id in self._uncertain:
             raise SessionBusy(f"session {session_id} is busy or its cancellation is unconfirmed")
         if session_id not in self._attached:
@@ -397,6 +436,7 @@ class AgentClient:
 
         queue: asyncio.Queue[AgentEvent | _TurnDone] = asyncio.Queue()
         self._turns[session_id] = queue
+        transport = self._transport
         request = asyncio.ensure_future(
             self._conn.prompt(
                 session_id=session_id, prompt=[TextContentBlock(type="text", text=text)]
@@ -411,7 +451,7 @@ class AgentClient:
                 if isinstance(item, _TurnDone):
                     break
                 yield item
-            response = self._result(request)
+            response = await self._result(request, transport)
             finished = True
             self._log.info("turn finished", session_id=session_id, stop_reason=response.stop_reason)
             yield TurnFinished(
@@ -508,7 +548,11 @@ class AgentClient:
                 else None
             )
         finally:
-            self._permission_tasks.get(session_id, set()).discard(task)
+            tasks = self._permission_tasks.get(session_id)
+            if tasks is not None:
+                tasks.discard(task)
+                if not tasks:
+                    del self._permission_tasks[session_id]
 
         if option_id is None:
             return RequestPermissionResponse(outcome=DeniedOutcome(outcome="cancelled"))
@@ -527,9 +571,12 @@ class AgentClient:
     # ----------------------------------------------------------------- helpers
 
     async def _call(self, coro: Coroutine[Any, Any, T], *, not_found: str | None = None) -> T:
+        transport = self._transport  # the one ``coro`` was created on
+        self._requests += 1
         try:
             return await asyncio.wait_for(coro, timeout=self._request_timeout)
         except ConnectionError as exc:
+            await self._abandon(transport)
             raise TransportDisconnected(f"lost connection to {self.profile.display_name}") from exc
         except TimeoutError as exc:
             raise AgentUnavailable(f"{self.profile.display_name} did not answer in time") from exc
@@ -537,13 +584,24 @@ class AgentClient:
             if not_found is not None:
                 raise SessionNotFound(not_found) from exc
             raise AgentError(f"{self.profile.display_name} error: {exc}") from exc
+        except ValidationError as exc:
+            raise AgentError(f"{self.profile.display_name} sent an invalid response") from exc
+        finally:
+            self._requests -= 1
 
-    def _result(self, request: asyncio.Future[Any]) -> Any:
+    async def _result(
+        self, request: asyncio.Future[Any], transport: PinnedWebSocketTransport | None
+    ) -> Any:
         try:
             return request.result()
         except ConnectionError as exc:
+            await self._abandon(transport)
             raise TransportDisconnected(
                 f"lost connection to {self.profile.display_name} during the turn"
             ) from exc
         except RequestError as exc:
             raise PromptFailed(f"{self.profile.display_name} failed the prompt: {exc}") from exc
+        except ValidationError as exc:
+            raise PromptFailed(
+                f"{self.profile.display_name} sent an invalid prompt result"
+            ) from exc

@@ -9,7 +9,11 @@ Redaction works on three levels:
 2. exact values registered at runtime via :func:`register_secret`
    (agent secrets, bot tokens) — wherever they appear in a string;
 3. well-known textual shapes: ``token=...`` in URLs, ``Bearer ...``,
-   ``X-Secret-Key: ...``.
+   ``X-Secret-Key: ...``, ``scheme://user:pass@``, ``"api_key": "..."``.
+
+Values that are neither text nor containers (exceptions, bytes, arbitrary
+objects) are rendered to text and redacted, since renderers would ``repr()``
+them unmasked.
 """
 
 from __future__ import annotations
@@ -19,7 +23,7 @@ import os
 import re
 import sys
 import threading
-from collections.abc import Iterable, MutableMapping
+from collections.abc import Callable, Iterable, Mapping, MutableMapping
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
 from typing import Any, Literal, TextIO
@@ -28,12 +32,24 @@ import structlog
 
 MASK = "***"
 _MIN_SECRET_LENGTH = 6
+# Agent-controlled data (raw_input) can nest arbitrarily; deeper values are masked.
+_MAX_DEPTH = 64
 
 _SENSITIVE_KEY = re.compile(
     r"(secret|token|passw|api[_-]?key|authorization|cookie|credential|private[_-]?key)",
     re.IGNORECASE,
 )
-_TEXT_PATTERNS: tuple[tuple[re.Pattern[str], str], ...] = (
+
+
+def _mask_quoted_pair(match: re.Match[str]) -> str:
+    quote, key, separator, value_quote, value = match.groups()
+    if not value or not _SENSITIVE_KEY.search(key):
+        return match.group(0)
+    return f"{quote}{key}{quote}{separator}{value_quote}{MASK}{value_quote}"
+
+
+# Quantifiers are bounded or possessive so hostile input cannot backtrack catastrophically.
+_TEXT_PATTERNS: tuple[tuple[re.Pattern[str], str | Callable[[re.Match[str]], str]], ...] = (
     # ?token=..., &secret=..., key=... in URLs and query strings
     (
         re.compile(r"(?i)\b([\w-]*(?:token|secret|key|passw\w*))=([^&\s'\"]+)"),
@@ -41,6 +57,24 @@ _TEXT_PATTERNS: tuple[tuple[re.Pattern[str], str], ...] = (
     ),
     (re.compile(r"(?i)\b(bearer)\s+[A-Za-z0-9._~+/=-]+"), rf"\1 {MASK}"),
     (re.compile(r"(?i)\b(x-secret-key)(['\"]?\s*[:=]\s*['\"]?)[^\s'\",}]+"), rf"\1\2{MASK}"),
+    # Authorization: Basic dXNlcjpwYXNz / Token abc (Bearer is masked above)
+    (
+        re.compile(
+            r"(?i)\b(authorization['\"]?\s*+[:=]\s*+['\"]?(?:basic|token|digest|negotiate)\s++)"
+            r"[^\s'\",}]++"
+        ),
+        rf"\1{MASK}",
+    ),
+    # wss://user:password@host -> wss://***@host
+    (
+        re.compile(r"(?i)\b([a-z][a-z0-9+.-]{0,31}://)[^\s/@:'\"]{1,256}:[^\s/@'\"]{0,512}@"),
+        rf"\1{MASK}@",
+    ),
+    # "token": "...", 'api_key': '...' in JSON and dict reprs
+    (
+        re.compile(r"""(["'])([\w-]++)\1(\s*+[:=]\s*+)(["'])((?:(?!\4)[^\\]|\\.)*+)\4"""),
+        _mask_quoted_pair,
+    ),
 )
 
 _registry: set[str] = set()
@@ -70,20 +104,46 @@ def redact_text(text: str) -> str:
     return text
 
 
-def _redact_value(value: Any) -> Any:
+def _redact_value(value: Any, depth: int = 0) -> Any:
     if isinstance(value, str):
         return redact_text(value)
-    if isinstance(value, MutableMapping):
-        return {k: _redact_item(k, v) for k, v in value.items()}
+    if value is None or isinstance(value, bool | int | float):
+        return value
+    if depth >= _MAX_DEPTH:
+        return MASK
+    if isinstance(value, Mapping):
+        return {k: _redact_item(k, v, depth + 1) for k, v in value.items()}
     if isinstance(value, list | tuple | set | frozenset):
-        return type(value)(_redact_value(v) for v in value)
-    return value
+        return _rebuild(value, [_redact_value(v, depth + 1) for v in value])
+    if isinstance(value, bytes | bytearray | memoryview):
+        return redact_text(bytes(value).decode("utf-8", "replace"))
+    # Exceptions and arbitrary objects: renderers would repr() them unredacted.
+    try:
+        text = repr(value)
+    except Exception:  # a broken __repr__ must not break logging
+        text = f"<unrepresentable {type(value).__name__}>"
+    return redact_text(text)
 
 
-def _redact_item(key: Any, value: Any) -> Any:
+def _rebuild(value: list | tuple | set | frozenset, items: list[Any]) -> Any:
+    kind = type(value)
+    if kind in (list, tuple, set, frozenset):
+        return kind(items)
+    if isinstance(value, tuple) and hasattr(kind, "_fields"):
+        try:
+            return kind(*items)  # namedtuple, e.g. SplitResult
+        except TypeError:
+            pass
+    for base in (list, tuple, set, frozenset):
+        if isinstance(value, base):
+            return base(items)
+    return items
+
+
+def _redact_item(key: Any, value: Any, depth: int = 0) -> Any:
     if isinstance(key, str) and _SENSITIVE_KEY.search(key) and value not in (None, ""):
         return MASK
-    return _redact_value(value)
+    return _redact_value(value, depth)
 
 
 def redact_value(value: Any) -> Any:

@@ -133,7 +133,7 @@ async def test_mcp_authentication_host_bounds_and_safe_validation(running):
     )
     headers = {"Authorization": f"Bearer {MCP}"}
     assert owner.post("/mcp", headers={**headers, "Host": "evil.example"}).status_code == 400
-    assert owner.post("/mcp", headers=headers, content=b"x" * 210_000).status_code == 413
+    assert owner.post("/mcp", headers=headers, content=b"x" * 700_000).status_code == 413
     async with connection(running) as session:
         for args in (
             {"text": "secret-input", "wait": -1},

@@ -8,6 +8,11 @@ from starlette.responses import JSONResponse
 from acp_gateway.config import is_loopback_host
 
 
+def body_limit(max_prompt_length: int) -> int:
+    # JSON may escape every character as \uXXXX, or a surrogate pair (12 bytes).
+    return 12 * max_prompt_length + 8192
+
+
 class OwnerAccess:
     def __init__(self, app, *, token: str, max_body_bytes: int, mcp_app=None) -> None:
         self.app = app
@@ -20,6 +25,10 @@ class OwnerAccess:
             scope.get("path") == "/mcp" or scope.get("path", "").startswith("/mcp/")
         ):
             await self._mcp_app(scope, receive, send)
+            return
+        if scope["type"] == "websocket":
+            # No WebSocket routes exist; refuse them rather than skip the checks below.
+            await send({"type": "websocket.close", "code": 1008})
             return
         if scope["type"] != "http":
             await self.app(scope, receive, send)

@@ -167,15 +167,19 @@ class TelegramChannel(Channel):
         first = None
         # Telegram's limit is 4096 after entity parsing. 2000 codepoints also
         # fit when every character occupies two UTF-16 code units.
-        text = redact_text(text) or "(empty response)"
-        for offset in range(0, len(text), 2000):
+        text = redact_text(text)
+        # Telegram rejects whitespace-only messages, which would abort the rest.
+        chunks = [
+            chunk for i in range(0, len(text), 2000) if (chunk := text[i : i + 2000]).strip()
+        ] or ["(empty response)"]
+        for chunk in chunks:
             for attempt in range(3):
                 try:
                     message = await self.bot.send_message(
                         chat,
-                        html.escape(text[offset : offset + 2000], quote=False),
+                        html.escape(chunk, quote=False),
                         parse_mode="HTML",
-                        reply_markup=markup if offset == 0 else None,
+                        reply_markup=markup if first is None else None,
                     )
                     first = first or message
                     break
@@ -252,7 +256,9 @@ class TelegramChannel(Channel):
             await self._send(chat, "\n".join(lines) or "No agents configured.")
             return
         if command == "/approvals":
-            pending = self.core.pending_approvals(self.name)
+            pending = [
+                a for a in self.core.pending_approvals(self.name) if chat in self._approval_chats(a)
+            ]
             for approval in pending:
                 await self._approval(chat, approval)
             if not pending:
@@ -291,6 +297,14 @@ class TelegramChannel(Channel):
             job = await self.core.submit(conv, text)
             await self._send(chat, f"Working: {job.id}\nUse /stop to cancel.")
 
+    def _approval_chats(self, approval):
+        conversation = approval.conversation
+        if conversation.channel == self.name:
+            # A chat's own tool requests stay private to it, like its answers.
+            chat = int(conversation.key)
+            return (chat,) if chat in self._chats else ()
+        return tuple(self._chats)
+
     async def _approval(self, chat, approval):
         options = tuple(
             o for o in approval.request.options if o.kind in {"allow_once", "reject_once"}
@@ -300,13 +314,22 @@ class TelegramChannel(Channel):
         markup = InlineKeyboardMarkup(
             inline_keyboard=[
                 [
-                    InlineKeyboardButton(text=o.name[:50], callback_data=f"a:{approval.id}:{i}")
+                    InlineKeyboardButton(
+                        text=redact_text(o.name)[:50], callback_data=f"a:{approval.id}:{i}"
+                    )
                     for i, o in enumerate(options)
                 ]
             ]
         )
-        body = (
-            f"Approval: {approval.conversation.agent}\nJob: {approval.job_id}\n"
+        conversation = approval.conversation
+        origin = (
+            "this chat"
+            if conversation.channel == self.name
+            else f"{conversation.channel}:{conversation.key}"
+        )
+        # Redact before truncating: a cut-off secret no longer matches the registry.
+        body = redact_text(
+            f"Approval: {conversation.agent}\nFrom: {origin}\nJob: {approval.job_id}\n"
             f"{approval.request.title}\n"
             f"{json.dumps(redact_value(approval.request.raw_input), ensure_ascii=False)}\n"
             f"Expires: {approval.expires_at.isoformat()}"
@@ -361,8 +384,12 @@ class TelegramChannel(Channel):
                             event.job.answer or event.job.error or f"Job: {event.job.status.value}",
                         )
                 elif isinstance(event, ApprovalRequested):
-                    for chat in tuple(self._chats):
-                        await self._approval(chat, event.approval)
+                    for chat in self._approval_chats(event.approval):
+                        # One blocked or failing chat must not starve the others.
+                        try:
+                            await self._approval(chat, event.approval)
+                        except Exception:
+                            self._log.exception("Telegram approval could not be delivered")
                 elif isinstance(event, ApprovalResolved):
                     for key, binding in list(self._buttons.items()):
                         if binding[0] == event.approval_id:

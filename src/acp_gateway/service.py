@@ -96,7 +96,7 @@ def install(config: AppConfig) -> int:
         raise ValueError("a persistent config file is required; run acpgw setup first")
     if config.env_file is None:
         raise ValueError("a persistent .env file is required for unattended startup")
-    values = dotenv_values(config.env_file)
+    values = dotenv_values(config.env_file, interpolate=False)
     required = [config.settings.gateway.api_token_env]
     if config.secrets.get(config.settings.gateway.mcp_token_env) is not None:
         required.append(config.settings.gateway.mcp_token_env)

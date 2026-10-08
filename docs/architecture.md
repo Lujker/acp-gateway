@@ -239,7 +239,9 @@ Semantics the design must respect:
   If the agent does not finish the prompt within five seconds after the stream
   is closed, the local request is cancelled and the session remains blocked
   (`SessionBusy`) until a fresh connection is established; late permission
-  requests for that session are cancelled. Other sessions remain usable.
+  requests for that session are cancelled. Other sessions remain usable. The
+  next use of the blocked session reconnects automatically once no other turn,
+  load or request runs on that connection.
   Permission requests go to a caller-supplied async handler that returns an
   option id — the default rejects everything; `cancel()` answers pending requests
   `cancelled`. Errors are normalized (`errors.py`).

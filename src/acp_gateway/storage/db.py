@@ -12,6 +12,8 @@ import json
 import os
 import re
 import sqlite3
+import time
+from collections.abc import Iterator
 from datetime import datetime
 from importlib import resources
 from pathlib import Path
@@ -28,6 +30,7 @@ from acp_gateway.storage.records import (
 )
 
 DB_FILENAME = "gateway.db"
+_BUSY_TIMEOUT_MS = 5000
 _MIGRATION_NAME = re.compile(r"^(\d{4})_[a-z0-9_]+\.sql$")
 
 _SESSION_COLUMNS = (
@@ -46,6 +49,37 @@ def _migrations() -> list[tuple[int, str]]:
         if match := _MIGRATION_NAME.match(entry.name):
             found.append((int(match.group(1)), entry.read_text(encoding="utf-8")))
     return sorted(found)
+
+
+def _statements(script: str) -> Iterator[str]:
+    """Split a migration script into statements; ``;`` inside literals or triggers stays put."""
+    statement = ""
+    parts = script.split(";")
+    for index, part in enumerate(parts):
+        statement += part if index == len(parts) - 1 else part + ";"
+        if sqlite3.complete_statement(statement):
+            yield statement
+            statement = ""
+    if statement.strip():
+        yield statement
+
+
+def _enable_wal(conn: sqlite3.Connection) -> None:
+    # Switching a fresh file to WAL can report "database is locked" without
+    # consulting busy_timeout while another process does the same; retry within it.
+    deadline = time.monotonic() + _BUSY_TIMEOUT_MS / 1000
+    while True:
+        try:
+            conn.execute("PRAGMA journal_mode = WAL")
+            return
+        except sqlite3.OperationalError as exc:
+            if "locked" not in str(exc) or time.monotonic() >= deadline:
+                raise
+            time.sleep(0.02)
+
+
+class SchemaTooNewError(ValueError):
+    """The database was migrated by a newer acpgw (for example before a binary rollback)."""
 
 
 def _ts(value: datetime) -> str:
@@ -76,13 +110,17 @@ class Store:
                     if sidecar.is_file():
                         sidecar.chmod(0o600)
         conn = sqlite3.connect(path, isolation_level=None)
-        conn.row_factory = sqlite3.Row
-        conn.execute("PRAGMA foreign_keys = ON")
-        conn.execute("PRAGMA busy_timeout = 5000")
-        if str(path) != ":memory:":
-            conn.execute("PRAGMA journal_mode = WAL")
-        store = cls(conn)
-        store.migrate()
+        try:
+            conn.row_factory = sqlite3.Row
+            conn.execute("PRAGMA foreign_keys = ON")
+            conn.execute(f"PRAGMA busy_timeout = {_BUSY_TIMEOUT_MS}")
+            if str(path) != ":memory:":
+                _enable_wal(conn)
+            store = cls(conn)
+            store.migrate()
+        except BaseException:
+            conn.close()
+            raise
         return store
 
     @classmethod
@@ -116,12 +154,40 @@ class Store:
         return self._conn.execute("PRAGMA user_version").fetchone()[0]
 
     def migrate(self) -> None:
+        """Apply pending migrations atomically; safe against concurrent openers.
+
+        The write lock is taken (``BEGIN IMMEDIATE``) before ``user_version`` is
+        re-read, so a second process waits and then sees the migrated schema.
+        Statements run one by one because ``executescript()`` would commit the
+        open transaction first.
+        """
+        migrations = _migrations()
+        latest = migrations[-1][0] if migrations else 0
+        if self._check_version(latest) == latest:
+            return
+        self._conn.execute("BEGIN IMMEDIATE")
+        try:
+            current = self._check_version(latest)
+            for version, script in migrations:
+                if version <= current:
+                    continue
+                for statement in _statements(script):
+                    self._conn.execute(statement)
+                self._conn.execute(f"PRAGMA user_version = {version:d}")
+            self._conn.execute("COMMIT")
+        except BaseException:
+            if self._conn.in_transaction:
+                self._conn.execute("ROLLBACK")
+            raise
+
+    def _check_version(self, latest: int) -> int:
         current = self.schema_version
-        for version, script in _migrations():
-            if version <= current:
-                continue
-            # executescript() commits first; the explicit BEGIN keeps each step atomic.
-            self._conn.executescript(f"BEGIN;\n{script}\nPRAGMA user_version = {version};\nCOMMIT;")
+        if current > latest:
+            raise SchemaTooNewError(
+                f"database schema {current} is newer than this acpgw supports ({latest}); "
+                "upgrade acpgw"
+            )
+        return current
 
     # ---------------------------------------------------------------- sessions
 

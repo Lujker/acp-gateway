@@ -140,6 +140,12 @@ class AgentProfile(_Section):
             )
         if not parts.hostname:
             raise ValueError(f"agent {self.alias!r}: url has no host")
+        if parts.username is not None or parts.password is not None:
+            # The URL is logged and shown by `config check`; credentials belong in .env.
+            raise ValueError(
+                f"agent {self.alias!r}: url must not contain credentials; "
+                "put the secret in .env and reference it with secret_env"
+            )
         if self.tls_fingerprint and not self.uses_tls:
             raise ValueError(f"agent {self.alias!r}: tls_fingerprint requires wss:// or https://")
         if (
@@ -212,6 +218,8 @@ class Settings(BaseSettings):
         env_prefix="ACPGW_",
         env_nested_delimiter="__",
         extra="forbid",
+        # Validation errors are printed; never echo a rejected value (it may be a credential).
+        hide_input_in_errors=True,
     )
 
     gateway: GatewaySettings = Field(default_factory=GatewaySettings)
@@ -331,7 +339,7 @@ def load_config(config_path: Path | None = None, env_file: Path | None = None) -
     finally:
         _yaml_path.reset(token)
 
-    secrets = SecretStore(dotenv_values(env_file) if env_file else None)
+    secrets = SecretStore(dotenv_values(env_file, interpolate=False) if env_file else None)
     app_config = AppConfig(settings, secrets, config_path, env_file)
     for name in app_config.referenced_secret_names():
         if (secret := secrets.get(name)) is not None:
