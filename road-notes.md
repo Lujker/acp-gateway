@@ -1316,7 +1316,52 @@ offline diagnostics и отсутствие секретов в выводе. Sy
 Полный прогон: **678 passed, 3 optional Hermes skipped**, 158.95 с.
 Ruff check/format, secret scanner и git diff --check проходят.
 
+## 2026-10-08 — P4.1: два компьютера и диагностика ошибок маршрутов
+
+По поручению владельца продолжена работа с несколькими компьютерами без
+живой приёмки. Добавлен integration suite с двумя независимыми mock Goose
+servers, двумя реальными исходящими WS-соединениями и общим serve runtime.
+Одинаковый alias goose даёт work/goose и home/goose, отдельные sessions/history
+при одном channel/thread и разные MCP prefixes. Чужой session ID отвергается.
+
+Проверены одновременные approvals: disconnect/revoke/rotate/replacement и
+подмена alias/epoch одного компьютера завершают только его turn; позднее allow
+отвергается, approval второго узла остаётся доступным, следующий запрос работает.
+Uncertain prompt не повторяется. Исчерпание stream limit и byte queue overflow
+одного узла не ломают второй и не закрывают исправный sibling stream.
+
+Диагностика configured routes дополнена problem, текущим epoch, active streams,
+capacity_available и last_stream_error (код/UTC-время). Ошибки ограничены
+advertised aliases текущего epoch, очищаются новым успешным open. Обычный close
+не пишет ошибку. Oversized outgoing message теперь передаёт явный overflow
+в Close; invalid ACP data записывает policy_denied вместо общей unavailable.
+Нет raw agent errors, credentials или traffic в диагностике; новой миграции нет.
+
+Работающие службы и бинарник не менялись. VPS/nginx, несколько физических
+компьютеров и реальные агенты остаются на владельце; recovery/stdio впереди.
+
+Первые два полных прогона выявили разные нестабильные проверки: сначала
+687 passed, 3 skipped и timeout shutdown тестового HTTP daemon в старом
+test_api_cancel_pending_approval_and_completed_sse; затем 686 passed,
+3 skipped и ошибка certificate trust в test_ingress_connection_limit_rejects_new_handshakes.
+Оба теста отдельно прошли (вместе 2 passed); изменения текущего этапа не меняют
+их SSE shutdown или TLS-проверку. Новые 9 multinode сценариев прошли в обоих
+общих прогонах. Причина нестабильности пока не установлена.
+Третий общий прогон: 686 passed, 3 skipped, certificate trust failure в другом
+старом TLS-тесте регистрации. С временным диагностическим перехватом
+99 связанных тестов прошли (23.36 с), проблемный registration сценарий —
+20 раз подряд (6.26 с); исключение с исходным TLS verification code не
+воспроизвелось. Production TLS и SSE lifecycle не изменены ради обхода сбоя.
+Ruff check/format, scanner и git diff --check проходят. Общий набор нельзя
+считать стабильно зелёным; нестабильность остаётся отдельным вопросом.
+
 ## Незакрытые вопросы
+
+- **Автотесты TLS/SSE** — общий suite 2026-10-08 иногда даёт certificate trust
+  error в существующих connector TLS-тестах или timeout shutdown HTTP daemon
+  после отмены approval. Отдельные/повторные scoped проверки проходят.
+  При воспроизведении сохранить исходный TLS verify code и stack shutdown;
+  причина не установлена, production проверка TLS не ослаблена.
 
 - **Публикация** — удалять ли старые коммиты с GitHub окончательно (GitHub
   Support или пересоздание репозитория) и когда удалить локальную метку

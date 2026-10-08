@@ -367,12 +367,17 @@ native Windows; первоначальная граница — один вла�
 PolicyTransport на компьютере, ответы/permissions/cancel, один reader/writer,
 bounded queues, native keepalive, epoch fencing и reconnect без replay prompts.
 Проверен на recorded Goose mock, включая owner API и MCP. Живая приёмка на
-реальном агенте, несколько компьютеров и восстановление результатов ещё впереди.
+реальном агенте, несколько физических компьютеров и восстановление результатов ещё впереди.
 Добавлены отдельная Linux/WSL user-service коннектора, status/logs и политика
 остановки при fatal config/access ошибках. `computers status` через owner API
 различает online computer и готовность маршрута; schema 5 хранит последнее
 подключение без секретов/трафика. Автотесты — на нас, живая приёмка — на владельце;
 работающие службы и бинарник на этом этапе не обновляются.
+Два mock-компьютера с одинаковым alias проверены в общем runtime: owner API/MCP,
+раздельная история/сессии/approvals, disconnect/revoke/rotate/replacement,
+подмена alias/epoch и перегрузка не затрагивают второй узел. Диагностика маршрута
+показывает причину неготовности, потоки/лимит и последнюю stream error без
+сырого текста. Несколько физических компьютеров остаются живой приёмкой.
 Решения ревью приняты владельцем: ingress в serve, ACP в конверте alias/stream/epoch,
 newest-wins, один demux-reader/keepalive и bounded queues, адрес computer/agent.
 TLS временно выключен для тестов; домен/root/subpath и nginx предусмотрены.
@@ -473,7 +478,8 @@ launchd-агент; ядро уже кроссплатформенное (см. 
    точные cwd, режимы, MCP/capabilities, live once-only approvals). Решения ревью
    приняты; TLS выключен для IP/port тестов, paths и будущий nginx поддержаны.
    Первый guarded ACP relay в serve готов и mock-tested.
-   Дальше: живая приёмка → несколько узлов → recovery
+   Два узла и изоляция mock-tested; служба и диагностика готовы.
+   Дальше: живая приёмка нескольких физических узлов → recovery
    → stdio/эксплуатация.
 6. **P3.2 — Windows native**, после первого маршрута коннектора, вместе с
    Windows-частями `P3.4/P3.5`.

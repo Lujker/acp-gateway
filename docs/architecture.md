@@ -84,6 +84,11 @@ stay in the connector; fatal access/configuration failures stop the unit.
 The authenticated owner API exposes computer connection and configured route
 readiness separately. SQLite schema 5 keeps latest connection metadata only;
 online status always comes from the current runtime.
+Routes with identical local aliases on different computers retain distinct
+session ownership and MCP tool prefixes. Two-computer integration tests cover
+concurrent approvals, revocation/rotation/replacement, malformed alias/epoch,
+queue overflow and stream exhaustion. Route diagnostics expose current epoch,
+per-alias stream count, computer capacity and bounded stream error codes.
 
 ### 3.1. Networking in the LAN topology
 

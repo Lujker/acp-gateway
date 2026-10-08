@@ -11,7 +11,7 @@ tool credentials and work files stay on computers.
 |---|---|
 | 1 | Implemented: versioned control frames, stable computer IDs, local enrollment, credential rotation/revocation |
 | 2 | Implemented and mock-tested: ingress in serve, guarded ACP relay, requests/results/human approvals/cancel |
-| 3 | Namespaced configured routes implemented; multiple-computer/channel acceptance remains |
+| 3 | Namespaced routes and two-computer isolation mock-tested through owner API/MCP; physical-computer acceptance remains |
 | 4 | Native keepalive, reconnect, epoch fencing and bounded queues implemented; durable result recovery remains |
 | 5 | Linux/WSL connector service and diagnostics implemented; live deployment/upgrades and local stdio bridging remain |
 
@@ -110,8 +110,71 @@ initialized or ready for a turn. `/health` also includes computer snapshots.
 Run only one dispatcher listener per data directory; the standalone diagnostic
 listener and `serve` must not use the same registry concurrently.
 
+Each configured route also reports its current `epoch`, `active_streams`,
+`capacity_available` and `last_stream_error` (`code` and UTC `at`). Capacity
+means a new relay stream fits the computer's simultaneous/lifetime stream
+limits; a ready agent can continue on its existing stream when capacity is
+exhausted. Errors are bounded by advertised aliases, live only in the current
+epoch, and clear when a new stream opens successfully for that alias. Normal
+stream closure does not create an error. No raw agent error text is retained.
+
+The `problem` field explains routes that are not ready:
+
+| Code | Meaning |
+|---|---|
+| `not_enrolled` | Configured computer ID has no enrollment |
+| `access_disabled` | Enrollment was revoked |
+| `computer_offline` | Enabled computer has no live connection |
+| `agent_unadvertised` | Computer is online but its manifest lacks the alias |
+| `agent_not_initialized` | Advertised agent has not completed ACP initialization |
+| `access_denied` / `policy_denied` | Computer rejected local access or ACP policy |
+| `unavailable` / `open_failed` | Local stream failed or could not be opened |
+| `overflow` / `stream_limit` | Stream queue/message or computer stream limit was reached |
+
+Ready routes have `problem: null`; `last_stream_error` can still describe a
+failed sibling stream. Offline routes have no current stream error; inspect
+the computer's persisted disconnection reason instead.
+
 For managed startup, logs and exit policies, see the
 [separate computer connector service](../setup/service.md#separate-computer-connector-service).
+
+## Multiple computers with the same agent alias
+
+Enroll `work` and `home` separately and give each computer only its own private
+credential. Both local configs can advertise `goose`. On the VPS configure:
+
+```yaml
+connector:
+  enabled: true
+  host: 0.0.0.0
+  port: 8766
+agents:
+  - alias: goose
+    kind: goose
+    backend: connector
+    computer_id: work
+    default_cwd: /work
+  - alias: goose
+    kind: goose
+    backend: connector
+    computer_id: home
+    default_cwd: /work
+```
+
+Select `work/goose` or `home/goose` in CLI/owner API requests. MCP tool prefixes
+are `work__goose_` and `home__goose_`. Session ownership includes the complete
+route even when the channel/thread is identical. Credentials, connection
+epochs, stream limits and queues are separate per computer; approvals remain
+bound to their originating job and stream. A new registration replaces only
+the same computer ID. Disconnect/revoke/rotate or invalid alias/epoch on one
+computer does not complete, cancel or authorize another computer's turn.
+
+Integration tests use two independent mock ACP servers and two real outgoing
+WS connections in the shared `serve` runtime. They cover route/history/session
+ownership, MCP names, simultaneous human approvals, interrupted turns without
+replay, replacement, credential changes, malformed routing, queue overflow and
+stream exhaustion. Physical machines, VPS/nginx and real Goose remain owner
+acceptance checks.
 
 ## Relay preparation: transport injection
 

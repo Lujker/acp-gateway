@@ -30,6 +30,7 @@ from acp_gateway.connectors.protocol import (
     encode_frame,
 )
 from acp_gateway.log import get_logger
+from acp_gateway.storage.records import utcnow
 
 MAX_STREAMS = 32
 MAX_STREAM_IDS = 4096
@@ -91,7 +92,7 @@ class RelayTransport:
         try:
             await self.peer.send(Data(**self.route, message=message))
         except (BufferError, ProtocolError):
-            await self.close()
+            await self.close(code="overflow")
             raise ConnectionError("ACP relay message exceeds limits") from None
 
     @property
@@ -101,12 +102,12 @@ class RelayTransport:
     async def receive(self):
         return await self.inbox.receive()
 
-    async def close(self):
+    async def close(self, *, code="closed"):
         if self.closed.is_set():
             return
-        self.peer.stop(self.stream)
+        self.peer.stop(self.stream, code)
         with contextlib.suppress(ConnectionError, BufferError):
-            await self.peer.send(Close(**self.route))
+            await self.peer.send(Close(**self.route, code=code))
 
 
 @dataclass
@@ -138,6 +139,21 @@ class RelayPeer:
         self.out_bytes = 0
         self.out_controls = 0
         self.tasks: set[asyncio.Task] = set()
+        self.failures: dict[str, dict] = {}
+
+    def record_failure(self, alias, code):
+        # Only bounded, advertised aliases and input-independent codes are retained.
+        if alias in self.aliases and code and code != "closed":
+            self.failures[alias] = {"code": code, "at": utcnow().isoformat()}
+
+    def route_status(self, alias):
+        return {
+            "epoch": str(self.epoch),
+            "active_streams": sum(s.alias == alias for s in self.streams.values()),
+            "capacity_available": len(self.streams) < MAX_STREAMS
+            and len(self.seen) < MAX_STREAM_IDS,
+            "last_stream_error": self.failures.get(alias),
+        }
 
     async def send(self, frame):
         if self.closed.is_set():
@@ -196,10 +212,11 @@ class RelayPeer:
             if not done.done():
                 done.set_exception(ConnectionError("computer disconnected"))
 
-    def stop(self, stream_id: UUID, code="unavailable"):
+    def stop(self, stream_id: UUID, code=None):
         stream = self.streams.pop(stream_id, None)
         if stream is None:
             return
+        self.record_failure(stream.alias, code)
         if isinstance(stream, RelayTransport):
             stream.inbox.close()
             if not stream.opened.done():
@@ -219,11 +236,13 @@ class RelayPeer:
         if self.closed.is_set() or alias not in self.aliases:
             raise AgentUnavailable("computer or advertised agent is offline")
         if len(self.streams) >= MAX_STREAMS or len(self.seen) >= MAX_STREAM_IDS:
+            self.record_failure(alias, "stream_limit")
             raise AgentUnavailable("computer relay stream limit reached")
         stream_id = uuid4()
         transport = RelayTransport(self, alias, stream_id)
         self.streams[stream_id] = transport
         self.seen.add(stream_id)
+        previous_failure = self.failures.get(alias)
         try:
             async with asyncio.timeout(15):
                 await self.send(Open(**transport.route))
@@ -234,6 +253,8 @@ class RelayPeer:
             if transport.opened.done() and not transport.opened.cancelled():
                 transport.opened.exception()
             if isinstance(exc, (ConnectionError, TimeoutError)):
+                if self.failures.get(alias) is previous_failure:
+                    self.record_failure(alias, "open_failed")
                 raise AgentUnavailable("computer stream could not be opened") from None
             raise
 
@@ -293,9 +314,10 @@ class RelayPeer:
                 if not isinstance(stream, RelayTransport) or stream.opened.done():
                     raise ProtocolError("unexpected stream acknowledgement")
                 stream.opened.set_result(None)
+                self.failures.pop(frame.alias, None)
             else:
                 if not _acceptable(frame.message):
-                    self.stop(frame.stream)
+                    self.stop(frame.stream, "policy_denied")
                     await self.send(Close(**route, code="policy_denied"))
                     continue
                 if isinstance(stream, RelayTransport) and not stream.opened.done():
