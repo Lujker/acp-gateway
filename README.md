@@ -37,7 +37,9 @@ flowchart LR
 Early development. The foundation is done: the connection to a real goose
 1.53.0 over the LAN is verified, along with sessions, approvals, cancellation
 and session restore. The daemon, local HTTP/SSE API and human CLI channel are
-implemented and verified against Work Goose. Hermes and Telegram are next. The plan
+implemented and verified against Work Goose. The Hermes MCP facade is implemented
+and checked with Hermes' installed MCP module against the recorded Goose mock.
+WSL autostart and Telegram are next. The plan
 and the work queue are in [`road-map.md`](road-map.md) (in Russian).
 
 | Area | State |
@@ -48,7 +50,8 @@ and the work queue are in [`road-map.md`](road-map.md) (in Russian).
 | Core: sessions in SQLite, jobs, event bus, channel contract | ✅ `P1.3` |
 | Approvals: human routing, deadlines, audit; core policy limits | ✅ `P1.4` |
 | Daemon, local API, approvals from the CLI | ✅ `P1.5` |
-| Hermes (MCP), then Telegram | 🔜 `P2` |
+| Hermes MCP facade; actions approved through the CLI | ✅ `P2.1`, `P2.2` (Hermes MCP module + mock agent) |
+| Telegram | 🔜 `P2.3` |
 | Snikket/XMPP, e-mail, web UI | 🗓 `P4` |
 
 ## Principles
@@ -159,6 +162,15 @@ streaming `ask` requests cancellation of that job.
 
 The CLI reads the same config and secrets as the daemon. Details and the
 HTTP/SSE contract: [`docs/setup/gateway.md`](docs/setup/gateway.md).
+
+### 5. Connect Hermes
+
+Set a separate `ACPGW_MCP_TOKEN`, restart the daemon and add its `/mcp` URL
+and bearer header to Hermes' `mcp_servers`. The six tools for each agent
+support sessions, explicit threads, asynchronous jobs and cancellation.
+Actions still require a human in `acpgw approvals watch`.
+Configuration, tool arguments and compatibility checks:
+[`docs/setup/hermes.md`](docs/setup/hermes.md).
 
 ## Configuration
 

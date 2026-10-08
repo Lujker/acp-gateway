@@ -9,6 +9,7 @@ from filelock import FileLock, Timeout
 from acp_gateway.agents import AgentClient
 from acp_gateway.api.app import create_app
 from acp_gateway.channels.cli import CliChannel
+from acp_gateway.channels.mcp import McpChannel
 from acp_gateway.config import AppConfig
 from acp_gateway.core import GatewayCore
 from acp_gateway.log import configure_logging
@@ -36,6 +37,14 @@ def owner_token(config: AppConfig):
 @contextmanager
 def configured_app(config: AppConfig):
     token = owner_token(config)
+    mcp_token = config.secrets.get(config.settings.gateway.mcp_token_env)
+    if mcp_token is not None:
+        for profile in config.settings.agents:
+            secret = config.secrets.get(profile.secret_env) if profile.secret_env else None
+            if secret is not None and secrets.compare_digest(
+                mcp_token.get_secret_value().encode(), secret.get_secret_value().encode()
+            ):
+                raise ValueError("MCP and agent credentials must be different")
     missing = config.missing_agent_secrets()
     if missing:
         raise ValueError("missing agent secrets: " + ", ".join(missing))
@@ -60,7 +69,10 @@ def configured_app(config: AppConfig):
         core = GatewayCore(store, agents, policy=config.settings.policy)
         cli = CliChannel()
         core.add_channel(cli)
-        yield create_app(core, cli, token)
+        mcp = McpChannel(core, mcp_token) if mcp_token is not None else None
+        if mcp is not None:
+            core.add_channel(mcp)
+        yield create_app(core, cli, token, mcp=mcp)
     finally:
         if store is not None:
             store.close()

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
-from contextlib import asynccontextmanager
+from contextlib import AsyncExitStack, asynccontextmanager
 from typing import Annotated
 
 from fastapi import FastAPI, HTTPException, Query
@@ -44,15 +44,18 @@ def _sse(kind: str, data) -> str:
     return f"event: {kind}\ndata: {encoded}\n\n"
 
 
-def create_app(core: GatewayCore, cli: CliChannel, token: SecretStr) -> FastAPI:
+def create_app(core: GatewayCore, cli: CliChannel, token: SecretStr, *, mcp=None) -> FastAPI:
     if not token.get_secret_value():
         raise ValueError("the owner API token is required")
 
     @asynccontextmanager
     async def lifespan(app):
         try:
-            await core.start()
-            yield
+            async with AsyncExitStack() as stack:
+                if mcp is not None:
+                    await stack.enter_async_context(mcp.server.session_manager.run())
+                await core.start()
+                yield
         finally:
             await core.close()
 
@@ -63,6 +66,7 @@ def create_app(core: GatewayCore, cli: CliChannel, token: SecretStr) -> FastAPI:
         OwnerAccess,
         token=token.get_secret_value(),
         max_body_bytes=4 * core.policy.settings.max_prompt_length + 8192,
+        mcp_app=mcp.app if mcp is not None else None,
     )
 
     @app.exception_handler(AgentError)

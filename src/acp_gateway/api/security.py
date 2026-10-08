@@ -9,12 +9,18 @@ from acp_gateway.config import is_loopback_host
 
 
 class OwnerAccess:
-    def __init__(self, app, *, token: str, max_body_bytes: int) -> None:
+    def __init__(self, app, *, token: str, max_body_bytes: int, mcp_app=None) -> None:
         self.app = app
         self._token = f"Bearer {token}".encode()
         self._limit = max_body_bytes
+        self._mcp_app = mcp_app
 
     async def __call__(self, scope, receive, send) -> None:
+        if self._mcp_app is not None and (
+            scope.get("path") == "/mcp" or scope.get("path", "").startswith("/mcp/")
+        ):
+            await self._mcp_app(scope, receive, send)
+            return
         if scope["type"] != "http":
             await self.app(scope, receive, send)
             return

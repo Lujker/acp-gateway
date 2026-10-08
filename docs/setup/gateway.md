@@ -11,7 +11,8 @@ uv run python -c 'import secrets; print(secrets.token_urlsafe(32))'
 Copy the output into `.env` as `ACPGW_API_TOKEN=<value>` and keep the file
 private (`chmod 600 .env` on Linux/WSL). The owner token must differ from all
 configured agent credentials and the MCP token. Hermes will use its own MCP
-token when that channel is implemented.
+token for [the MCP channel](hermes.md). Setting `ACPGW_MCP_TOKEN` enables
+`/mcp`; leaving it unset keeps a CLI-only daemon.
 
 Run `uv run acpgw config check`, then `uv run acpgw serve`. The daemon runs
 in the foreground and listens on the configured loopback host and port

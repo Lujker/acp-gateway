@@ -21,6 +21,7 @@ from fakes.fake_goose import FakeGooseServer
 
 OWNER = "mock-owner-credential"
 SECRET = "mock-goose-" + "secret-7781"
+MCP = "mock-mcp-credential"
 
 
 @contextmanager
@@ -96,7 +97,9 @@ def running(tmp_path):
             )
         )
         env_file = tmp_path / ".env"
-        env_file.write_text(f"ACPGW_API_TOKEN={OWNER}\nAGENT_WORK_SECRET={SECRET}\n")
+        env_file.write_text(
+            f"ACPGW_API_TOKEN={OWNER}\nACPGW_MCP_TOKEN={MCP}\nAGENT_WORK_SECRET={SECRET}\n"
+        )
         cfg = load_config(path, env_file)
         with (
             daemon(cfg, sock),
