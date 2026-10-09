@@ -367,11 +367,16 @@ backup окружения/entry point/SQLite с WAL, health check и восст�
 3 optional Hermes skipped; wheel/bundle lifecycle,
 Git checkout/direct Git ref, автономный Linux-бинарник и Docker IP/WSS с двумя
 mock Goose прошли. Комплект с вложенным образом проверен через docker load
-и запуск Compose без checkout. Публичная публикация PyPI/GHCR/Release,
+и запуск Compose без checkout. Выпущен публичный prerelease
+[v0.1.0](https://github.com/Lujker/acp-gateway/releases/tag/v0.1.0): bundle,
+wheel/sdist и пять native-сборок (19 assets, серверные SHA-256 сверены).
+GHCR `ghcr.io/lujker/acp-gateway:0.1.0` (Linux x86_64) доступен без авторизации;
+проверены anonymous pull по digest и запуск скачанного образа. PyPI,
 полная native-поддержка служб и автоматическое обновление ещё не выполнены.
 Нативные Linux ARM64, macOS ARM64/Intel и Windows x86_64 прошли wheel lifecycle,
 installer, update/recovery/rollback/uninstall и frozen CLI (manual run
-[37944420396](https://github.com/Lujker/acp-gateway/actions/runs/37944420396)).
+[37945106618](https://github.com/Lujker/acp-gateway/actions/runs/37945106618),
+все jobs passed; macOS Intel повторён после сетевого таймаута PyPI).
 Windows внутренние команды явно ставят операцию в очередь с durable result и
 `update --status`; PowerShell-установщик ждёт проверенного результата helper.
 Приоритет перед серверной приёмкой:
@@ -404,6 +409,8 @@ Windows внутренние команды явно ставят операци
    checksums относятся к текущему выпуску, опциональная ручная публикация GHCR
    только после успешных проверок платформ и Docker. Для PyPI владельцу ещё
    нужно создать аккаунт и настроить публикацию вне чата.
+   **Выпущено:** публичные GitHub Release и GHCR; для Git-приёмки использовать
+   опубликованный `v0.1.0`. PyPI ещё не опубликован.
 5. **Приёмка обоих способов.** Изолированная установка → setup → daemon/API →
    обновление → повторный запуск → удаление; сохранность ключей, сессий и SQLite,
    ошибки загрузки/активного процесса. Отдельный прогон wheel и Git checkout.

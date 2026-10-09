@@ -1501,6 +1501,38 @@ push/PR/tag/release по-прежнему ничего не запускают.
 не запрашиваются. Подписанные каналы, фоновое автообновление, native службы,
 Windows ARM64 и живая VPS/Telegram-приёмка остаются отдельными незакрытыми работами.
 
+## 2026-10-09 — P3.6: первый публичный acceptance release
+
+Выпущен prerelease https://github.com/Lujker/acp-gateway/releases/tag/v0.1.0,
+tag/source `7c8cf6e726dbe28f10bc898da343c8bae63802de`. После финального CI
+менялся только README; application/build/dependency tree совпадает с проверенным
+commit `362ef5f`. 19 assets: wheel/sdist, SHA256SUMS, bundle с Docker-образом,
+Linux x86_64/ARM64, macOS Intel/ARM64, Windows x86_64 и их checksums/build metadata.
+Все 19 server-side SHA-256 сверены с локальными файлами. Публичные metadata,
+SHA256SUMS и wheel скачиваются без авторизации; архивы после публикации не заменяются.
+
+Manual CI https://github.com/Lujker/acp-gateway/actions/runs/37945106618 —
+все jobs passed, включая native Windows и повтор macOS Intel (первый сбой был
+таймаутом https://pypi.org/simple/httpx/ до установки приложения). Финальный suite:
+722 passed, 3 optional Hermes skipped. Release bundle после docker load прошёл
+полный IP/WSS/nginx/two-route/readonly smoke за 106.3 с; wheel/bundle installer,
+cloned checkout и direct Git ref прошли независимо. Final bundle metadata —
+clean checkout, source commit соответствует tag. Параллельный gh upload завис
+на TCP zero-window; последовательная загрузка с HTTP/1.1 завершилась, hash audit
+подтвердил целостность всех файлов.
+
+GHCR `ghcr.io/lujker/acp-gateway:0.1.0` (Linux x86_64) опубликован только после
+native/Linux/Docker проверок. Digest:
+`sha256:5e1a91dc756eeefe4dd65f54b8352c0dd03df73905357d1dfb344666700824c9`.
+Anonymous manifest, pull по digest и запуск скачанного образа прошли.
+PyPI ожидает аккаунт владельца и настройку публикации; токены в чат не нужны.
+Для первой VPS-приёмки PyPI уже не блокирует установку: есть публичные bundle,
+wheel, готовый образ и отдельный Git-путь по `v0.1.0`.
+
+P3.6 остаётся PARTIAL: signed channels/background auto-update, Windows ARM64,
+native службы и полная frozen ACP-приёмка на Windows/macOS ещё не реализованы;
+живая проверка VPS/два компьютера/Telegram — следующий этап владельца по runbook.
+
 ## Незакрытые вопросы
 
 - **Автотесты TLS/SSE** — наблюдавшиеся причины и исправления тестового стенда
