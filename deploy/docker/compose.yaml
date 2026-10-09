@@ -1,0 +1,42 @@
+name: acpgw
+services:
+  gateway:
+    build:
+      context: ../..
+    image: acpgw:local
+    user: "${ACPGW_UID:?Run prepare.py first}:${ACPGW_GID:?Run prepare.py first}"
+    init: true
+    restart: unless-stopped
+    stop_grace_period: 30s
+    volumes:
+      - ./runtime:/config:ro
+      - ./state:/data
+    networks:
+      proxy:
+        aliases: [acpgw-dispatcher]
+    # Only the connector ingress is reachable across this network. The owner
+    # API/MCP stay on 127.0.0.1 inside the container, used with compose exec.
+    # No host ports, Docker socket or AKV configuration/volumes are mounted.
+    read_only: true
+    tmpfs:
+      - /tmp:size=32m,mode=1777
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    mem_limit: 512m
+    cpus: 1.0
+    pids_limit: 128
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+    healthcheck:
+      test: [CMD, acpgw, --config, /config/gateway.yaml, --env-file, /config/gateway.env, status]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 20s
+networks:
+  proxy:
+    external: true
+    name: "${ACPGW_PROXY_NETWORK:-app-network}"

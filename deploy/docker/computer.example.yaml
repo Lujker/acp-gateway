@@ -1,0 +1,13 @@
+# Use on each Linux/WSL computer. Never copy local agent secrets to the VPS.
+# Set the same absolute cwd and mode in the corresponding VPS route.
+agents:
+  - alias: goose
+    kind: goose
+    url: wss://127.0.0.1:3284/acp
+    secret_env: LOCAL_GOOSE_SECRET
+    tls_fingerprint: ""  # set Goose's fingerprint before first connection
+    default_cwd: /home/REPLACE_ME
+    session_mode: approve
+logging:
+  level: INFO
+  format: console

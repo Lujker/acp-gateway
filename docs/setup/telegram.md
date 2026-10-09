@@ -31,7 +31,7 @@ tokens must be independent.
 |---|---|
 | Plain text | Send a prompt; receive a working status and final answer |
 | `/start`, `/help` | Show commands |
-| `/agent ALIAS` | Select an agent, required when several are configured |
+| `/agent`, `/agent ALIAS` | List available routes or select one, e.g. `home/goose` |
 | `/new [ALIAS]` | Create and activate a new session |
 | `/sessions` | List this chat's selected agent sessions; `*` marks the active one |
 | `/switch ID` | Activate a session owned by this chat and selected agent |
@@ -63,6 +63,12 @@ only after an explicit Telegram `429` rejection (three attempts, maximum
 use `/result` or `/approvals` after recovery. Polling failure removes approval
 eligibility until the connection recovers. An unreachable human is never
 replaced by an automatic allow decision.
+
+Final answers and saved `/result` replies use a separate bounded delivery queue
+(32 replies). Long multi-part answers and their explicit-429 retry waits do
+not block processing approval events or polling for button clicks. An exhausted
+queue is logged; results remain in SQLite and can be requested again. This is
+not durable automatic outbound delivery.
 
 The SQLite cursor is committed before command handling. A crash can lose a
 reply, but replaying an update cannot submit the same command again after

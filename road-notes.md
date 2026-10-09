@@ -1355,13 +1355,78 @@ test_api_cancel_pending_approval_and_completed_sse; затем 686 passed,
 Ruff check/format, scanner и git diff --check проходят. Общий набор нельзя
 считать стабильно зелёным; нестабильность остаётся отдельным вопросом.
 
+## 2026-10-09 — подготовка Docker/VPS, двух Goose и Telegram; TLS/SSE fixtures
+
+Владелец выбрал следующую живую приёмку: отдельный checkout на VPS контроллера
+AKV, Gateway в Docker; сначала ws://IP:18766/acpgw/connect, затем
+wss://akv-server.com/acpgw/connect через существующее внутреннее зеркало.
+На home/work — исходящие Linux/WSL connectors и Goose на обоих; Hermes как
+ACP-агент откладывается. Взаимодействие и approvals — через Telegram.
+
+Добавлены multi-stage Dockerfile с frozen uv.lock, отдельный Compose-проект
+acpgw, приватная подготовка config/tokens без перезаписи существующих файлов,
+bind state для SQLite/ключей, UID/GID владельца, read-only root, ограничения
+ресурсов/логов. Базовый Compose не публикует порты; direct override публикует
+только ingress, по умолчанию на loopback, публичный bind выбирается явно.
+Owner API/MCP остаются на loopback внутри контейнера, доступны через compose exec.
+
+AKV изучен через CodeGraph/Graphify и точный nginx/Compose source. У контроллера
+external app-network и nginx_controller на 80/443/17443. Зеркало — L4/SNI passthrough,
+TLS завершается на origin. Подготовлен один точный HTTPS location с guard по
+akv-server.com, dynamic Docker DNS, WS headers и без переписывания URI.
+Полный текущий конфиг AKV с добавленным location прошёл nginx -t в отдельном
+контейнере без зависимых upstream. Работающие AKV-службы, его исходники/конфиги,
+firewall, БД, текущий Gateway и установленный бинарник не менялись.
+
+Runbook docs/setup/vps-acceptance.md содержит подготовку/настройку обеих машин,
+enrollment и приватную передачу разных ключей, проверку online против agent_ready,
+Telegram-сценарии, переход IP → домен, кандидат nginx + проверку/backup/reload/
+rollback с сохранением inode bind-mounted файла и снятие временного public port.
+Durable recovery неопределённого результата и продолжение in-flight job после
+рестарта не обещаются; prompts автоматически не переигрываются.
+
+Telegram /agent теперь перечисляет маршруты. Итоги и /result отправляются
+отдельным worker через bounded queue (32), поэтому длинная отправка и 429 retry
+не удерживают approval events/polling. Добавлены проверки allow/reject через
+настоящий aiogram dispatcher и два relay-маршрута; задержанная доставка результата
+не мешает подтвердить другое действие. Fake Bot API session вынесена в fakes.
+Streaming edits и durable delivery остаются впереди.
+
+Нестабильность TLS воспроизведена в Docker smoke с исходным verify_code=9
+(certificate is not yet valid): notBefore=2026-10-09 10:22:26 UTC, клиентское
+время=10:21:59.416 UTC, разница 27 секунд. Обычные 300 сертификатов/600 локальных
+pinned handshakes до исправления прошли, то есть сбой зависит от среды/тайминга.
+Тестовый генератор переведён с openssl subprocess на cryptography, notBefore
+backdated на 5 минут; cryptography объявлена dev dependency, версии lock не менялись.
+Production TLS/pinning не ослаблены. Новые реальные TLS-тесты подтверждают успех
+при минутном fixture skew и отказ будущему/просроченному сертификату (codes 9/10).
+
+SSE shutdown воспроизведён на 18-м общем scoped повторе, затем на 97-м одиночном;
+поток оставался в selector.poll, и закрытие его socket из test owner давало вторичный
+Invalid file descriptor. Thread-safe wakeup сам по себе не исправил ранний возврат
+timed join (повтор на 21-м прогоне). Ожидание teardown теперь использует исходный
+20-секундный бюджет с monotonic deadline и короткими joins; socket закрывается
+только после остановки потока, при настоящем timeout печатаются thread/task stacks.
+После этого **100 отдельных повторов SSE-сценария прошли**. Production daemon
+из-за этого не менялся. Repository secret test теперь использует Git-visible
+files, включая новые source, без сканирования ignored приватного Docker runtime.
+
+Проверки: **693 passed, 3 optional Hermes skipped**, 125.70 с; Ruff check/format
+и git diff --check чисто. Docker image собран; isolated scripts/smoke_docker.py
+прошёл за 82.3 с: direct IP/port, две независимые mock Goose/истории, deny без
+человека, WSS + nginx path + L4/PROXY mirror, invalid credential, изоляция
+отключения и session/load после reconnect, readonly runtime и отсутствие
+опубликованного owner API. Подготовка приватных файлов и сохранение токенов при
+повторе, оба Compose-варианта также проверены. Реальный Telegram Bot API,
+несколько физических компьютеров и серверная firewall-конфигурация — живая приёмка.
+
 ## Незакрытые вопросы
 
-- **Автотесты TLS/SSE** — общий suite 2026-10-08 иногда даёт certificate trust
-  error в существующих connector TLS-тестах или timeout shutdown HTTP daemon
-  после отмены approval. Отдельные/повторные scoped проверки проходят.
-  При воспроизведении сохранить исходный TLS verify code и stack shutdown;
-  причина не установлена, production проверка TLS не ослаблена.
+- **Автотесты TLS/SSE** — наблюдавшиеся причины и исправления тестового стенда
+  зафиксированы выше (2026-10-09): certificate-not-yet-valid при clock skew,
+  ранний timed join; полный suite и 100 повторов SSE прошли. Если появится новый
+  сбой, сохранять исходный TLS verify code и thread/task stacks; production TLS
+  не ослаблен.
 
 - **Публикация** — удалять ли старые коммиты с GitHub окончательно (GitHub
   Support или пересоздание репозитория) и когда удалить локальную метку
@@ -1376,6 +1441,5 @@ Ruff check/format, scanner и git diff --check проходят. Общий на
 - **Конфигурация** — оставлять ли поиск `config.yaml`/`.env` в текущем
   каталоге: чужой репозиторий с `config.yaml` может направить агентский
   секрет на свой URL. Варианты: убрать, предупреждать, требовать `--config`.
-- **`P2.3`** — Telegram обрабатывает обновления последовательно, длинный
-  ответ (до 50 сообщений с retry) задерживает approvals: отдельная задача
-  или приоритет для approvals, лимит частей ответа.
+- **`P2.3`** — итоги и /result отделены от approvals (2026-10-09);
+  durable delivery и streaming status остаются впереди.

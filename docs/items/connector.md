@@ -52,6 +52,12 @@ weeks for a restricted first route, 3–5 for the broader requirements. These
 are preliminary estimates, not release dates; recovery and stdio interoperability
 are the main uncertainties. Releases and binary builds remain manual.
 
+The [Docker and live acceptance runbook](../setup/vps-acceptance.md) covers the
+selected next deployment: direct IP/port first, then
+`wss://akv-server.com/acpgw/connect` through the existing L4 mirror, with Goose
+on two Linux/WSL computers and Telegram as the human channel. An isolated Docker
+smoke covers both ingress paths, nginx, PROXY-protocol mirroring and two mocks.
+
 ## Stage 1 usage
 
 Run these commands locally on the future dispatcher host. They use the selected

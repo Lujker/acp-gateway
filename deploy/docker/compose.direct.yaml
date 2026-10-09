@@ -1,0 +1,6 @@
+# First acceptance stage: publish only the connector ingress. Use a separate
+# port from AKV. Explicitly set ACPGW_INGRESS_BIND=0.0.0.0 for remote IP testing.
+services:
+  gateway:
+    ports:
+      - "${ACPGW_INGRESS_BIND:-127.0.0.1}:${ACPGW_CONNECTOR_PORT:-18766}:8766"

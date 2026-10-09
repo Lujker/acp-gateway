@@ -89,16 +89,19 @@ def test_repository_files_are_clean():
     from pathlib import Path
 
     root = Path(__file__).parents[2]
-    files = [
-        p
-        for p in root.rglob("*")
-        if p.is_file()
-        and not any(
-            part in {".git", ".venv", "__pycache__", ".ruff_cache", ".pytest_cache"}
-            for part in p.relative_to(root).parts
+    # Include new source files but respect ignored private deployment/runtime
+    # files, just as Git does. A staged secret still remains in this listing.
+    listing = (
+        subprocess.run(
+            ["git", "ls-files", "-z", "--cached", "--others", "--exclude-standard"],
+            cwd=root,
+            capture_output=True,
+            check=True,
         )
-        and p.name not in {".env", "config.yaml"}
-    ]
+        .stdout.decode()
+        .split("\0")
+    )
+    files = [root / name for name in listing if name and (root / name).is_file()]
     findings = check_secrets.scan(
         (str(p.relative_to(root)), check_secrets._decode(p.read_bytes())) for p in files
     )

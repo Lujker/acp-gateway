@@ -1,11 +1,14 @@
 """Real HTTP/SSE and CLI processes against the recorded Goose mock."""
 
+import asyncio
 import json
 import signal
 import socket
 import subprocess
 import sys
 import threading
+import time
+import traceback
 from contextlib import contextmanager
 
 import httpx
@@ -42,7 +45,12 @@ def daemon(config, sock):
                 )
                 state["server"] = server
                 ready.set()
-                server.run(sockets=[sock])
+
+                async def serve():
+                    state["loop"] = asyncio.get_running_loop()
+                    await server.serve(sockets=[sock])
+
+                asyncio.run(serve())
         except BaseException as exc:
             state["error"] = exc
             ready.set()
@@ -62,12 +70,28 @@ def daemon(config, sock):
         yield
     finally:
         if "server" in state:
-            state["server"].should_exit = True
+            loop = state.get("loop")
+            if loop is not None and not loop.is_closed():
+                # Wake the server's selector as well as setting its exit flag;
+                # the owner thread must not rely on a pending timer to wake it.
+                loop.call_soon_threadsafe(setattr, state["server"], "should_exit", True)
         # Shutdown includes HTTP draining plus the WebSocket close handshake
         # (whose default timeout alone is 10 seconds).
-        thread.join(20)
-        sock.close()
+        # A timed join has returned early on the WSL test host. Enforce the
+        # existing 20-second budget using a monotonic deadline, including when
+        # the underlying timed lock wakes before the requested interval.
+        deadline = time.monotonic() + 20
+        while thread.is_alive() and (remaining := deadline - time.monotonic()) > 0:
+            thread.join(min(remaining, 0.1))
+        if thread.is_alive():
+            frame = sys._current_frames().get(thread.ident)
+            if frame is not None:
+                traceback.print_stack(frame)
+            for task in asyncio.all_tasks(state["loop"]):
+                task.print_stack()
         assert not thread.is_alive(), "daemon shutdown timed out"
+        # Uvicorn owns this socket until its thread has finished shutdown.
+        sock.close()
         if "error" in state:
             raise state["error"]
 
