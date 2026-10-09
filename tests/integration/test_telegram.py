@@ -6,7 +6,6 @@ from datetime import UTC, datetime
 
 import pytest
 from aiogram import Bot
-from aiogram.client.session.base import BaseSession
 from aiogram.exceptions import TelegramNetworkError, TelegramRetryAfter
 from aiogram.methods import AnswerCallbackQuery, GetUpdates, SendMessage
 from aiogram.types import CallbackQuery, Chat, Message, Update, User
@@ -18,46 +17,12 @@ from acp_gateway.config import AgentProfile, PolicySettings, TelegramSettings
 from acp_gateway.core import GatewayCore
 from acp_gateway.storage import Conversation, JobStatus, Store
 from fakes.fake_goose import FakeGooseServer
+from fakes.telegram import FakeTelegramSession as FakeSession
 
 OWNER = 12345
 OTHER = 54321
 TOKEN = "123456:" + "test-telegram-credential"
 SECRET = "mock-goose-" + "secret-7781"
-
-
-class FakeSession(BaseSession):
-    def __init__(self):
-        super().__init__()
-        self.calls = []
-        self.sent = []
-        self.failures = []
-        self.closed = False
-
-    async def close(self):
-        self.closed = True
-
-    async def make_request(self, bot, method, timeout=None):
-        if isinstance(method, GetUpdates):
-            await asyncio.sleep(0.01)
-            return []
-        self.calls.append(method)
-        if isinstance(method, SendMessage):
-            if self.failures:
-                raise self.failures.pop(0)(method)
-            msg = Message(
-                message_id=len(self.sent) + 1,
-                date=datetime.now(UTC),
-                chat=Chat(id=method.chat_id, type="private"),
-                from_user=User(id=bot.id, is_bot=True, first_name="Bot"),
-                text=method.text,
-                reply_markup=method.reply_markup,
-            )
-            self.sent.append(msg)
-            return msg
-        return True
-
-    async def stream_content(self, url, **kwargs):
-        yield b""
 
 
 async def eventually(predicate):
@@ -360,3 +325,37 @@ async def test_secret_is_redacted_before_truncation_and_blank_text_is_sent(teleg
     assert leaked[:10] not in session.sent[-1].text
     await channel._send(OWNER, " \n ")
     assert session.sent[-1].text == "(empty response)"
+
+
+async def test_slow_result_delivery_does_not_block_approval_clicks(telegram):
+    core, channel, session, _ = telegram
+    await feed(channel, 1, "/start")
+    blocked = asyncio.Event()
+    release = asyncio.Event()
+    original = session.make_request
+
+    async def slow(bot, method, timeout=None):
+        if isinstance(method, SendMessage) and method.text == "slow saved answer":
+            blocked.set()
+            await release.wait()
+        return await original(bot, method, timeout)
+
+    session.make_request = slow
+    channel._queue_delivery(OWNER, "slow saved answer")
+    await asyncio.wait_for(blocked.wait(), 2)
+    try:
+        job = await core.submit(Conversation("mcp", "test", "work"), "run exactly: echo hi .")
+        await eventually(lambda: bool(channel._buttons))
+        message = next(m for m in session.sent if m.reply_markup)
+        await click(channel, 2, message, message.reply_markup.inline_keyboard[0][0].callback_data)
+        assert (await core.wait(job.id, 2)).answer == "hi"
+        assert not release.is_set()
+    finally:
+        release.set()
+
+
+async def test_agent_command_lists_available_routes_without_selection(telegram):
+    _, channel, session, _ = telegram
+    await feed(channel, 1, "/agent")
+    assert "work: work" in session.sent[-1].text
+    assert "Select with /agent ALIAS" in session.sent[-1].text

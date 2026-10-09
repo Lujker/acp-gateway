@@ -34,3 +34,7 @@ Thumbs.db
 
 # ACP spike output (may contain work data)
 spike-runs/
+
+# Private VPS deployment configuration, credentials and persistent state
+deploy/docker/runtime/
+deploy/docker/state/

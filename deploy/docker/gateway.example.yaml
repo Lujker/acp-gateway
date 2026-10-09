@@ -1,0 +1,35 @@
+# VPS: no local agent URLs, secrets or MCP tools belong here.
+data_dir: /data
+gateway:
+  host: 127.0.0.1
+  port: 8765
+connector:
+  enabled: true
+  host: 0.0.0.0
+  port: 8766
+  connect_path: /acpgw/connect
+agents:
+  - alias: goose
+    computer_id: home
+    backend: connector
+    kind: goose
+    title: Home Goose
+    default_cwd: /home/REPLACE_ME
+    session_mode: approve
+  - alias: goose
+    computer_id: work
+    backend: connector
+    kind: goose
+    title: Work Goose
+    default_cwd: /home/REPLACE_ME
+    session_mode: approve
+telegram:
+  # Enable after setting your user ID and TELEGRAM_BOT_TOKEN in gateway.env.
+  enabled: false
+  allowed_user_ids: []
+policy:
+  approver_channels: [telegram, cli]
+  allow_always_approval: false
+logging:
+  level: INFO
+  format: json

@@ -24,7 +24,7 @@ from acp_gateway.storage import Conversation
 
 HELP = (
     "Send a message to your agent.\n"
-    "/start, /help — help\n/agent ALIAS — select agent\n"
+    "/start, /help — help\n/agent — list agents\n/agent ALIAS — select agent\n"
     "/new [ALIAS] — new session\n/sessions — list sessions\n"
     "/switch ID — activate a session\n/status — connections and jobs\n"
     "/result JOB_ID — saved result\n/stop — cancel this chat's jobs\n"
@@ -73,6 +73,7 @@ class TelegramChannel(Channel):
         self._throttled: dict[int, float] = {}
         self._tasks: list[asyncio.Task] = []
         self._subscription = None
+        self._deliveries: asyncio.Queue[tuple[int, str]] = asyncio.Queue(maxsize=32)
         self._log = get_logger(__name__)
 
     @property
@@ -112,7 +113,11 @@ class TelegramChannel(Channel):
                 or (isinstance(e, ApprovalResolved) and self.name in e.approver_channels)
             )
         )
-        self._tasks = [asyncio.create_task(self._poll()), asyncio.create_task(self._events())]
+        self._tasks = [
+            asyncio.create_task(self._poll()),
+            asyncio.create_task(self._events()),
+            asyncio.create_task(self._deliver()),
+        ]
 
     async def _poll(self):
         delay = 1
@@ -152,7 +157,27 @@ class TelegramChannel(Channel):
         if self._subscription is not None:
             self._subscription.close()
         self._buttons.clear()
+        while not self._deliveries.empty():
+            self._deliveries.get_nowait()
         await self.bot.session.close()
+
+    def _queue_delivery(self, chat: int, text: str):
+        # Saved answers remain retrievable with /result. A bounded queue keeps
+        # slow delivery from consuming memory or blocking approval events/clicks.
+        try:
+            self._deliveries.put_nowait((chat, text))
+        except asyncio.QueueFull:
+            self._log.warning("Telegram delivery queue full; use /result")
+            return False
+        return True
+
+    async def _deliver(self):
+        while True:
+            chat, text = await self._deliveries.get()
+            try:
+                await self._send(chat, text)
+            except Exception:
+                self._log.exception("Telegram result could not be delivered; use /result")
 
     def _authorized(self, user, chat):
         return (
@@ -237,7 +262,15 @@ class TelegramChannel(Channel):
             self.core.agent(argument)
             self.core.store.set_channel_state(self.namespace, f"agent:{chat}", argument)
         if command == "/agent":
-            await self._send(chat, f"Agent: {self._conversation(chat).agent}")
+            if argument:
+                await self._send(chat, f"Agent: {self._conversation(chat).agent}")
+            else:
+                selected = self.core.store.channel_state(self.namespace, f"agent:{chat}")
+                lines = [
+                    f"{alias}{' *' if alias == selected else ''}: {client.profile.display_name}"
+                    for alias, client in self.core.agents.items()
+                ]
+                await self._send(chat, "\n".join([*lines, "Select with /agent ALIAS."]))
             return
         if command == "/status":
             lines = [
@@ -287,7 +320,10 @@ class TelegramChannel(Channel):
             job = self.core.job(argument)
             if job.conversation != conv:
                 raise GatewayError("This chat does not own that job.")
-            await self._send(chat, job.answer or job.error or f"Job {job.id}: {job.status.value}")
+            if not self._queue_delivery(
+                chat, job.answer or job.error or f"Job {job.id}: {job.status.value}"
+            ):
+                await self._send(chat, "Delivery is busy; try /result again shortly.")
         elif command == "/stop":
             jobs = await self.core.cancel(conv)
             await self._send(chat, f"Stopped jobs: {len(jobs)}")
@@ -379,7 +415,7 @@ class TelegramChannel(Channel):
                 if isinstance(event, JobFinished):
                     chat = int(event.conversation.key)
                     if chat in self._chats:
-                        await self._send(
+                        self._queue_delivery(
                             chat,
                             event.job.answer or event.job.error or f"Job: {event.job.status.value}",
                         )

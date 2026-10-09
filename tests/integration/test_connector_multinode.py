@@ -2,21 +2,26 @@
 
 import asyncio
 import contextlib
+from datetime import UTC, datetime
 from types import SimpleNamespace
 from uuid import uuid4
 
 import httpx
 import pytest
+from aiogram import Bot
+from aiogram.types import CallbackQuery, Chat, Message, Update, User
 from pydantic import SecretStr
 
 from acp_gateway.agents import AgentClient, AgentUnavailable, AuthenticationFailed
-from acp_gateway.config import AgentProfile, AppConfig, SecretStore, Settings
+from acp_gateway.channels.telegram import TelegramChannel
+from acp_gateway.config import AgentProfile, AppConfig, SecretStore, Settings, TelegramSettings
 from acp_gateway.connectors.control import ControlDispatcher, connect_control
 from acp_gateway.connectors.policy import LocalAgentPolicy, PolicyTransport
 from acp_gateway.connectors.protocol import AgentManifest, Data, Hello, encode_frame
 from acp_gateway.connectors.relay import RelayPeer
 from acp_gateway.daemon import configured_app
 from fakes.fake_goose import FakeGooseServer
+from fakes.telegram import FakeTelegramSession
 
 
 async def eventually(predicate):
@@ -363,3 +368,64 @@ async def test_local_access_error_is_diagnosed_only_on_its_route_and_clears_on_o
     peer.local_factory = original
     assert (await message(nodes, "work", "say pong"))["answer"] == "pong"
     assert (await routes(nodes))["work/goose"]["last_stream_error"] is None
+
+
+async def test_telegram_selects_computers_and_decides_relay_approvals(nodes):
+    owner = 12345
+    token = "123456:" + "mock-multinode-telegram-credential"
+    session = FakeTelegramSession()
+    channel = TelegramChannel(
+        TelegramSettings(enabled=True, allowed_user_ids=[owner]),
+        SecretStr(token),
+        bot=Bot(token, session=session),
+    )
+    nodes.core.policy.settings.approver_channels = ["telegram"]
+    nodes.core.add_channel(channel)
+    await channel.start(nodes.core)
+    await eventually(lambda: channel._ready)
+    user = User(id=owner, is_bot=False, first_name="Owner")
+
+    async def send(number, text):
+        await channel.dispatcher.feed_update(
+            channel.bot,
+            Update(
+                update_id=number,
+                message=Message(
+                    message_id=number,
+                    date=datetime.now(UTC),
+                    chat=Chat(id=owner, type="private"),
+                    from_user=user,
+                    text=text,
+                ),
+            ),
+        )
+
+    await send(1, "/agent")
+    assert "work/goose" in session.sent[-1].text and "home/goose" in session.sent[-1].text
+    for number, name, option, answer in ((2, "home", 0, "home"), (5, "work", 1, "DENIED")):
+        # Each segment represents a user interaction, outside the command throttle window.
+        channel._recent.clear()
+        await send(number, "/agent " + name + "/goose")
+        await send(number + 1, "run exactly: echo " + name + " .")
+        await eventually(lambda: bool(channel._buttons))
+        message = next(
+            m
+            for m in reversed(session.sent)
+            if m.reply_markup and f"Approval: {name}/goose" in m.text
+        )
+        await channel.dispatcher.feed_update(
+            channel.bot,
+            Update(
+                update_id=number + 2,
+                callback_query=CallbackQuery(
+                    id=f"decision-{name}",
+                    from_user=user,
+                    chat_instance="private-test",
+                    message=message,
+                    data=message.reply_markup.inline_keyboard[0][option].callback_data,
+                ),
+            ),
+        )
+        await eventually(lambda answer=answer: any(m.text == answer for m in session.sent))
+        await eventually(lambda: not channel._buttons)
+    assert len(nodes.mocks["home"].sessions) == len(nodes.mocks["work"].sessions) == 1
