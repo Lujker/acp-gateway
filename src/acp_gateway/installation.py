@@ -121,7 +121,6 @@ def _service_preflight(*, uninstall: bool) -> list[str]:
 
 def _handoff(args, command: list[str], descriptor: int) -> None:
     from acp_gateway import maintenance_worker
-    from acp_gateway.config import load_config
 
     prefix = Path(sys.prefix).resolve()
     bin_result = subprocess.run(  # noqa: S603 — resolved uv executable
@@ -130,8 +129,25 @@ def _handoff(args, command: list[str], descriptor: int) -> None:
     entry = Path(bin_result.stdout.strip()) / ("acpgw.exe" if os.name == "nt" else "acpgw")
     if not entry.is_file():
         raise ValueError("uv entry point is missing")
-    cfg = load_config(args.config, args.env_file)
-    database = cfg.settings.resolved_data_dir().resolve() / "gateway.db"
+    # Resolve configuration in a short-lived process: importing pydantic here
+    # would map its extension DLL in the waiting Windows caller's environment.
+    probe = (
+        "import json,sys; from pathlib import Path; "
+        "from acp_gateway.config import load_config; "
+        "cfg=load_config(*(Path(p) if p else None for p in json.loads(sys.argv[1]))); "
+        "print(json.dumps({'database':str(cfg.settings.resolved_data_dir().resolve()/'gateway.db'),"
+        "'config':str(cfg.config_path.resolve()) if cfg.config_path else None,"
+        "'env_file':str(cfg.env_file.resolve()) if cfg.env_file else None}))"
+    )
+    selected = json.dumps(
+        [str(args.config) if args.config else None, str(args.env_file) if args.env_file else None]
+    )
+    result = subprocess.run(  # noqa: S603 — installed interpreter and fixed probe
+        [sys.executable, "-c", probe, selected], capture_output=True, text=True, timeout=30
+    )
+    if result.returncode:
+        raise ValueError("cannot resolve configuration for a database recovery snapshot")
+    configuration = json.loads(result.stdout)
     backup = paths.data_dir() / "updates" / lease_path().stem / uuid.uuid4().hex
     backup.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
     plan = {
@@ -139,9 +155,7 @@ def _handoff(args, command: list[str], descriptor: int) -> None:
         "command": command,
         "prefix": str(prefix),
         "entry": str(entry.absolute()),
-        "database": str(database),
-        "config": str(cfg.config_path.resolve()) if cfg.config_path else None,
-        "env_file": str(cfg.env_file.resolve()) if cfg.env_file else None,
+        **configuration,
         "expected_version": str(Version(args.version))
         if args.command == "update" and args.version
         else None,
