@@ -84,9 +84,17 @@ the [live acceptance runbook](docs/setup/vps-acceptance.md)
 an IP/port route and then adds an exact WSS path through its own nginx without
 publishing the owner API or changing other application services.
 
-For installation without a checkout, use the wheel/deployment bundle described
-in [installation and updates](docs/setup/distribution.md). Public PyPI/registry
-publication is a separate manual release step. Internal maintenance commands
+For installation without a checkout, install the published
+[PyPI package](https://pypi.org/project/acp-gateway/0.1.0/):
+
+```bash
+uv tool install --python 3.12 acp-gateway==0.1.0
+uv tool update-shell
+acpgw setup
+```
+
+The wheel/deployment bundle and public Docker image are described in
+[installation and updates](docs/setup/distribution.md). Internal maintenance commands
 for uv installations are `acpgw version`, `update`, `update --status`,
 `update --rollback` and `uninstall`. Updates take a private recovery snapshot
 and restore it on installation/health-check failure. Native Windows queues
