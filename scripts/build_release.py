@@ -56,6 +56,7 @@ def build(destination: Path, image: str, *, include_image=False) -> Path:
             stdout=subprocess.DEVNULL,
         )
         shutil.copy(REPO / "scripts/install_release.sh", root / "install.sh")
+        shutil.copy(REPO / "scripts/install_release.ps1", root / "install.ps1")
         for name in ("README.md", "LICENSE"):
             shutil.copy(REPO / name, root / name)
         docs = root / "docs/setup"
