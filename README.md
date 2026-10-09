@@ -87,15 +87,21 @@ publishing the owner API or changing other application services.
 For installation without a checkout, use the wheel/deployment bundle described
 in [installation and updates](docs/setup/distribution.md). Public PyPI/registry
 publication is a separate manual release step. Internal maintenance commands
-for Linux/WSL uv installations are `acpgw version`, `update` and `uninstall`.
+for uv installations are `acpgw version`, `update`, `update --status`,
+`update --rollback` and `uninstall`. Updates take a private recovery snapshot
+and restore it on installation/health-check failure. Native Windows queues
+internal maintenance after the CLI exits; its PowerShell installer waits for
+the verified result. See the installation guide before rolling back a database.
 
 For the separate Git/development path, you need [uv](https://docs.astral.sh/uv/) and git; uv installs Python 3.12
-itself. Linux/WSL is the primary platform; Windows and macOS are planned.
+itself. Linux/WSL is the primary platform. Native Windows x86_64, macOS Intel/ARM64
+and Linux ARM64 have wheel lifecycle and binary CLI checks; native Windows/macOS
+services and full agent acceptance remain separate milestones.
 
 ```bash
-git clone git@github.com:Lujker/acp-gateway.git
+git clone --branch v0.1.0 https://github.com/Lujker/acp-gateway.git
 cd acp-gateway
-uv sync
+uv sync --frozen
 ```
 
 For an installed `acpgw` command outside the checkout, run
@@ -103,7 +109,11 @@ For an installed `acpgw` command outside the checkout, run
 The installer keeps existing configuration and tokens. Installation and
 service commands: [`docs/setup/service.md`](docs/setup/service.md).
 
-To build a standalone Linux executable with no Python required on the runtime
+Use a published, reviewed tag as above; before the first release, select the
+reviewed branch or commit explicitly. For development, create a working branch
+from that checkout.
+
+To build a standalone executable with no Python required on the runtime
 host, use `uv run --frozen --group build python scripts/build_binary.py`.
 Build artifacts, checksums, compatibility limits and installation:
 [`docs/setup/binary.md`](docs/setup/binary.md).
