@@ -17,10 +17,11 @@ def write_new(path: Path, text: str) -> None:
 
 def main() -> None:
     root = Path(__file__).resolve().parent
-    for name in ("runtime", "state", "state/enrollment"):
+    for name in ("runtime", "runtime/tls", "state", "state/enrollment"):
         (root / name).mkdir(mode=0o700, parents=True, exist_ok=True)
     write_new(root / ".env", f"ACPGW_UID={os.getuid()}\nACPGW_GID={os.getgid()}\n")
     write_new(root / "runtime/gateway.yaml", (root / "gateway.example.yaml").read_text())
+    write_new(root / "runtime/nginx.conf", (root / "nginx.conf.example").read_text())
     write_new(
         root / "runtime/gateway.env",
         f"ACPGW_API_TOKEN={secrets.token_urlsafe(32)}\n"

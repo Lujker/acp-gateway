@@ -79,7 +79,8 @@ More in [`docs/architecture.md`](docs/architecture.md).
 ## Quick start
 
 For a VPS in Docker, two outgoing Linux/WSL connectors and Telegram, follow
-the [live acceptance runbook](docs/setup/vps-acceptance.md). It starts with
+the [live acceptance runbook](docs/setup/vps-acceptance.md)
+([на русском](docs/setup/vps-acceptance.ru.md)). It starts with
 an IP/port route and then adds an exact WSS path to an existing nginx without
 publishing the owner API or changing other application services.
 
