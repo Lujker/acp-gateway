@@ -250,19 +250,37 @@ native runners. No push/PR/tag/release trigger is configured.
 ### First PyPI publication
 
 The owner needs a [PyPI account](https://pypi.org/account/register/) with verified
-email and two-factor authentication. Create an API token in PyPI account settings
-outside chat. For the first publication the project does not yet exist, so a
-project-scoped token is not yet available. After publishing, revoke the initial
-token and use a token scoped to `acp-gateway` for later releases. Never commit a
-token, paste it in an issue, or include it in shell history.
+email and two-factor authentication. Prefer
+[Trusted Publishing](https://docs.pypi.org/trusted-publishers/creating-a-project-through-oidc/):
+in [account Publishing settings](https://pypi.org/manage/account/publishing/), add
+a pending GitHub publisher with these exact values:
 
-Set `UV_PUBLISH_TOKEN` through your secret manager or a hidden terminal prompt,
-then run the command below against the reviewed artifacts. Verify the resulting
-project's owner and repository URL and install into a fresh uv tool environment.
-Creating an account alone does not publish or reserve this package name.
+| Field | Value |
+| --- | --- |
+| PyPI project name | `acp-gateway` |
+| GitHub owner | `Lujker` |
+| Repository | `acp-gateway` |
+| Workflow filename | `linux-binary.yml` |
+| Environment | `pypi` |
 
-After reviewing and testing the artifacts, publish the exact wheel/sdist using
-PyPI credentials configured outside the repository:
+The GitHub environment `pypi` is configured in the repository. No PyPI password
+or permanent token is needed. A pending publisher creates the project on its
+first successful upload; it does not reserve the package name beforehand.
+
+The manual `Platform release checks` workflow accepts `publish_pypi=true` and
+`release_tag=v0.1.0`. It downloads the exact wheel and sdist from the existing
+public GitHub Release, verifies both against `SHA256SUMS`, and never rebuilds
+them. `pypi_dry_run=true` is the default: files are checked without uploading.
+After configuring the publisher, explicitly select `pypi_dry_run=false` to
+publish. Only the publication job gets OIDC permission. This mode skips the
+platform build matrix and Docker publication, which already ran for this release.
+Use a workflow ref containing these inputs (`feat/vps-acceptance` until merged).
+
+After upload, verify the project's owner and repository URL and install into a
+fresh uv tool environment. Published versions cannot be replaced.
+
+As an alternative, publish the exact reviewed files locally with `UV_PUBLISH_TOKEN`
+supplied by a secret manager or hidden prompt outside chat and the repository:
 
 ```bash
 uv publish dist/release/acp_gateway-0.1.0-py3-none-any.whl dist/release/acp_gateway-0.1.0.tar.gz

@@ -8,13 +8,89 @@ on:
         required: false
         type: boolean
         default: false
+      publish_pypi:
+        description: 'Verify or publish wheel/sdist from an existing GitHub Release'
+        required: false
+        type: boolean
+        default: false
+      pypi_dry_run:
+        description: 'Verify release files without uploading to PyPI'
+        required: false
+        type: boolean
+        default: true
+      release_tag:
+        description: 'Existing release tag for PyPI (files are never rebuilt)'
+        required: false
+        type: string
+        default: 'v0.1.0'
 
 permissions:
   contents: read
 
 jobs:
+  publish-pypi:
+    if: ${{ inputs.publish_pypi }}
+    runs-on: ubuntu-22.04
+    timeout-minutes: 10
+    environment: pypi
+    concurrency:
+      group: pypi-release
+      cancel-in-progress: false
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - name: Download published release files
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RELEASE_TAG: ${{ inputs.release_tag }}
+        shell: bash
+        run: |
+          if [[ ! "$RELEASE_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo 'Expected a stable version tag such as v0.1.0' >&2
+            exit 1
+          fi
+          gh release view "$RELEASE_TAG" --json isDraft --jq '.isDraft' | grep -qx false
+          version="${RELEASE_TAG#v}"
+          mkdir -p publish-dist release-manifest
+          gh release download "$RELEASE_TAG" --dir release-manifest --pattern SHA256SUMS
+          gh release download "$RELEASE_TAG" --dir publish-dist \
+            --pattern "acp_gateway-$version-py3-none-any.whl" \
+            --pattern "acp_gateway-$version.tar.gz"
+      - name: Verify both distribution checksums
+        env:
+          RELEASE_TAG: ${{ inputs.release_tag }}
+        run: |
+          python3 - <<'PY'
+          import hashlib
+          import os
+          from pathlib import Path
+
+          version = os.environ['RELEASE_TAG'][1:]
+          expected = {f'acp_gateway-{version}-py3-none-any.whl', f'acp_gateway-{version}.tar.gz'}
+          files = list(Path('publish-dist').iterdir())
+          if {p.name for p in files} != expected:
+              raise SystemExit('Release must contain exactly the selected wheel and sdist')
+          sums = {}
+          for line in Path('release-manifest/SHA256SUMS').read_text().splitlines():
+              digest, name = line.split(maxsplit=1)
+              if name in sums:
+                  raise SystemExit(f'Duplicate checksum entry: {name}')
+              sums[name] = digest
+          for path in files:
+              digest = hashlib.sha256(path.read_bytes()).hexdigest()
+              if sums.get(path.name) != digest:
+                  raise SystemExit(f'Checksum mismatch or missing entry: {path.name}')
+              print(f'Verified {path.name}: {digest}')
+          PY
+      - name: Publish verified files using Trusted Publishing
+        if: ${{ !inputs.pypi_dry_run }}
+        uses: pypa/gh-action-pypi-publish@dc37677b2e1c63e2034f94d8a5b11f265b73ba33 # v1.14.2
+        with:
+          packages-dir: publish-dist/
   publish-image:
-    if: ${{ inputs.publish_image }}
+    if: ${{ inputs.publish_image && !inputs.publish_pypi }}
     needs: [build, native]
     runs-on: ubuntu-22.04
     timeout-minutes: 15
@@ -49,6 +125,7 @@ jobs:
         if: ${{ always() }}
         run: docker logout ghcr.io
   native:
+    if: ${{ !inputs.publish_pypi }}
     strategy:
       fail-fast: false
       matrix:
@@ -75,6 +152,7 @@ jobs:
             dist/*.build.json
           if-no-files-found: error
   build:
+    if: ${{ !inputs.publish_pypi }}
     runs-on: ubuntu-22.04
     timeout-minutes: 20
     steps:
