@@ -2,11 +2,52 @@ name: Platform release checks
 
 on:
   workflow_dispatch:
+    inputs:
+      publish_image:
+        description: 'Publish the tested Docker image to GHCR (manual release)'
+        required: false
+        type: boolean
+        default: false
 
 permissions:
   contents: read
 
 jobs:
+  publish-image:
+    if: ${{ inputs.publish_image }}
+    needs: [build, native]
+    runs-on: ubuntu-22.04
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@bec219d24cd3e171d82865faccec33120bb574f4 # v10.1.0
+        with:
+          python-version: '3.12'
+      - run: uv sync --frozen
+      - name: Select versioned image
+        run: |
+          release_version=$(uv run --frozen python -c 'from acp_gateway import __version__; print(__version__)')
+          echo "ACPGW_RELEASE_IMAGE=ghcr.io/${GITHUB_REPOSITORY,,}:$release_version" >> "$GITHUB_ENV"
+      - run: docker build -t "$ACPGW_RELEASE_IMAGE" .
+      - run: uv run --frozen python scripts/smoke_docker.py --image "$ACPGW_RELEASE_IMAGE"
+      - name: Publish tested image
+        env:
+          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          printf '%s' "$GHCR_TOKEN" | docker login ghcr.io --username "$GITHUB_ACTOR" --password-stdin
+          if docker manifest inspect "$ACPGW_RELEASE_IMAGE" >/dev/null 2>&1; then
+            echo 'Version tag already exists; increment the package version instead of replacing it.' >&2
+            exit 1
+          fi
+          docker push "$ACPGW_RELEASE_IMAGE"
+      - name: Clear registry credentials
+        if: ${{ always() }}
+        run: docker logout ghcr.io
   native:
     strategy:
       fail-fast: false

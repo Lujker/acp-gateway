@@ -170,6 +170,57 @@ def health(plan: dict) -> None:
     )
 
 
+def park_windows(plan: dict, backup: Path) -> None:
+    """Move mapped files aside; uv must replace an environment with no open DLLs."""
+    prefix, entry = Path(plan["prefix"]), Path(plan["entry"])
+    parked = plan["parked"] = []
+    for path in (prefix, entry):
+        target = path.with_name(f".{path.name}.running-{backup.name}")
+        path.rename(target)
+        parked.append(str(target))
+    # Recreate the original paths from the snapshot. The waiting caller maps
+    # files in the parked directory; uv and health probes use these fresh copies.
+    shutil.copytree(backup / "environment", prefix, symlinks=True)
+    shutil.copy2(backup / "entry", entry)
+
+
+def cleanup_windows(plan: dict) -> None:
+    if not plan.get("parked"):
+        return
+    # The caller keeps its exit status and lease, so it cannot unload its own
+    # DLLs yet. A base-Python child waits for it, then deletes only these paths.
+    code = """
+import ctypes, shutil, sys, time
+from ctypes import wintypes
+from pathlib import Path
+kernel = ctypes.WinDLL('kernel32', use_last_error=True)
+kernel.OpenProcess.argtypes = [wintypes.DWORD, wintypes.BOOL, wintypes.DWORD]
+kernel.OpenProcess.restype = wintypes.HANDLE
+kernel.WaitForSingleObject.argtypes = [wintypes.HANDLE, wintypes.DWORD]
+kernel.CloseHandle.argtypes = [wintypes.HANDLE]
+handle = kernel.OpenProcess(0x00100000, False, int(sys.argv[1]))
+if handle:
+    kernel.WaitForSingleObject(handle, 60000)
+    kernel.CloseHandle(handle)
+for name in sys.argv[2:]:
+    path = Path(name)
+    for attempt in range(200):
+        try:
+            if path.is_dir(): shutil.rmtree(path)
+            else: path.unlink(missing_ok=True)
+            break
+        except OSError:
+            time.sleep(0.1)
+"""
+    subprocess.Popen(  # noqa: S603 — fixed cleanup program, private generated paths
+        [sys.executable, "-c", code, str(plan["pid"]), *plan["parked"]],
+        stdin=subprocess.DEVNULL,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        close_fds=True,
+    )
+
+
 def execute(plan: dict, backup: Path) -> int:
     previous = None
     current = Path(plan["current"]) if plan.get("current") else None
@@ -185,6 +236,8 @@ def execute(plan: dict, backup: Path) -> int:
             raise ValueError("recovery snapshot belongs to another installation/configuration")
     snapshot(plan, backup)
     try:
+        if sys.platform == "win32":
+            park_windows(plan, backup)
         if plan["operation"] == "rollback":
             restore(plan, previous)
             health(plan)
@@ -246,6 +299,8 @@ def main() -> int:
         )
         return 1
     finally:
+        if sys.platform == "win32":
+            cleanup_windows(plan)
         shutil.rmtree(manifest.parent, ignore_errors=True)
 
 
