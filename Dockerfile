@@ -11,7 +11,8 @@ FROM python:3.12-slim-bookworm AS runtime
 RUN groupadd --gid 10001 acpgw && useradd --uid 10001 --gid acpgw --create-home acpgw \
     && mkdir /data /config && chown acpgw:acpgw /data /config
 COPY --from=build /app/.venv /app/.venv
-ENV PATH=/app/.venv/bin:$PATH PYTHONUNBUFFERED=1 PYTHONDONTWRITEBYTECODE=1
+ENV PATH=/app/.venv/bin:$PATH PYTHONUNBUFFERED=1 PYTHONDONTWRITEBYTECODE=1 \
+    XDG_DATA_HOME=/data
 USER 10001:10001
 WORKDIR /data
 ENTRYPOINT ["acpgw", "--config", "/config/gateway.yaml", "--env-file", "/config/gateway.env"]

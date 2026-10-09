@@ -81,10 +81,15 @@ More in [`docs/architecture.md`](docs/architecture.md).
 For a VPS in Docker, two outgoing Linux/WSL connectors and Telegram, follow
 the [live acceptance runbook](docs/setup/vps-acceptance.md)
 ([на русском](docs/setup/vps-acceptance.ru.md)). It starts with
-an IP/port route and then adds an exact WSS path to an existing nginx without
+an IP/port route and then adds an exact WSS path through its own nginx without
 publishing the owner API or changing other application services.
 
-You need [uv](https://docs.astral.sh/uv/) and git; uv installs Python 3.12
+For installation without a checkout, use the wheel/deployment bundle described
+in [installation and updates](docs/setup/distribution.md). Public PyPI/registry
+publication is a separate manual release step. Internal maintenance commands
+for Linux/WSL uv installations are `acpgw version`, `update` and `uninstall`.
+
+For the separate Git/development path, you need [uv](https://docs.astral.sh/uv/) and git; uv installs Python 3.12
 itself. Linux/WSL is the primary platform; Windows and macOS are planned.
 
 ```bash

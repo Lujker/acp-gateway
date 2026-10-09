@@ -28,6 +28,22 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--env-file", type=Path, help="path to the .env file with secrets")
     commands = parser.add_subparsers(dest="command", required=True)
 
+    version = commands.add_parser("version", help="show version and installation manager")
+    version.add_argument("--json", action="store_true")
+    update = commands.add_parser("update", help="check releases or update a stopped uv tool")
+    target = update.add_mutually_exclusive_group()
+    target.add_argument("--check", action="store_true", help="check stable PyPI releases only")
+    target.add_argument("--version", help="install an exact PyPI version")
+    target.add_argument("--from", dest="source", help="install a wheel path/URL or Git URL/ref")
+    update.add_argument("--dry-run", action="store_true", help="inspect without changing files")
+    update.add_argument(
+        "--constraints", type=Path, help="release requirements.lock.txt (with --from)"
+    )
+    uninstall = commands.add_parser(
+        "uninstall", help="remove a stopped uv tool and its managed units; keep all user data"
+    )
+    uninstall.add_argument("--dry-run", action="store_true")
+
     config_cmd = commands.add_parser("config", help="inspect configuration")
     config_sub = config_cmd.add_subparsers(dest="config_command", required=True)
     config_sub.add_parser("check", help="validate configuration and show a summary")
@@ -188,6 +204,27 @@ def _cmd_paths() -> int:
 
 def main(argv: Sequence[str] | None = None) -> int:
     args = _build_parser().parse_args(argv)
+    if args.command in {"version", "update", "uninstall"}:
+        try:
+            from acp_gateway.installation import maintenance
+
+            return maintenance(args)
+        except (OSError, ValueError, httpx.HTTPError) as exc:
+            print(f"error: {redact_text(str(exc))}", file=sys.stderr)
+            return 1
+    if args.command in {"serve", "connector", "dispatcher"}:
+        try:
+            from acp_gateway.installation import runtime_lease
+
+            with runtime_lease():
+                return _run_configured(args)
+        except (OSError, ValueError) as exc:
+            print(f"error: {redact_text(str(exc))}", file=sys.stderr)
+            return 78 if args.command == "connector" else 1
+    return _run_configured(args)
+
+
+def _run_configured(args) -> int:
     if args.command == "paths":
         return _cmd_paths()
     if args.command == "setup" or (args.command == "service" and args.service_command != "install"):

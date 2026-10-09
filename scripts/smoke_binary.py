@@ -36,6 +36,9 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("binary", type=Path)
     parser.add_argument(
+        "--installed-tool", action="store_true", help="test a Python tool entry point"
+    )
+    parser.add_argument(
         "--container-image", help="run every binary command in a clean Docker image"
     )
     args = parser.parse_args()
@@ -321,10 +324,13 @@ def main():
             manager.chmod(0o755)
             run("service", "install")
             unit = (root / "config/systemd/user/acp-gateway.service").read_text()
-            require(
-                f'ExecStart="{binary}"' in unit and '"-m"' not in unit,
-                "frozen service would invoke the embedded binary as Python",
-            )
+            if args.installed_tool:
+                require('"-m" "acp_gateway"' in unit, "installed tool service lacks module entry")
+            else:
+                require(
+                    f'ExecStart="{binary}"' in unit and '"-m"' not in unit,
+                    "frozen service would invoke the embedded binary as Python",
+                )
             for action in ("enable", "status", "disable", "start", "stop", "restart", "uninstall"):
                 run("service", action)
             require(env_file.is_file(), "uninstall deleted configuration")
