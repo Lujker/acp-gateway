@@ -1459,6 +1459,14 @@ Docker IP/WSS + два mock Goose, изоляция отключения, sessio
 runtime прошли за 89.3 с. В Docker установлен XDG_DATA_HOME=/data, чтобы
 runtime leases работали с read-only root filesystem.
 PyPI имя пока отвечает 404; пакеты/образы/публичный Release не опубликованы.
+Дополнительная приёмка: cloned checkout installer и direct Git URL с immutable
+commit SHA прошли с сохранением tokens/enrollment/SQLite и последующим restart.
+Символический HEAD в harness разрешается в SHA перед передачей uv.
+Пересобранный автономный Linux-бинарник прошёл полный существующий smoke без
+Python в child PATH. Release bundle с вложенным Docker-образом (~60 МиБ)
+прошёл распаковку, docker load, nginx -t с TLS-файлами, запуск собственного
+Compose и owner API без смонтированного checkout. Комплект уже можно передать
+на VPS через SCP до публикации публичных каналов.
 
 ## Незакрытые вопросы
 
