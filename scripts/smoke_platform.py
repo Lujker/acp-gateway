@@ -54,6 +54,19 @@ def smoke(wheel: Path, binary: Path | None = None):
             result = subprocess.run(  # noqa: S603 — controlled argv
                 argv, env=environment, cwd=cwd, capture_output=True, text=True, timeout=240
             )
+            if os.name == "nt":
+                marker = "ACPGW_MAINTENANCE_RESULT="
+                records = [
+                    line[len(marker) :]
+                    for line in result.stdout.splitlines()
+                    if line.startswith(marker)
+                ]
+                if records:
+                    status = json.loads(Path(records[-1]).read_text(encoding="utf-8"))
+                    require(
+                        status["status"] in ("succeeded", "failed"), "Maintenance did not finish"
+                    )
+                    result.returncode = status["returncode"]
             if (result.returncode == 0) != ok:
                 raise RuntimeError(f"Unexpected exit {result.returncode}: {result.stderr}")
             return result.stdout

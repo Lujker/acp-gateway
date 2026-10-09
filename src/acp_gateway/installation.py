@@ -163,6 +163,7 @@ def _handoff(args, command: list[str], descriptor: int) -> None:
         "current": str(backup.parent / "current.json"),
         "lease": str(lease_path()),
         "pid": os.getpid(),
+        "result": str(backup.parent / (backup.name + ".result.json")),
     }
     temporary = Path(tempfile.mkdtemp(prefix="acpgw-maintenance-"))
     try:
@@ -175,16 +176,36 @@ def _handoff(args, command: list[str], descriptor: int) -> None:
         manifest.chmod(0o600)
         base_python = str(Path(sys._base_executable).resolve())
         print("Private recovery snapshot and post-install health checks are enabled.", flush=True)
+        maintenance_worker.record_result(plan, "queued")
+        latest = backup.parent / "last-operation.json"
+        latest.write_text(json.dumps({"result": plan["result"]}), encoding="utf-8")
+        latest.chmod(0o600)
         if sys.platform == "win32":
-            plan["parent_holds_lease"] = True
-            manifest.write_text(json.dumps(plan), encoding="utf-8")
-            result = subprocess.run(  # noqa: S603 — base interpreter and private helper
-                [base_python, str(helper), str(manifest)], check=False
+            if args.handoff_file:
+                with args.handoff_file.open("x", encoding="utf-8") as stream:
+                    args.handoff_file.chmod(0o600)
+                    json.dump(
+                        {"python": base_python, "worker": str(helper), "manifest": str(manifest)},
+                        stream,
+                    )
+                return
+            subprocess.Popen(  # noqa: S603 — base interpreter and private helper
+                [base_python, str(helper), str(manifest)],
+                close_fds=True,
+                stdin=subprocess.DEVNULL,
+                stdout=sys.stdout,
+                stderr=sys.stderr,
             )
-            raise SystemExit(result.returncode)
+            print(
+                "Maintenance queued on Windows; use update --status for the verified result.",
+                flush=True,
+            )
+            print("ACPGW_MAINTENANCE_RESULT=" + plan["result"], flush=True)
+            return
         os.set_inheritable(descriptor, True)
         os.execv(base_python, [base_python, str(helper), str(manifest)])  # noqa: S606 — base interpreter
     except BaseException:
+        maintenance_worker.record_result(plan, "failed", 1)
         shutil.rmtree(temporary, ignore_errors=True)
         raise
 
@@ -235,6 +256,20 @@ def maintenance(args) -> int:
         if args.constraints:
             raise ValueError("--constraints requires --from")
         return check_update()
+    if args.command == "update" and args.status:
+        directory = paths.data_dir() / "updates" / lease_path().stem
+        pointer = directory / "last-operation.json"
+        if not pointer.is_file():
+            print("No recorded maintenance operation.")
+            return 0
+        result = Path(json.loads(pointer.read_text(encoding="utf-8"))["result"])
+        if result.parent != directory:
+            raise ValueError("invalid maintenance result pointer")
+        info = json.loads(result.read_text(encoding="utf-8"))
+        print(json.dumps(info))
+        return 0 if info["status"] == "succeeded" else 1 if info["status"] == "failed" else 2
+    if args.handoff_file and sys.platform != "win32":
+        raise ValueError("external handoff is used only by the Windows installer")
     if info["manager"] != "uv":
         raise ValueError(
             f"installation manager is {info['manager']}; internal maintenance requires uv tool. "

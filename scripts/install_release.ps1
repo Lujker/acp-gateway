@@ -27,7 +27,15 @@ if (Test-Path -LiteralPath $entry) {
     }
     $arguments += @('update', '--from', $From)
     if (Test-Path -LiteralPath $constraints) { $arguments += @('--constraints', $constraints) }
-    Invoke-Checked $entry $arguments
+    $handoff = Join-Path ([System.IO.Path]::GetTempPath()) ([System.Guid]::NewGuid().ToString() + '.acpgw.json')
+    try {
+        $arguments += @('--handoff-file', $handoff)
+        Invoke-Checked $entry $arguments
+        $plan = Get-Content -LiteralPath $handoff -Raw | ConvertFrom-Json
+        Invoke-Checked $plan.python @($plan.worker, $plan.manifest)
+    } finally {
+        Remove-Item -LiteralPath $handoff -Force -ErrorAction SilentlyContinue
+    }
 } else {
     $arguments = @('tool', 'install', '--python', '3.12', $From)
     if (Test-Path -LiteralPath $constraints) { $arguments += @('--constraints', $constraints) }

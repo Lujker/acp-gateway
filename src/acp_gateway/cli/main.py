@@ -35,6 +35,7 @@ def _build_parser() -> argparse.ArgumentParser:
     update = commands.add_parser("update", help="check releases or update a stopped uv tool")
     target = update.add_mutually_exclusive_group()
     target.add_argument("--check", action="store_true", help="check stable PyPI releases only")
+    target.add_argument("--status", action="store_true", help="show the latest maintenance result")
     target.add_argument("--version", help="install an exact PyPI version")
     target.add_argument(
         "--rollback",
@@ -43,6 +44,7 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     target.add_argument("--from", dest="source", help="install a wheel path/URL or Git URL/ref")
     update.add_argument("--dry-run", action="store_true", help="inspect without changing files")
+    update.add_argument("--handoff-file", type=Path, help=argparse.SUPPRESS)
     update.add_argument(
         "--constraints", type=Path, help="release requirements.lock.txt (with --from)"
     )
@@ -50,6 +52,7 @@ def _build_parser() -> argparse.ArgumentParser:
         "uninstall", help="remove a stopped uv tool and its managed units; keep all user data"
     )
     uninstall.add_argument("--dry-run", action="store_true")
+    uninstall.add_argument("--handoff-file", type=Path, help=argparse.SUPPRESS)
 
     config_cmd = commands.add_parser("config", help="inspect configuration")
     config_sub = config_cmd.add_subparsers(dest="config_command", required=True)

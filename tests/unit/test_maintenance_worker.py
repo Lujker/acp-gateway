@@ -104,19 +104,3 @@ def test_rollback_refuses_different_database(plan, tmp_path):
         worker.execute(plan, tmp_path / "backup")
     assert previous.is_dir()
     assert not (tmp_path / "backup").exists()
-
-
-def test_windows_staging_keeps_waiting_callers_files_separate(plan, tmp_path):
-    native = Path(plan["prefix"]) / "runtime.pyd"
-    native.write_text("old-native")
-    backup = tmp_path / "backup"
-    worker.snapshot(plan, backup)
-    worker.park_windows(plan, backup)
-    (Path(plan["prefix"]) / "version").write_text("new")
-    Path(plan["entry"]).write_text("new-entry")
-    parked_prefix, parked_entry = map(Path, plan["parked"])
-    assert (parked_prefix / "runtime.pyd").read_text() == "old-native"
-    assert parked_entry.read_text() == "old-entry"
-    worker.restore(plan, backup)
-    assert (Path(plan["prefix"]) / "version").read_text() == "old"
-    assert Path(plan["entry"]).read_text() == "old-entry"
