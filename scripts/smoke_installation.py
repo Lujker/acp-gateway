@@ -215,7 +215,8 @@ def smoke(wheel: Path, git_ref: str | None, bundle: Path | None = None):
             require(secret_file.read_bytes() == original, "Git install replaced tokens")
             require(json.loads(command("computers", "list")) == registered, "Git install lost data")
             # Test direct Git URL installation separately, without a user checkout.
-            source = "git+" + REPO.as_uri() + "@" + git_ref
+            commit = run(git, "rev-parse", git_ref, cwd=REPO).strip()
+            source = "git+" + REPO.as_uri() + "@" + commit
             command("update", "--from", source)
             require(
                 json.loads(command("version", "--json"))["source"] == "git",
