@@ -173,15 +173,21 @@ def health(plan: dict) -> None:
 def park_windows(plan: dict, backup: Path) -> None:
     """Move mapped files aside; uv must replace an environment with no open DLLs."""
     prefix, entry = Path(plan["prefix"]), Path(plan["entry"])
-    parked = plan["parked"] = []
-    for path in (prefix, entry):
-        target = path.with_name(f".{path.name}.running-{backup.name}")
-        path.rename(target)
-        parked.append(str(target))
-    # Recreate the original paths from the snapshot. The waiting caller maps
-    # files in the parked directory; uv and health probes use these fresh copies.
-    shutil.copytree(backup / "environment", prefix, symlinks=True)
+    parked_root = prefix.with_name(f".{prefix.name}.running-{backup.name}")
+    parked_root.mkdir(mode=0o700)
+    parked_entry = entry.with_name(f".{entry.name}.running-{backup.name}")
+    plan["parked"] = [str(parked_root), str(parked_entry)]
+    entry.rename(parked_entry)
     shutil.copy2(backup / "entry", entry)
+    # Windows can deny renaming a directory containing mapped DLLs. Move only
+    # native files individually, then recreate their original paths as new files.
+    for path in list(prefix.rglob("*")):
+        if path.is_file() and path.suffix.lower() in {".dll", ".pyd", ".exe"}:
+            relative = path.relative_to(prefix)
+            target = parked_root / relative
+            target.parent.mkdir(parents=True, exist_ok=True)
+            path.rename(target)
+            shutil.copy2(backup / "environment" / relative, path)
 
 
 def cleanup_windows(plan: dict) -> None:
@@ -295,7 +301,8 @@ def main() -> int:
         return execute(plan, Path(plan["backup"]))
     except (OSError, ValueError, subprocess.SubprocessError) as exc:
         print(
-            f"Maintenance failed: {type(exc).__name__}. Recovery files were kept.", file=sys.stderr
+            f"Maintenance failed: {type(exc).__name__}: {exc}. Recovery files were kept.",
+            file=sys.stderr,
         )
         return 1
     finally:
