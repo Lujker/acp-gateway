@@ -160,9 +160,15 @@ def _handoff(args, command: list[str], descriptor: int) -> None:
         manifest.write_text(json.dumps(plan), encoding="utf-8")
         manifest.chmod(0o600)
         base_python = str(Path(sys._base_executable).resolve())
-        if sys.platform != "win32":
-            os.set_inheritable(descriptor, True)
         print("Private recovery snapshot and post-install health checks are enabled.", flush=True)
+        if sys.platform == "win32":
+            plan["parent_holds_lease"] = True
+            manifest.write_text(json.dumps(plan), encoding="utf-8")
+            result = subprocess.run(  # noqa: S603 — base interpreter and private helper
+                [base_python, str(helper), str(manifest)], check=False
+            )
+            raise SystemExit(result.returncode)
+        os.set_inheritable(descriptor, True)
         os.execv(base_python, [base_python, str(helper), str(manifest)])  # noqa: S606 — base interpreter
     except BaseException:
         shutil.rmtree(temporary, ignore_errors=True)

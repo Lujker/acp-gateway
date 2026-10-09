@@ -24,11 +24,31 @@ fi
 case "$task_source" in
     -*) echo 'Invalid installation source.' >&2; exit 2 ;;
 esac
+task_config_dir=
+task_expect_config=0
+for task_argument in "$@"; do
+    if [ "$task_expect_config" = 1 ]; then
+        task_config_dir=$task_argument
+        task_expect_config=0
+    else
+        case "$task_argument" in
+            --config-dir) task_expect_config=1 ;;
+            --config-dir=*) task_config_dir=${task_argument#--config-dir=} ;;
+        esac
+    fi
+done
+task_update() {
+    if [ -n "$task_config_dir" ]; then
+        "$task_bin_dir/acpgw" --config "$task_config_dir/config.yaml" --env-file "$task_config_dir/.env" update "$@"
+    else
+        "$task_bin_dir/acpgw" update "$@"
+    fi
+}
 if [ -x "$task_bin_dir/acpgw" ]; then
     if [ -f "$task_bundle_dir/requirements.lock.txt" ]; then
-        "$task_bin_dir/acpgw" update --from "$task_source" --constraints "$task_bundle_dir/requirements.lock.txt"
+        task_update --from "$task_source" --constraints "$task_bundle_dir/requirements.lock.txt"
     else
-        "$task_bin_dir/acpgw" update --from "$task_source"
+        task_update --from "$task_source"
     fi
 elif [ -f "$task_bundle_dir/requirements.lock.txt" ]; then
     uv tool install --force --python 3.12 --constraints "$task_bundle_dir/requirements.lock.txt" "$task_source"

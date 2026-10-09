@@ -1,11 +1,11 @@
-# Standalone Linux executable
+# Standalone executable
 
 Local builds are the default and do not use GitHub Actions or its quotas.
-The optional `Linux binary` workflow runs only when you explicitly choose
-**Actions → Linux binary → Run workflow**. Pushes, pull requests, tags and
+The optional `Platform release checks` workflow runs only when you explicitly choose
+**Actions → Platform release checks → Run workflow**. Pushes, pull requests, tags and
 release creation do not start a build.
 
-Build on the target Linux architecture with Python 3.12 and uv:
+Build on the target OS and architecture with Python 3.12 and uv:
 
 ```bash
 uv sync --frozen --group build
@@ -83,3 +83,21 @@ the workflow does not publish or change releases. If you choose to run the
 manual workflow instead, download its artifact ZIP, extract it, and attach
 the same three files to your release. CI artifacts are temporary downloads;
 release assets are the distribution route for a published version.
+
+## Native platforms
+
+The build recipe supports Linux, macOS and Windows on x86_64 or ARM64 when its
+dependencies support that target. It builds on the current host; it does not
+cross-compile. Windows output is `acpgw.exe`; other hosts produce `acpgw`.
+Archive names use `linux`, `macos` or `windows`, followed by the architecture.
+The manual workflow checks Linux x86_64/ARM64, macOS Intel/ARM64 and Windows
+x86_64. Windows ARM64 is not covered by that matrix.
+
+Use `scripts/smoke_platform.py --wheel-dir dist/native --built-binary` after
+`uv build --wheel --out-dir dist/native` and the binary build. The native check
+exercises the installed wheel's daemon, runtime locks, updating, failed migration
+recovery, rollback and uninstall; the frozen binary check covers version, setup
+and configuration validation. It does not claim the full Linux ACP smoke,
+native service integration, OS reboot, Gatekeeper signing or Windows signing.
+Native service adapters are tracked separately in P3.2/P4.6. For routine install
+and update commands, prefer the [uv release bundle](distribution.md).
