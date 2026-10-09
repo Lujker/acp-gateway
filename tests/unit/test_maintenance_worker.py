@@ -104,3 +104,27 @@ def test_rollback_refuses_different_database(plan, tmp_path):
         worker.execute(plan, tmp_path / "backup")
     assert previous.is_dir()
     assert not (tmp_path / "backup").exists()
+
+
+@pytest.mark.parametrize("outcome", [0, 1, "exception"])
+def test_worker_persists_actual_outcome_for_async_callers(plan, tmp_path, monkeypatch, outcome):
+    handoff = tmp_path / "handoff"
+    handoff.mkdir()
+    manifest = handoff / "plan.json"
+    plan["backup"] = str(tmp_path / "backup")
+    plan["result"] = str(tmp_path / "result.json")
+    manifest.write_text(json.dumps(plan))
+    monkeypatch.setattr(worker.sys, "argv", ["worker.py", str(manifest)])
+
+    def execute(*args):
+        if outcome == "exception":
+            raise ValueError("failed before package replacement")
+        return outcome
+
+    monkeypatch.setattr(worker, "execute", execute)
+    expected = 0 if outcome == 0 else 1
+    assert worker.main() == expected
+    result = json.loads(Path(plan["result"]).read_text())
+    assert result["returncode"] == expected
+    assert result["status"] == ("succeeded" if expected == 0 else "failed")
+    assert not handoff.exists()
