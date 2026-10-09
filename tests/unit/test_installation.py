@@ -32,6 +32,27 @@ def test_version_without_configuration(monkeypatch, capsys):
     assert json.loads(capsys.readouterr().out)["source"] == "editable"
 
 
+@pytest.mark.parametrize(
+    "status,code", [("queued", 2), ("running", 2), ("failed", 1), ("succeeded", 0)]
+)
+def test_maintenance_status_reports_durable_result(uv_tool, capsys, status, code):
+    directory = installation.paths.data_dir() / "updates" / installation.lease_path().stem
+    directory.mkdir(parents=True)
+    result = directory / "job.result.json"
+    result.write_text(json.dumps({"status": status, "returncode": None if code == 2 else code}))
+    (directory / "last-operation.json").write_text(json.dumps({"result": str(result)}))
+    assert main(["update", "--status"]) == code
+    assert json.loads(capsys.readouterr().out)["status"] == status
+
+
+def test_maintenance_status_refuses_pointer_outside_installation(uv_tool, capsys):
+    directory = installation.paths.data_dir() / "updates" / installation.lease_path().stem
+    directory.mkdir(parents=True)
+    (directory / "last-operation.json").write_text(json.dumps({"result": str(uv_tool / "other")}))
+    assert main(["update", "--status"]) == 1
+    assert "invalid maintenance result pointer" in capsys.readouterr().err
+
+
 @pytest.mark.parametrize("manager", ["unmanaged", "binary"])
 def test_other_installations_are_not_modified(monkeypatch, capsys, manager):
     monkeypatch.setattr(

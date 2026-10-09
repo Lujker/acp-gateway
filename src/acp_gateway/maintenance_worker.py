@@ -258,6 +258,8 @@ def main() -> int:
             f"Maintenance failed: {type(exc).__name__}: {exc}. Recovery files were kept.",
             file=sys.stderr,
         )
+        if Path(plan["backup"]).is_dir():
+            print(f"Recovery snapshot: {plan['backup']}", file=sys.stderr)
         record_result(plan, "failed", 1)
         return 1
     finally:

@@ -1468,6 +1468,39 @@ Python в child PATH. Release bundle с вложенным Docker-образом
 Compose и owner API без смонтированного checkout. Комплект уже можно передать
 на VPS через SCP до публикации публичных каналов.
 
+## 2026-10-09 — P3.6: recovery, native-платформы и подготовка выпуска
+
+Ручной uv updater использует stdlib helper вне заменяемого окружения и приватный
+snapshot окружения, entry point и выбранной SQLite (backup API включает WAL).
+После установки проверяются version/manager, config и миграции реальной БД.
+Ошибка установки или health check восстанавливает исходное состояние.
+`update --rollback` меняет программу вместе с согласованным snapshot БД;
+новые данные после snapshot заменяются, это явно описано в distribution.md.
+Установщики checkout/release больше не обходят runtime guard при повторном
+запуске; нестандартный config-dir передаётся в updater.
+
+Нативные Linux ARM64, macOS ARM64/Intel и Windows x86_64 прошли wheel lifecycle,
+installer, active-runtime refusal, смену версии, failed-SQL recovery, rollback,
+uninstall с сохранением данных и frozen CLI version/setup/config. На Windows
+нельзя синхронно заменить удерживаемый python.exe: внутренние команды запускают
+helper после выхода CLI, сохраняют durable JSON result и предоставляют
+`update --status`. Успешная постановка в очередь не называется успехом обновления.
+PowerShell-установщик получает приватный handoff, выходит из CLI, запускает helper
+и ждёт фактического exit code. Попытки замены работающих DLL удалены из реализации.
+Нативный прогон: https://github.com/Lujker/acp-gateway/actions/runs/37944420396.
+Его публикация остановлена перед финальной сборкой из итогового commit.
+
+722 passed, 3 optional Hermes skipped; Ruff check/format и diff check чистые.
+Wheel/bundle, cloned checkout/direct Git-ref и Docker IP/WSS smoke прошли;
+последний Docker smoke с lazy CLI — 109.6 с. Финальный комплект пересобирается
+из чистого commit; preview требует --allow-dirty. Checksums не включают старые
+файлы из dist. Ручная публикация GHCR — отдельный opt-in job после проверок,
+push/PR/tag/release по-прежнему ничего не запускают.
+
+Для PyPI владельцу нужен аккаунт с подтверждённой почтой и 2FA; токены в чат
+не запрашиваются. Подписанные каналы, фоновое автообновление, native службы,
+Windows ARM64 и живая VPS/Telegram-приёмка остаются отдельными незакрытыми работами.
+
 ## Незакрытые вопросы
 
 - **Автотесты TLS/SSE** — наблюдавшиеся причины и исправления тестового стенда

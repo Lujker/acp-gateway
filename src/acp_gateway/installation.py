@@ -178,8 +178,10 @@ def _handoff(args, command: list[str], descriptor: int) -> None:
         print("Private recovery snapshot and post-install health checks are enabled.", flush=True)
         maintenance_worker.record_result(plan, "queued")
         latest = backup.parent / "last-operation.json"
-        latest.write_text(json.dumps({"result": plan["result"]}), encoding="utf-8")
-        latest.chmod(0o600)
+        pointer = latest.with_suffix(".tmp")
+        pointer.write_text(json.dumps({"result": plan["result"]}), encoding="utf-8")
+        pointer.chmod(0o600)
+        pointer.replace(latest)
         if sys.platform == "win32":
             if args.handoff_file:
                 with args.handoff_file.open("x", encoding="utf-8") as stream:

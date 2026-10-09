@@ -69,6 +69,7 @@ acpgw version
 acpgw version --json
 acpgw update --check
 acpgw update --dry-run
+acpgw update --status
 acpgw uninstall --dry-run
 ```
 
@@ -115,6 +116,21 @@ acpgw config check
 acpgw service start
 acpgw service --role connector start
 ```
+
+On native Windows an internal `update`, `update --rollback` or `uninstall`
+starts a separate helper and returns after queuing it. The helper waits until
+the original CLI exits, acquires the installation lock again, and then performs
+the operation. This lets Windows release the running interpreter before uv
+replaces its files. **Exit code 0 from the initial command means queued, not
+verified success.** Wait for the helper's completion message or run
+`acpgw update --status`: 0 means succeeded, 1 failed, 2 queued/running.
+The initial command prints the durable JSON result file path; read it directly
+if the entry point is temporarily being replaced or has been uninstalled.
+Do not restart processes while the operation is queued/running.
+
+For scripted Windows installation/updating, prefer `install.ps1`: it starts
+the helper after the CLI has exited and waits for its verified exit code.
+Linux/macOS internal maintenance commands wait until the operation finishes.
 
 One recovery snapshot is retained under the platform data directory's
 `updates/<installation-id>/`; a later successful operation replaces it. A failed
@@ -266,3 +282,12 @@ readable by intended users. Create a matching GitHub Release/tag manually and
 attach the bundle, wheel, sdist and SHA256SUMS. Published version numbers are
 immutable: increment the version for subsequent releases. No new automatic
 build or publication triggers are introduced.
+
+The manual `Platform release checks` workflow has an optional `publish_image`
+input (off by default). When explicitly enabled, a separate job builds and
+smoke-tests the image after the native matrix and Linux checks pass, then pushes
+it using that job's short-lived GitHub token. It refuses an existing version tag.
+This publishes only the current runner's Linux x86_64 image. GHCR packages can
+initially be private: the owner must make the package public in GitHub package
+settings before anonymous `docker compose pull` works. Check an unauthenticated
+pull rather than inferring availability from a successful push.
