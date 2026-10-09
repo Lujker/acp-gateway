@@ -55,15 +55,15 @@ def test_active_runtime_blocks_mutation(uv_tool, monkeypatch, capsys):
 
 
 @pytest.mark.skipif(sys.platform != "linux", reason="Linux runtime lease")
-def test_update_uses_named_requirement_and_inherits_lease(uv_tool, monkeypatch):
+def test_update_uses_named_requirement_and_holds_lease(uv_tool, monkeypatch):
     calls = []
 
-    def execute(executable, argv):
+    def execute(args, argv, descriptor):
         calls.append(argv)
         with pytest.raises(ValueError, match="in use"), installation.runtime_lease():
             pass
 
-    monkeypatch.setattr(os, "execv", execute)
+    monkeypatch.setattr(installation, "_handoff", execute)
     assert main(["update", "--from", "https://example.com/acp_gateway-0.2.0-py3-none-any.whl"]) == 0
     assert calls == [
         [

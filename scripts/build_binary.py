@@ -15,12 +15,14 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 def main() -> None:
-    if sys.platform != "linux":
-        raise SystemExit("This build recipe currently supports Linux/WSL only.")
-    machine = platform.machine()
+    if sys.platform not in {"linux", "darwin", "win32"}:
+        raise SystemExit("Supported build systems: Linux, macOS, Windows.")
+    machine = {"AMD64": "x86_64", "arm64": "aarch64"}.get(platform.machine(), platform.machine())
     if machine not in {"x86_64", "aarch64"}:
         raise SystemExit(f"Unsupported build architecture: {machine}")
-    output = ROOT / "dist" / f"acpgw-linux-{machine}"
+    system = {"linux": "linux", "darwin": "macos", "win32": "windows"}[sys.platform]
+    executable = "acpgw.exe" if sys.platform == "win32" else "acpgw"
+    output = ROOT / "dist" / f"acpgw-{system}-{machine}"
     work = ROOT / "build" / "binary"
     output.mkdir(parents=True, exist_ok=True)
     work.mkdir(parents=True, exist_ok=True)
@@ -59,10 +61,10 @@ def main() -> None:
     ]
     env = dict(os.environ, PYINSTALLER_CONFIG_DIR=str(work / "cache"))
     subprocess.run(command, cwd=ROOT, env=env, check=True)  # noqa: S603
-    archive = ROOT / "dist" / f"acpgw-{__version__}-linux-{machine}.tar.gz"
+    archive = ROOT / "dist" / f"acpgw-{__version__}-{system}-{machine}.tar.gz"
     with tarfile.open(archive, "w:gz") as bundle:
         for path, name in (
-            (output / "acpgw", "acpgw"),
+            (output / executable, executable),
             (ROOT / "LICENSE", "LICENSE"),
             (ROOT / "docs/setup/binary.md", "INSTALL.md"),
         ):
@@ -76,6 +78,7 @@ def main() -> None:
             {
                 "version": __version__,
                 "architecture": machine,
+                "system": system,
                 "python": platform.python_version(),
                 "libc": platform.libc_ver(),
                 "lock_sha256": hashlib.sha256((ROOT / "uv.lock").read_bytes()).hexdigest(),
@@ -85,7 +88,7 @@ def main() -> None:
         + "\n",
         encoding="utf-8",
     )
-    print(f"Executable: {output / 'acpgw'}")
+    print(f"Executable: {output / executable}")
     print(f"Archive: {archive}")
 
 

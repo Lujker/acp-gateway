@@ -13,6 +13,8 @@ import os
 import shutil
 import subprocess
 import sys
+import tempfile
+import uuid
 from contextlib import contextmanager
 from importlib.metadata import distribution
 from pathlib import Path
@@ -21,6 +23,7 @@ import httpx
 from packaging.version import InvalidVersion, Version
 
 from acp_gateway import __version__, paths
+from acp_gateway.maintenance_worker import lease
 
 PACKAGE = "acp-gateway"
 REPOSITORY = "https://github.com/Lujker/acp-gateway"
@@ -75,35 +78,21 @@ def installation_info() -> dict:
 @contextmanager
 def runtime_lease(*, exclusive=False):
     """One shared lease per process; maintenance needs the exclusive lease."""
-    if sys.platform != "linux":
-        if exclusive:
-            raise ValueError("internal update/uninstall currently supports Linux/WSL only")
-        yield
-        return
-    import fcntl
+    with lease(lease_path(), exclusive=exclusive) as descriptor:
+        yield descriptor
 
+
+def lease_path() -> Path:
     identity = str(Path(sys.prefix).resolve())
     if getattr(sys, "frozen", False):
         identity = str(Path(sys.executable).resolve())
     key = hashlib.sha256(identity.encode()).hexdigest()[:24]
-    directory = paths.data_dir() / "installation-locks"
-    directory.mkdir(mode=0o700, parents=True, exist_ok=True)
-    descriptor = os.open(directory / f"{key}.lock", os.O_CREAT | os.O_RDWR | os.O_NOFOLLOW, 0o600)
-    try:
-        operation = fcntl.LOCK_EX if exclusive else fcntl.LOCK_SH
-        try:
-            fcntl.flock(descriptor, operation | fcntl.LOCK_NB)
-        except BlockingIOError:
-            raise ValueError(
-                "installation is in use; stop its Gateway, connector and dispatcher processes "
-                "before maintenance, or wait for the current maintenance command"
-            ) from None
-        yield descriptor
-    finally:
-        os.close(descriptor)
+    return paths.data_dir() / "installation-locks" / f"{key}.lock"
 
 
 def _service_preflight(*, uninstall: bool) -> list[str]:
+    if sys.platform != "linux":
+        return []  # Native service adapters remain separate P3.2/P4.6 milestones.
     from acp_gateway import service
 
     installed = []
@@ -128,6 +117,56 @@ def _service_preflight(*, uninstall: bool) -> list[str]:
         for role in installed:
             service.control("uninstall", role=role)
     return installed
+
+
+def _handoff(args, command: list[str], descriptor: int) -> None:
+    from acp_gateway import maintenance_worker
+    from acp_gateway.config import load_config
+
+    prefix = Path(sys.prefix).resolve()
+    bin_result = subprocess.run(  # noqa: S603 — resolved uv executable
+        [_uv(), "tool", "dir", "--bin"], capture_output=True, text=True, timeout=10, check=True
+    )
+    entry = Path(bin_result.stdout.strip()) / ("acpgw.exe" if os.name == "nt" else "acpgw")
+    if not entry.is_file():
+        raise ValueError("uv entry point is missing")
+    cfg = load_config(args.config, args.env_file)
+    database = cfg.settings.resolved_data_dir().resolve() / "gateway.db"
+    backup = paths.data_dir() / "updates" / lease_path().stem / uuid.uuid4().hex
+    backup.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+    plan = {
+        "operation": "rollback" if args.command == "update" and args.rollback else args.command,
+        "command": command,
+        "prefix": str(prefix),
+        "entry": str(entry.absolute()),
+        "database": str(database),
+        "config": str(cfg.config_path.resolve()) if cfg.config_path else None,
+        "env_file": str(cfg.env_file.resolve()) if cfg.env_file else None,
+        "expected_version": str(Version(args.version))
+        if args.command == "update" and args.version
+        else None,
+        "backup": str(backup),
+        "current": str(backup.parent / "current.json"),
+        "lease": str(lease_path()),
+        "pid": os.getpid(),
+    }
+    temporary = Path(tempfile.mkdtemp(prefix="acpgw-maintenance-"))
+    try:
+        helper = temporary / "worker.py"
+        helper.write_text(
+            Path(maintenance_worker.__file__).read_text(encoding="utf-8"), encoding="utf-8"
+        )
+        manifest = temporary / "plan.json"
+        manifest.write_text(json.dumps(plan), encoding="utf-8")
+        manifest.chmod(0o600)
+        base_python = str(Path(sys._base_executable).resolve())
+        if sys.platform != "win32":
+            os.set_inheritable(descriptor, True)
+        print("Private recovery snapshot and post-install health checks are enabled.", flush=True)
+        os.execv(base_python, [base_python, str(helper), str(manifest)])  # noqa: S606 — base interpreter
+    except BaseException:
+        shutil.rmtree(temporary, ignore_errors=True)
+        raise
 
 
 def check_update() -> int:
@@ -185,6 +224,8 @@ def maintenance(args) -> int:
     executable = _uv()
     if args.command == "uninstall":
         command = [executable, "tool", "uninstall", PACKAGE]
+    elif args.rollback:
+        command = []
     elif args.source or args.version:
         target = args.source
         if args.version:
@@ -194,11 +235,12 @@ def maintenance(args) -> int:
                 raise ValueError("invalid installation source")
             if Path(target).exists():
                 target = Path(target).resolve().as_uri()
-            if not target.startswith(
+            if target != PACKAGE and not target.startswith(
                 ("https://", "file://", "git+https://", "git+ssh://", "git+file://")
             ):
                 raise ValueError("source must be a wheel path/HTTPS URL or an explicit Git URL")
-            target = f"{PACKAGE} @ {target}"
+            if target != PACKAGE:
+                target = f"{PACKAGE} @ {target}"
         command = [executable, "tool", "install", "--force", "--python", "3.12", target]
     else:
         if info["source"] != "registry":
@@ -215,8 +257,5 @@ def maintenance(args) -> int:
     with runtime_lease(exclusive=True) as descriptor:
         _service_preflight(uninstall=args.command == "uninstall")
         print("Configuration, secrets and data are kept. Handing maintenance to uv.", flush=True)
-        # Replace this process before uv replaces/removes its Python environment.
-        # Keep the lease until uv exits; no managed daemon may start during replacement.
-        os.set_inheritable(descriptor, True)
-        os.execv(executable, command)  # noqa: S606 — resolved executable/argv, no shell
+        _handoff(args, command, descriptor)
     return 0

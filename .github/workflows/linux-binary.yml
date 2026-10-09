@@ -1,4 +1,4 @@
-name: Linux binary
+name: Platform release checks
 
 on:
   workflow_dispatch:
@@ -7,6 +7,32 @@ permissions:
   contents: read
 
 jobs:
+  native:
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: [windows-2025, macos-15, macos-15-intel, ubuntu-24.04-arm]
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@bec219d24cd3e171d82865faccec33120bb574f4 # v10.1.0
+        with:
+          python-version: '3.12'
+      - run: uv sync --frozen --group build
+      - run: uv build --wheel --out-dir dist/native
+      - run: uv run --frozen --group build python scripts/build_binary.py
+      - run: uv run --frozen python scripts/smoke_platform.py --wheel-dir dist/native --built-binary
+      - uses: actions/upload-artifact@v4
+        with:
+          name: acpgw-${{ matrix.runner }}
+          path: |
+            dist/*.tar.gz
+            dist/*.sha256
+            dist/*.build.json
+          if-no-files-found: error
   build:
     runs-on: ubuntu-22.04
     timeout-minutes: 20

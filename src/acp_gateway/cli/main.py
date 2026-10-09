@@ -34,6 +34,11 @@ def _build_parser() -> argparse.ArgumentParser:
     target = update.add_mutually_exclusive_group()
     target.add_argument("--check", action="store_true", help="check stable PyPI releases only")
     target.add_argument("--version", help="install an exact PyPI version")
+    target.add_argument(
+        "--rollback",
+        action="store_true",
+        help="restore the previous environment and selected database",
+    )
     target.add_argument("--from", dest="source", help="install a wheel path/URL or Git URL/ref")
     update.add_argument("--dry-run", action="store_true", help="inspect without changing files")
     update.add_argument(
