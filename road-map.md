@@ -360,13 +360,20 @@ uninstall подтверждён на целевых ОС, включая пер
 ### P3.6. Штатная установка, обновление и удаление
 
 **Статус:** PARTIAL — 2026-10-09. Первый Linux/WSL этап реализован:
-wheel/sdist и release bundle, uv CLI version/update/uninstall, runtime lease,
-сохранение данных, собственный Compose без build и опциональный вложенный образ.
-Общий набор: 707 passed, 3 optional Hermes skipped; wheel/bundle lifecycle,
+wheel/sdist и release bundle, uv CLI version/update/uninstall/rollback, runtime lease,
+backup окружения/entry point/SQLite с WAL, health check и восстановление при ошибке,
+собственный Compose без build и опциональный вложенный образ.
+Общий набор: 722 passed,
+3 optional Hermes skipped; wheel/bundle lifecycle,
 Git checkout/direct Git ref, автономный Linux-бинарник и Docker IP/WSS с двумя
 mock Goose прошли. Комплект с вложенным образом проверен через docker load
 и запуск Compose без checkout. Публичная публикация PyPI/GHCR/Release,
-другие ОС и автоматическое обновление ещё не выполнены.
+полная native-поддержка служб и автоматическое обновление ещё не выполнены.
+Нативные Linux ARM64, macOS ARM64/Intel и Windows x86_64 прошли wheel lifecycle,
+installer, update/recovery/rollback/uninstall и frozen CLI (manual run
+[37944420396](https://github.com/Lujker/acp-gateway/actions/runs/37944420396)).
+Windows внутренние команды явно ставят операцию в очередь с durable result и
+`update --status`; PowerShell-установщик ждёт проверенного результата helper.
 Приоритет перед серверной приёмкой:
 пройти её через штатную установку, затем отдельно подтвердить Git-путь.
 **Решение владельца:** установка без checkout, понятные внутренние команды
@@ -379,13 +386,24 @@ mock Goose прошли. Комплект с вложенным образом �
 2. **CLI жизненного цикла.** `version`, `update --check`, `update`, выбор версии
    или источника, `uninstall`. Определять uv-установку; чужие окружения,
    checkout, бинарник и Docker не изменять ошибочным способом. Первый этап —
-   Linux/WSL, обновление вручную после остановки процессов, сохранение данных.
+   обновление вручную после остановки процессов, сохранение данных.
+   **Реализовано:** отдельный helper вне заменяемого окружения, приватный snapshot,
+   проверка version/config/SQL, автоматическое восстановление при ошибке установки
+   или health check, явный `update --rollback` с согласованной БД. Установщики
+   используют тот же runtime guard при повторной установке. Откат БД заменяет
+   изменения после сохранённого snapshot; это описано в инструкции.
+   Windows updater выполняется после выхода исходного CLI, чтобы ОС освободила
+   python.exe; постановка в очередь и подтверждённый результат различаются явно.
 3. **Дистрибутив для VPS.** Готовый образ и самостоятельный deployment bundle
    с Compose, nginx, подготовкой приватных настроек и инструкцией. Запуск без
    клонирования; Git/source build — отдельный поддерживаемый сценарий.
 4. **Ручной выпуск.** Локальная сборка и smoke; wheel/sdist, deployment bundle,
    checksums; инструкции публикации PyPI, GitHub Release и Docker registry.
    Фактическая доступность публичных артефактов проверяется отдельно.
+   **Реализовано:** сборка отказывает dirty checkout (preview — отдельный флаг),
+   checksums относятся к текущему выпуску, опциональная ручная публикация GHCR
+   только после успешных проверок платформ и Docker. Для PyPI владельцу ещё
+   нужно создать аккаунт и настроить публикацию вне чата.
 5. **Приёмка обоих способов.** Изолированная установка → setup → daemon/API →
    обновление → повторный запуск → удаление; сохранность ключей, сессий и SQLite,
    ошибки загрузки/активного процесса. Отдельный прогон wheel и Git checkout.
@@ -393,10 +411,17 @@ mock Goose прошли. Комплект с вложенным образом �
 6. **Бинарники и платформы.** Установочные скрипты Linux/macOS/Windows,
    сборки x86_64/ARM64, проверки native Windows/macOS и их менеджеры служб;
    связать с P3.2/P4.6. Установка пакета не равна проверенной поддержке ОС.
+   **Реализовано:** общий native build, shell/PowerShell-установщики; ручная
+   CI-матрица Linux x86_64/ARM64, macOS Intel/ARM64, Windows x86_64. Native smoke
+   проверяет wheel daemon, runtime guard, installer, update/recovery/rollback/
+   uninstall; frozen smoke — version/setup/config. Windows ARM64, полный frozen
+   ACP smoke на Windows/macOS, подпись ОС и native службы пока не подтверждены.
 7. **Автоматизация обновления.** Подписанные артефакты, подготовка новой версии,
    окно без заданий, backup/health check, совместимость схемы и протокола,
-   восстановление при сбое. Фоновая проверка и автообновление — opt-in;
-   ранний ручной updater не обещает автоматического отката БД.
+   восстановление при сбое. Фоновая проверка и автообновление — opt-in.
+   Backup/health/recovery ручного uv updater готовы. Подписанные каналы,
+   фоновая проверка, автоматическое окно без заданий, protocol-совместимость
+   и самообновление бинарников ещё не реализованы.
 
 Критерий первого этапа: для установки и эксплуатации не нужен checkout;
 внутренние команды uv-пути проверены вне репозитория; deployment bundle работает

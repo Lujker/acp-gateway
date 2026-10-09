@@ -40,6 +40,9 @@ def smoke(wheel: Path, binary: Path | None = None):
                 "UV_TOOL_DIR": str(root / "tools"),
                 "UV_TOOL_BIN_DIR": str(root / "bin"),
                 "HOME": str(root),
+                "USERPROFILE": str(root),
+                "LOCALAPPDATA": str(root / "local-app-data"),
+                "APPDATA": str(root / "roaming-app-data"),
                 "XDG_CONFIG_HOME": str(root / "platform-config"),
                 "XDG_DATA_HOME": str(root / "platform-data"),
             }
