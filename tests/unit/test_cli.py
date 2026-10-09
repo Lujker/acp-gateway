@@ -1,3 +1,5 @@
+import subprocess
+import sys
 import textwrap
 
 import pytest
@@ -17,6 +19,21 @@ CONFIG = textwrap.dedent(
         default_cwd: /home/user/work
     """
 )
+
+
+def test_entrypoint_does_not_map_extensions_needed_by_windows_maintenance():
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            "import sys; import acp_gateway.cli.main; "
+            "assert not any(name.startswith(('pydantic_core', 'cryptography')) "
+            "for name in sys.modules)",
+        ],
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode == 0, result.stderr
 
 
 def test_version(capsys):
