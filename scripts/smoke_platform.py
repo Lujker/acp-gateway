@@ -61,6 +61,26 @@ def smoke(wheel: Path, binary: Path | None = None):
         def command(*args, **kwargs):
             return run([*prefix, *args], **kwargs)
 
+        installer = root / "installer"
+        installer.mkdir()
+        shutil.copy(wheel, installer / wheel.name)
+        if os.name == "nt":
+            shutil.copy(REPO / "scripts/install_release.ps1", installer / "install.ps1")
+            powershell = shutil.which("pwsh") or shutil.which("powershell")
+            if powershell is None:
+                raise RuntimeError("PowerShell is required for the Windows installer check")
+            install_command = [
+                powershell,
+                "-NoProfile",
+                "-File",
+                str(installer / "install.ps1"),
+                "-ConfigDir",
+                str(config_dir),
+            ]
+        else:
+            shutil.copy(REPO / "scripts/install_release.sh", installer / "install.sh")
+            install_command = ["sh", str(installer / "install.sh"), "--config-dir", str(config_dir)]
+
         run([uv, "tool", "install", "--python", "3.12", str(wheel.resolve())])
         command("setup", "--config-dir", str(config_dir))
         settings = yaml.safe_load(config.read_text())
@@ -110,6 +130,7 @@ def smoke(wheel: Path, binary: Path | None = None):
         try:
             command("update", "--from", str(wheel.resolve()), ok=False)
             command("uninstall", ok=False)
+            run(install_command, ok=False)
         finally:
             child.terminate()
             child.wait(20)
@@ -162,24 +183,7 @@ def smoke(wheel: Path, binary: Path | None = None):
         )
         require(env_file.read_bytes() == secret, "native acceptance check failed")
 
-        if os.name == "nt":
-            installer = root / "installer"
-            installer.mkdir()
-            shutil.copy(wheel, installer / wheel.name)
-            shutil.copy(REPO / "scripts/install_release.ps1", installer / "install.ps1")
-            powershell = shutil.which("pwsh") or shutil.which("powershell")
-            if powershell is None:
-                raise RuntimeError("PowerShell is required for the Windows installer check")
-            run(
-                [
-                    powershell,
-                    "-NoProfile",
-                    "-File",
-                    str(installer / "install.ps1"),
-                    "-ConfigDir",
-                    str(config_dir),
-                ]
-            )
+        run(install_command)
         command("uninstall")
         require(not entry.exists(), "native acceptance check failed")
         require(env_file.read_bytes() == secret, "native acceptance check failed")

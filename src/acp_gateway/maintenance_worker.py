@@ -216,8 +216,10 @@ def main() -> int:
     manifest = Path(sys.argv[1])
     plan = json.loads(manifest.read_text(encoding="utf-8"))
     try:
-        # POSIX exec preserves this process/lease. Windows CRT exec may create a
-        # replacement process: wait for the original to exit and reacquire safely.
+        # Windows parent waits for our exit code and keeps the exclusive lease.
+        # POSIX exec preserves this process and its lease.
+        if sys.platform == "win32" and plan.get("parent_holds_lease"):
+            return execute(plan, Path(plan["backup"]))
         if sys.platform == "win32":
             import ctypes
             from ctypes import wintypes

@@ -21,7 +21,11 @@ if ($LASTEXITCODE -ne 0) { throw 'Cannot locate uv tool executables.' }
 $entry = Join-Path $binDir 'acpgw.exe'
 $constraints = Join-Path $PSScriptRoot 'requirements.lock.txt'
 if (Test-Path -LiteralPath $entry) {
-    $arguments = @('update', '--from', $From)
+    $arguments = @()
+    if ($ConfigDir) {
+        $arguments += @('--config', (Join-Path $ConfigDir 'config.yaml'), '--env-file', (Join-Path $ConfigDir '.env'))
+    }
+    $arguments += @('update', '--from', $From)
     if (Test-Path -LiteralPath $constraints) { $arguments += @('--constraints', $constraints) }
     Invoke-Checked $entry $arguments
 } else {

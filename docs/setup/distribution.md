@@ -1,7 +1,8 @@
 # Install, update and remove ACP Gateway
 
-Linux/WSL is the verified first target. Python package installation on native
-Windows/macOS does not yet imply tested service or internal updater support.
+Linux/WSL is the verified first target. Manual native runner checks also cover
+Windows/macOS and Linux ARM; their results are recorded in the roadmap.
+Native Windows/macOS service adapters remain separate milestones.
 All modes keep configuration, enrollment keys, pins and SQLite outside the
 installed program. Stop jobs and processes before replacing an installation.
 
@@ -25,6 +26,11 @@ acpgw version
 acpgw config check
 ```
 
+On Windows, extract with `tar -xzf acpgw-0.1.0-bundle.tar.gz`, enter the
+`acpgw-0.1.0` directory and run `powershell -NoProfile -File .\install.ps1`.
+Use `-ConfigDir C:\path\to\config` for a custom configuration directory.
+The installer does not change the machine's PowerShell execution policy.
+
 Install [uv](https://docs.astral.sh/uv/getting-started/installation/) first.
 The installer requests Python 3.12 through uv. It installs the adjacent wheel
 with the release's locked dependencies, then runs `acpgw setup`. Existing config
@@ -47,14 +53,14 @@ After the project is published in PyPI, these registry commands become available
 ```bash
 uv tool install --python 3.12 acp-gateway
 acpgw setup
-uv tool upgrade acp-gateway
-uv tool uninstall acp-gateway
+acpgw update
+acpgw uninstall
 ```
 
 Publication is a separate release step. Do not assume a PyPI package or Docker
 image exists because its name appears in an example. pipx can install the same
 wheel/package; with pip, use a dedicated virtual environment. Internal mutation
-commands currently manage only installations owned by `uv tool` on Linux/WSL.
+commands manage only installations owned by `uv tool`.
 
 ## Internal commands
 
@@ -94,10 +100,14 @@ uses the same environment. Older versions cannot provide that lease: stop their
 processes yourself. All participating commands must use the same platform data
 root (HOME/XDG environment). Managed units from another installation are refused.
 
-The updater hands over to uv before replacing its own environment. It preserves
-user files, does not automatically start services, and does not promise an
-atomic upgrade or automatic rollback. After success, verify the version and
-configuration; start the services that were previously running:
+The updater copies a standard-library helper outside the tool environment and
+runs it with the base Python interpreter. Before invoking uv it creates a private
+snapshot of the environment, entry point and selected SQLite database (including
+committed WAL data). It checks the new entry point, version, configuration and
+SQL migrations before reporting success. Installation or health-check failure
+restores the snapshot. Configuration, secrets and pins remain in place.
+An abrupt power loss or external interference is not a transactional guarantee.
+Services stay stopped; after success, start the services that were running:
 
 ```bash
 acpgw version
@@ -106,11 +116,28 @@ acpgw service start
 acpgw service --role connector start
 ```
 
-If uv reports failure, inspect `acpgw version` before restarting. Keep the previous
-release bundle available for explicit reinstall. Copy private configuration and
-back up SQLite while stopped before a version change. A database migrated by a
-newer version may not work with an older program: restore a matching backup when
-necessary. uv commands run directly outside `acpgw` bypass its runtime guard.
+One recovery snapshot is retained under the platform data directory's
+`updates/<installation-id>/`; a later successful operation replaces it. A failed
+recovery keeps files for inspection. These files can include private source URLs
+and database contents; treat them like other private application data.
+
+To explicitly restore the previous program **and its matching database snapshot**:
+
+```bash
+acpgw update --rollback
+```
+
+Stop processes first and use the same `--config`/`--env-file` as during the update.
+Rollback restores database contents from before that update: later sessions,
+enrollments and other database changes are replaced. Back up the current database
+while stopped before choosing this operation. The rollback retains a snapshot of
+the state it replaced. Only the selected database is backed up; if several configs
+share one installation, back up their other databases separately.
+
+Release and checkout installers use this guarded updater when an `acpgw` entry
+point already exists. Direct `uv tool install/upgrade/uninstall` bypass these
+checks. An older version lacking these commands requires a one-time package-manager
+replacement after stopping its processes and backing up its data.
 
 Remove the stopped tool and its managed units:
 
@@ -121,8 +148,8 @@ acpgw uninstall
 Both units are checked before any removal. Configuration, secrets, keys, pins
 and SQLite remain. There is no implicit purge. For a non-uv installation, use
 `service uninstall` for its managed units and the original package manager for
-the program. Native Windows/macOS self-replacement and binary auto-update are
-separate milestones; ordinary package-manager installation/removal remains possible.
+the program. Binary self-update, signed release verification and opt-in background
+updates remain separate work; the current updater runs only on an explicit command.
 
 ## Git installation: separate acceptance path
 
@@ -184,6 +211,7 @@ From a clean reviewed checkout:
 uv run --frozen python scripts/build_release.py --image ghcr.io/lujker/acp-gateway:0.1.0
 uv run --frozen python scripts/smoke_installation.py dist/release/acp_gateway-0.1.0-py3-none-any.whl
 uv run --frozen python scripts/smoke_installation.py dist/release/acp_gateway-0.1.0-py3-none-any.whl --git-ref HEAD --bundle dist/release/acpgw-0.1.0-bundle.tar.gz
+uv run --frozen python scripts/smoke_platform.py dist/release/acp_gateway-0.1.0-py3-none-any.whl
 ```
 
 To produce one bundle that can be transferred to a VPS before registry
@@ -197,6 +225,24 @@ The build does not publish anything. Use a clean checkout for the final release.
 The smoke installs into temporary uv directories, tests a second fixture version,
 failure and active-runtime refusal, and preserves data through removal. Its
 optional Git path clones the selected local commit and runs the checkout installer.
+The native platform smoke additionally exercises failed SQL health recovery,
+explicit rollback and the Windows installer. The manually triggered
+`Platform release checks` workflow runs the wheel lifecycle and frozen CLI on
+native runners. No push/PR/tag/release trigger is configured.
+
+### First PyPI publication
+
+The owner needs a [PyPI account](https://pypi.org/account/register/) with verified
+email and two-factor authentication. Create an API token in PyPI account settings
+outside chat. For the first publication the project does not yet exist, so a
+project-scoped token is not yet available. After publishing, revoke the initial
+token and use a token scoped to `acp-gateway` for later releases. Never commit a
+token, paste it in an issue, or include it in shell history.
+
+Set `UV_PUBLISH_TOKEN` through your secret manager or a hidden terminal prompt,
+then run the command below against the reviewed artifacts. Verify the resulting
+project's owner and repository URL and install into a fresh uv tool environment.
+Creating an account alone does not publish or reserve this package name.
 
 After reviewing and testing the artifacts, publish the exact wheel/sdist using
 PyPI credentials configured outside the repository:
