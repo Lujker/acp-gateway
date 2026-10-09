@@ -6,13 +6,15 @@ import argparse
 import sys
 from collections.abc import Sequence
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import httpx
-from pydantic import ValidationError
 
 from acp_gateway import __version__, paths
-from acp_gateway.config import AppConfig, load_config
 from acp_gateway.log import redact_text
+
+if TYPE_CHECKING:
+    from acp_gateway.config import AppConfig
 
 
 def _build_parser() -> argparse.ArgumentParser:
@@ -230,6 +232,10 @@ def main(argv: Sequence[str] | None = None) -> int:
 
 
 def _run_configured(args) -> int:
+    from pydantic import ValidationError
+
+    from acp_gateway.config import load_config
+
     if args.command == "paths":
         return _cmd_paths()
     if args.command == "setup" or (args.command == "service" and args.service_command != "install"):
