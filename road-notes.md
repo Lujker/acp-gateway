@@ -1533,6 +1533,40 @@ P3.6 остаётся PARTIAL: signed channels/background auto-update, Windows A
 native службы и полная frozen ACP-приёмка на Windows/macOS ещё не реализованы;
 живая проверка VPS/два компьютера/Telegram — следующий этап владельца по runbook.
 
+## 2026-10-09 — P3.6: PyPI опубликован и проверен
+
+Владелец создал аккаунт PyPI и pending GitHub publisher. Подготовлен и проверен
+ручной workflow `linux-binary.yml`, environment `pypi`; PyPI OIDC permission
+выдан только job публикации. Режим PyPI пропускает build matrix/GHCR, скачивает
+готовые wheel/sdist из опубликованного GitHub Release и проверяет SHA256SUMS.
+Dry-run включён по умолчанию. Пакеты не пересобираются и не заменяются.
+
+Dry-run https://github.com/Lujker/acp-gateway/actions/runs/37948174825 passed.
+Первый настоящий запуск получил `invalid-publisher`: запись PyPI фактически ещё
+не была создана. Владелец исправил это, повтор run
+https://github.com/Lujker/acp-gateway/actions/runs/37948442246 (attempt 2) прошёл.
+Новый immutable OIDC subject GitHub не требовал изменения: PyPI не использует
+`sub` для поиска publisher. Настройки OIDC репозитория не менялись.
+
+Публичный пакет: https://pypi.org/project/acp-gateway/0.1.0/.
+SHA-256 скачанных без авторизации файлов совпадают с проверенными release assets:
+
+- wheel: `5d5595ef5ed4e02e76db775597ca4dacb9ea55f4b16d078c0e5e9791b02ee6b8`;
+- sdist: `7d6e43a83b6bbbfdc46a951c491f888d9c8c7dec6339052b8218353fa98abec1`.
+
+Изолированный registry smoke вне checkout, с временными uv tool/config/data
+каталогами и отключённым uv cache: `uv tool install --python 3.12
+acp-gateway==0.1.0` → version/uv manager → setup → enrollment → daemon/status →
+запрет update/uninstall при живом daemon → остановка → `update --check`
+(latest stable 0.1.0, обновлений нет) → `update --version 0.1.0` из реестра →
+rollback → uninstall. Все шаги passed. Настройки/ключи сохранены, записи
+компьютеров совпали после update и rollback; data directory остался после
+uninstall. Пользовательская установка и службы не менялись.
+
+README и distribution.md теперь дают прямой штатный PyPI-путь. Первый этап
+P3.6 выполнен; native службы, подписанные каналы/фоновое обновление и настоящая
+VPS/два компьютера/Telegram-приёмка остаются открытыми.
+
 ## Незакрытые вопросы
 
 - **Автотесты TLS/SSE** — наблюдавшиеся причины и исправления тестового стенда

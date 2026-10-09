@@ -48,18 +48,21 @@ acpgw setup
 This direct command uses wheel dependency ranges. Use the bundle installer or
 `--constraints requirements.lock.txt` for the release's tested dependency set.
 
-After the project is published in PyPI, these registry commands become available:
+Version [0.1.0 is published in PyPI](https://pypi.org/project/acp-gateway/0.1.0/).
+Install directly from the registry without cloning:
 
 ```bash
-uv tool install --python 3.12 acp-gateway
+uv tool install --python 3.12 acp-gateway==0.1.0
+uv tool update-shell
 acpgw setup
 acpgw update
 acpgw uninstall
 ```
 
-Publication is a separate release step. Do not assume a PyPI package or Docker
-image exists because its name appears in an example. pipx can install the same
-wheel/package; with pip, use a dedicated virtual environment. Internal mutation
+The matching public Docker image is `ghcr.io/lujker/acp-gateway:0.1.0`
+(Linux x86_64); the deployment bundle is attached to the
+[GitHub Release](https://github.com/Lujker/acp-gateway/releases/tag/v0.1.0).
+pipx can install the same wheel/package; with pip, use a dedicated virtual environment. Internal mutation
 commands manage only installations owned by `uv tool`.
 
 ## Internal commands
