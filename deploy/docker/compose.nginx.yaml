@@ -1,0 +1,18 @@
+# Standalone HTTPS proxy; requires runtime/tls/{fullchain,privkey}.pem.
+services:
+  nginx:
+    image: nginx:alpine
+    restart: unless-stopped
+    depends_on: [gateway]
+    ports:
+      - "${ACPGW_HTTPS_BIND:-0.0.0.0}:${ACPGW_HTTPS_PORT:-443}:443"
+    volumes:
+      - ./runtime/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./nginx-location.conf.example:/etc/nginx/acpgw-location.conf:ro
+      - ./runtime/tls:/etc/nginx/tls:ro
+    networks: [proxy]
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"

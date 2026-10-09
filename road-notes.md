@@ -1357,9 +1357,8 @@ Ruff check/format, scanner и git diff --check проходят. Общий на
 
 ## 2026-10-09 — подготовка Docker/VPS, двух Goose и Telegram; TLS/SSE fixtures
 
-Владелец выбрал следующую живую приёмку: отдельный checkout на VPS контроллера
-AKV, Gateway в Docker; сначала ws://IP:18766/acpgw/connect, затем
-wss://akv-server.com/acpgw/connect через существующее внутреннее зеркало.
+Владелец выбрал следующую живую приёмку: отдельный checkout на VPS, Gateway в Docker; сначала ws://IP:18766/acpgw/connect, затем
+wss://gateway.example.com/acpgw/connect через собственный nginx.
 На home/work — исходящие Linux/WSL connectors и Goose на обоих; Hermes как
 ACP-агент откладывается. Взаимодействие и approvals — через Telegram.
 
@@ -1370,18 +1369,14 @@ bind state для SQLite/ключей, UID/GID владельца, read-only roo
 только ingress, по умолчанию на loopback, публичный bind выбирается явно.
 Owner API/MCP остаются на loopback внутри контейнера, доступны через compose exec.
 
-AKV изучен через CodeGraph/Graphify и точный nginx/Compose source. У контроллера
-external app-network и nginx_controller на 80/443/17443. Зеркало — L4/SNI passthrough,
-TLS завершается на origin. Подготовлен один точный HTTPS location с guard по
-akv-server.com, dynamic Docker DNS, WS headers и без переписывания URI.
-Полный текущий конфиг AKV с добавленным location прошёл nginx -t в отдельном
-контейнере без зависимых upstream. Работающие AKV-службы, его исходники/конфиги,
-firewall, БД, текущий Gateway и установленный бинарник не менялись.
+Подготовлены собственная Docker-сеть проекта, отдельный nginx и точный HTTPS
+location с dynamic Docker DNS, WS headers и без переписывания URI.
+Работающие службы, исходники других проектов, firewall и БД не менялись.
 
 Runbook docs/setup/vps-acceptance.md содержит подготовку/настройку обеих машин,
 enrollment и приватную передачу разных ключей, проверку online против agent_ready,
-Telegram-сценарии, переход IP → домен, кандидат nginx + проверку/backup/reload/
-rollback с сохранением inode bind-mounted файла и снятие временного public port.
+Telegram-сценарии, переход IP → домен с собственным nginx и снятие временного
+public port. Русский перевод — docs/setup/vps-acceptance.ru.md.
 Durable recovery неопределённого результата и продолжение in-flight job после
 рестарта не обещаются; prompts автоматически не переигрываются.
 
@@ -1419,6 +1414,19 @@ files, включая новые source, без сканирования ignored
 опубликованного owner API. Подготовка приватных файлов и сохранение токенов при
 повторе, оба Compose-варианта также проверены. Реальный Telegram Bot API,
 несколько физических компьютеров и серверная firewall-конфигурация — живая приёмка.
+
+## 2026-10-09 — общая инструкция VPS и русский перевод
+
+По уточнению владельца документация и шаблоны используют абстрактный VPS
+и gateway.example.com. Добавлены отдельный compose.nginx.yaml, полный шаблон
+nginx и собственная сеть Compose; чужой reverse proxy больше не требуется.
+prepare.py создаёт приватный nginx.conf и каталог TLS без перезаписи настроек.
+Полный русский перевод находится рядом: docs/setup/vps-acceptance.ru.md.
+Команды в английской и русской версиях сверены автоматически.
+Четыре комбинации Compose и nginx -t с настоящими тестовыми TLS-файлами
+прошли в отдельном временном проекте; повторная подготовка сохраняет токены.
+Обновлённый Docker smoke прошёл за 89.8 с: IP, WSS/nginx, два mock Goose,
+неверный ключ, отключение одного маршрута и восстановление сессии.
 
 ## Незакрытые вопросы
 

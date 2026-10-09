@@ -1,10 +1,9 @@
-# Insert INSIDE the existing HTTPS server {} in AKV's nginx/nginx.conf.
-# The chosen internal domain is akv-server.com. This exact path
+# Included inside the HTTPS server in nginx.conf.example.
+# This exact path
 # must match connector.connect_path. Keep the variable proxy_pass WITHOUT a URI:
 # Docker DNS is resolved at request time; an absent Gateway cannot break reload.
-# AKV's http {} already defines resolver 127.0.0.11 and $connection_upgrade.
+# The enclosing http {} defines resolver 127.0.0.11 and $connection_upgrade.
 location = /acpgw/connect {
-    if ($host != akv-server.com) { return 404; }
     set $acpgw_ingress acpgw-dispatcher:8766;
     proxy_pass http://$acpgw_ingress;
     proxy_http_version 1.1;

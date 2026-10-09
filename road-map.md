@@ -394,9 +394,8 @@ TLS временно выключен для тестов; домен/root/subpa
 
 2026-10-09: Dockerfile, отдельный Compose-проект, приватные runtime файлы,
 IP:18766 и точный WSS path за nginx готовы. Docker smoke с двумя mock Goose,
-nginx/WSS и L4/PROXY mirror прошёл. Полный конфиг AKV с новым location прошёл
-nginx -t в отдельном контейнере. Работающие AKV-службы, конфиги и установленный
-бинарник не менялись. Runbook — [`docs/setup/vps-acceptance.md`](docs/setup/vps-acceptance.md).
+nginx/WSS и L4/PROXY mirror прошёл. Конфигурация nginx проверена в отдельном контейнере.
+Работающие службы и установленный бинарник не менялись. Runbook — [`docs/setup/vps-acceptance.md`](docs/setup/vps-acceptance.md).
 
 - Постоянный Gateway на VPS со стабильным IP и/или доменом принимает запросы
   из Telegram и других каналов, маршрутизирует их и подтверждения выбранным
@@ -476,7 +475,7 @@ launchd-агент; ядро уже кроссплатформенное (см. 
 ## 8. Очередь дальнейшей разработки
 
 **Ближайший шаг по решению владельца 2026-10-09:** живая приёмка VPS в Docker
-сначала по IP:18766, затем `wss://akv-server.com/acpgw/connect` через зеркало;
+сначала по IP:18766, затем `wss://gateway.example.com/acpgw/connect` через собственный nginx;
 Goose на home/work, взаимодействие и approvals через Telegram. Hermes как
 ACP-агент — позже. Подготовка, команды, ожидаемые результаты и откат nginx —
 `docs/setup/vps-acceptance.md`. После приёмки основной агентский трек — recovery

@@ -1,9 +1,11 @@
 # VPS, two computers and Telegram acceptance
 
+[Русская версия](vps-acceptance.ru.md)
+
 This runbook prepares the first live deployment: the **Gateway** runs on the
 VPS in Docker; an outgoing **connector** runs on each Linux/WSL computer;
 Goose runs locally on both computers. Start with a direct IP/port connection,
-then switch to `wss://akv-server.com/acpgw/connect` through the existing mirror.
+then switch to `wss://gateway.example.com/acpgw/connect` through your own nginx.
 Hermes as an ACP agent is a later interoperability check.
 
 ```text
@@ -15,7 +17,7 @@ Telegram ──> VPS Gateway ──> home/goose
 
 ## 1. Prepare the VPS checkout
 
-Clone alongside AKV, in a separate directory, for example `~/acp-gateway`.
+Clone into a separate directory, for example `~/acp-gateway`.
 Requirements: Docker Engine with Compose v2+, git, Python 3 for the small
 preparation script. Runtime Python and application dependencies are in the image.
 
@@ -46,18 +48,10 @@ The VPS does not need either Goose secret. Only one process may poll this bot;
 stop any development Gateway polling the same token before enabling this one.
 Existing webhooks must be removed explicitly; see [Telegram setup](telegram.md).
 
-The AKV controller uses an external Docker network named `app-network`.
-Check its actual name and that `nginx_controller` belongs to it:
-
-```bash
-docker inspect nginx_controller --format '{{json .NetworkSettings.Networks}}'
-docker network inspect app-network --format '{{.Name}}'
-```
-
-If the deployed name differs, add `ACPGW_PROXY_NETWORK=ACTUAL_NAME` to
-`deploy/docker/.env`. Do not create or replace AKV's existing network.
-Gateway uses a distinct Compose project (`acpgw`), its own SQLite and bounded
-resources, no published 80/443 ports, no Docker socket and no AKV volumes.
+Gateway uses a distinct Compose project (`acpgw`), its own managed Docker network,
+SQLite and bounded resources. The base configuration publishes no host ports.
+It does not require any existing reverse proxy or another application's network.
+Preparation also creates `runtime/nginx.conf` and `runtime/tls/` for stage 2.
 
 ```bash
 docker compose build
@@ -85,8 +79,7 @@ docker compose logs --tail 50 gateway
 
 Allow TCP 18766 from the two test computers in the server's existing firewall
 policy, including Docker forwarding rules if used. Do not reset the firewall
-or run an AKV deployment to expose this port. AKV's mirror-only rules on
-80/443 stay unchanged. The first URL is:
+or change unrelated services to expose this port. The first URL is:
 
 ```text
 ws://VPS_IP:18766/acpgw/connect
@@ -184,57 +177,52 @@ durable recovery of an uncertain result is still future work. A Gateway restart
 does not resume in-flight jobs automatically. Final answers are separate messages;
 streaming edits are not an acceptance requirement for this stage.
 
-## 5. Second stage: akv-server.com through its mirror
+## 5. Second stage: domain and your own nginx
 
-The inspected AKV setup has an L4/SNI mirror: it forwards TLS bytes to origin
-443 or 17443 with PROXY protocol. TLS terminates at `nginx_controller`; the
-mirror does not route HTTP paths. Consequently the new location belongs only
-in the **origin controller's HTTPS server block**. Mirror DNS/SNI/firewall,
-existing certificates and all existing `/vpn/`, `/node-deployer/` and other
-locations can stay as configured. Verify the deployed setup matches this
-checkout before applying the change.
+Point your domain's DNS record at the VPS IP. `gateway.example.com` is a
+placeholder: replace it with your own domain in `runtime/nginx.conf` and in
+connector URLs. Obtain a trusted TLS certificate using your certificate provider
+or ACME client; certificate issuance/renewal is managed separately from this stack.
+Place its full chain in `runtime/tls/fullchain.pem` and private key in
+`runtime/tls/privkey.pem`. Keep the key private (`chmod 600`).
 
-Use [the prepared location](../../deploy/docker/nginx-location.conf.example)
-inside the existing `server { listen 443 ssl; ... }` block in
-`akv-vpn-controller/nginx/nginx.conf`. That block also serves 17443. Keep the
-exact path `/acpgw/connect` and domain guard `akv-server.com`. The existing
-Docker resolver and `$connection_upgrade` map are reused. The variable upstream
-is resolved at request time, so an absent Gateway cannot prevent nginx reload.
-Owner API, MCP and health endpoints are not proxied.
+The optional [nginx Compose file](../../deploy/docker/compose.nginx.yaml) starts
+a dedicated nginx on the project's network. It exposes HTTPS port 443; no HTTP
+port is required by this configuration. Check that 443 is free (`ss -ltn sport = :443`).
+If another service owns it, choose a free port with `ACPGW_HTTPS_PORT=18443` in
+`.env` and include `:18443` in connector URLs. Do not stop another service to free
+its port. Allow the selected HTTPS port in your firewall policy.
 
-Prepare and review a **candidate copy** rather than editing the running file
-first. From the controller checkout, with `nginx.candidate.conf` containing
-the complete config plus the one location:
+The [nginx configuration](../../deploy/docker/nginx.conf.example) includes
+[the exact connector location](../../deploy/docker/nginx-location.conf.example).
+It preserves `/acpgw/connect` and WebSocket/authentication headers. Docker DNS is
+resolved at request time, so an absent Gateway cannot prevent nginx from starting.
+Owner API and MCP are not proxied; other paths return 404.
 
-```bash
-diff -u nginx/nginx.conf nginx.candidate.conf
-docker cp nginx.candidate.conf nginx_controller:/tmp/acpgw-candidate.conf
-docker exec nginx_controller nginx -t -c /tmp/acpgw-candidate.conf
-```
-
-Record the current responses of `/`, `/vpn/health` and `/node-deployer/` through
-`https://akv-server.com` before applying; compare after reload. Keep a private
-backup of the original config. Once the candidate passes, update the mounted
-file **in place** and reload, without rebuilding/restarting the AKV stack:
+Keep the direct test port available while validating HTTPS:
 
 ```bash
-cp -p nginx/nginx.conf nginx.before-acpgw.conf
-cat nginx.candidate.conf > nginx/nginx.conf
-docker exec nginx_controller nginx -t
-docker exec nginx_controller nginx -s reload
+docker compose -f compose.yaml -f compose.direct.yaml -f compose.nginx.yaml config --quiet
+docker compose -f compose.yaml -f compose.direct.yaml -f compose.nginx.yaml run --rm --no-deps nginx nginx -t
+docker compose -f compose.yaml -f compose.direct.yaml -f compose.nginx.yaml up -d
+docker compose -f compose.yaml -f compose.direct.yaml -f compose.nginx.yaml logs --tail 50 nginx
 ```
 
-Writing in place preserves the inode of the file already bind-mounted by AKV;
-do not replace it with `mv`. If validation or the existing-route checks fail,
-restore the backup in place, validate and reload again. Preserve the reviewed
-location in the controller's source configuration for subsequent AKV deployments.
-Do not run `setup.sh`, `compose down`, change controller images, or touch its DB
-to add this route.
+After certificate renewal or configuration edits, validate and reload nginx:
+
+Edit the mounted `runtime/nginx.conf` in place. If your editor replaces the file
+instead, recreate the nginx container with the same Compose files and
+`up -d --force-recreate nginx` so it mounts the new file before validation.
+
+```bash
+docker compose -f compose.yaml -f compose.nginx.yaml exec nginx nginx -t
+docker compose -f compose.yaml -f compose.nginx.yaml exec nginx nginx -s reload
+```
 
 Restart each foreground connector with only the URL changed to:
 
 ```text
-wss://akv-server.com/acpgw/connect
+wss://gateway.example.com/acpgw/connect
 ```
 
 Use normal CA/hostname verification for the domain's public certificate; no
@@ -247,13 +235,13 @@ Once both computers work over WSS, remove the temporary IP-port exposure:
 
 ```bash
 # From ACP Gateway's deploy/docker, with no active jobs:
-docker compose -f compose.yaml up -d
-docker compose ps
+docker compose -f compose.yaml -f compose.nginx.yaml up -d
+docker compose -f compose.yaml -f compose.nginx.yaml ps
 ```
 
 Remove the temporary 18766 firewall allowance through the existing firewall
 management path. This recreation briefly disconnects the connectors; they
-should reconnect to WSS. AKV containers are not part of this Compose project.
+should reconnect to WSS. This Compose project owns only its Gateway, nginx and network.
 After acceptance, install the local connector services using
 [the connector service instructions](service.md#separate-computer-connector-service).
 
@@ -269,11 +257,11 @@ uv run python scripts/smoke_docker.py --image acpgw:local
 It exercises the actual Docker runtime/Compose configuration, direct IP/port,
 two independent mock Goose agents, exact nginx path, WSS, a separate L4 mirror
 with PROXY protocol, invalid credentials, disconnect isolation and session load.
-It removes only its temporary containers/network and uses no real bot or AKV
+It removes only its temporary containers/network and uses no real bot or production
 services. The automated Telegram relay tests use real aiogram types with a fake
 Bot API session; real Telegram delivery and physical hosts remain the live test.
 
 The nginx WebSocket directives follow the
 [official nginx documentation](https://nginx.org/en/docs/http/websocket.html);
-the shared external network follows
+the project network follows
 [Docker Compose network semantics](https://docs.docker.com/reference/compose-file/networks/).

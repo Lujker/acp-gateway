@@ -2,7 +2,7 @@
 
 Run after building the image: uv run python scripts/smoke_docker.py --image acpgw:local
 All containers, networks, ports, config, DB and credentials are disposable.
-No production services, Telegram API, local configuration or AKV files are used.
+No production services, Telegram API, local configuration files are used.
 """
 
 import argparse
@@ -63,18 +63,17 @@ async def smoke(image):
         (root / "runtime/gateway.yaml").write_text(yaml.safe_dump(settings))
         (root / "runtime/gateway.env").write_text(f"ACPGW_API_TOKEN={secrets.token_urlsafe(32)}\n")
         (root / "runtime/gateway.env").chmod(0o600)
-        (root / ".env").write_text(
-            f"ACPGW_UID={os.getuid()}\nACPGW_GID={os.getgid()}\nACPGW_PROXY_NETWORK={network}\n"
-        )
+        (root / ".env").write_text(f"ACPGW_UID={os.getuid()}\nACPGW_GID={os.getgid()}\n")
         (root / "override.yaml").write_text(
             yaml.safe_dump(
                 {
+                    "networks": {"proxy": {"external": True, "name": network}},
                     "services": {
                         "gateway": {
                             "image": image,
                             "ports": ["127.0.0.1::8766"],
                         }
-                    }
+                    },
                 }
             )
         )
@@ -209,16 +208,18 @@ async def smoke(image):
             connections.clear()
             tasks.clear()
 
-            cert, _key = make_cert(root, hostname="akv-server.com")
+            cert, _key = make_cert(root, hostname="gateway.example.com")
             snippet = (REPO / "deploy/docker/nginx-location.conf.example").read_text()
-            (root / "origin.conf").write_text(
-                "events {}\nhttp { resolver 127.0.0.11 valid=10s;\n"
-                "map $http_upgrade $connection_upgrade { default upgrade; '' close; }\n"
-                "server { listen 443 ssl; listen 17443 ssl proxy_protocol;\n"
-                "ssl_certificate /certs/cert-False.pem; ssl_certificate_key /certs/key-False.pem;\n"
-                + snippet
-                + "\nlocation / { return 404; } } }\n"
+            origin_config = (REPO / "deploy/docker/nginx.conf.example").read_text()
+            origin_config = (
+                origin_config.replace(
+                    "listen 443 ssl;", "listen 443 ssl; listen 17443 ssl proxy_protocol;"
+                )
+                .replace("/etc/nginx/tls/fullchain.pem", "/certs/cert-False.pem")
+                .replace("/etc/nginx/tls/privkey.pem", "/certs/key-False.pem")
+                .replace("include /etc/nginx/acpgw-location.conf;", snippet)
             )
+            (root / "origin.conf").write_text(origin_config)
             (root / "mirror.conf").write_text(
                 "events {}\n"
                 "stream { server { listen 443; ssl_preread on; "
@@ -249,10 +250,12 @@ async def smoke(image):
             original = socket.getaddrinfo
 
             def local_domain(host, *args, **kwargs):
-                return original("127.0.0.1" if host == "akv-server.com" else host, *args, **kwargs)
+                return original(
+                    "127.0.0.1" if host == "gateway.example.com" else host, *args, **kwargs
+                )
 
             with patch("socket.getaddrinfo", local_domain):
-                url = f"wss://akv-server.com:{mirror_port}/acpgw/connect"
+                url = f"wss://gateway.example.com:{mirror_port}/acpgw/connect"
                 for computer in ("home", "work"):
                     await connect(computer, url, fingerprint(cert))
                     require(
