@@ -221,7 +221,8 @@ to `build_release.py`. The archive will contain `gateway-image.tar` for
 
 The build creates `dist/release/`: wheel, sdist, deployment bundle and SHA256SUMS.
 `release.json` records version, source commit, dirty state and intended image.
-The build does not publish anything. Use a clean checkout for the final release.
+The build does not publish anything and refuses a dirty checkout. Development
+previews require `--allow-dirty` and are marked in `release.json`.
 The smoke installs into temporary uv directories, tests a second fixture version,
 failure and active-runtime refusal, and preserves data through removal. Its
 optional Git path clones the selected local commit and runs the checkout installer.

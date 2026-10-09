@@ -25,7 +25,7 @@ DEPLOY_FILES = (
 )
 
 
-def build(destination: Path, image: str, *, include_image=False) -> Path:
+def build(destination: Path, image: str, *, include_image=False, allow_dirty=False) -> Path:
     version = tomllib.loads((REPO / "pyproject.toml").read_text())["project"]["version"]
     destination = destination.resolve()
     destination.mkdir(parents=True, exist_ok=True)
@@ -33,6 +33,16 @@ def build(destination: Path, image: str, *, include_image=False) -> Path:
     git = shutil.which("git")
     if uv is None or git is None:
         raise ValueError("uv and git are required to build a release")
+    commit = subprocess.check_output(  # noqa: S603
+        [git, "rev-parse", "HEAD"], cwd=REPO, text=True
+    ).strip()
+    dirty = bool(
+        subprocess.check_output(  # noqa: S603
+            [git, "status", "--porcelain"], cwd=REPO, text=True
+        ).strip()
+    )
+    if dirty and not allow_dirty:
+        raise ValueError("Release requires a clean checkout; use --allow-dirty for preview builds")
     with tempfile.TemporaryDirectory(prefix="acpgw-release-") as temporary:
         root = Path(temporary) / f"acpgw-{version}"
         root.mkdir()
@@ -80,14 +90,6 @@ def build(destination: Path, image: str, *, include_image=False) -> Path:
                 check=True,
                 timeout=120,
             )
-        commit = subprocess.check_output(  # noqa: S603
-            [git, "rev-parse", "HEAD"], cwd=REPO, text=True
-        ).strip()
-        dirty = bool(
-            subprocess.check_output(  # noqa: S603
-                [git, "status", "--porcelain"], cwd=REPO, text=True
-            ).strip()
-        )
         (root / "release.json").write_text(
             json.dumps(
                 {
@@ -101,12 +103,13 @@ def build(destination: Path, image: str, *, include_image=False) -> Path:
             )
             + "\n"
         )
-        for file in sorted(root.glob("*.whl")) + sorted(root.glob("*.tar.gz")):
+        package_files = sorted(root.glob("*.whl")) + sorted(root.glob("*.tar.gz"))
+        for file in package_files:
             shutil.copy(file, destination / file.name)
         archive = destination / f"acpgw-{version}-bundle.tar.gz"
         with tarfile.open(archive, "w:gz") as tar:
             tar.add(root, arcname=root.name)
-        files = sorted(destination.glob("*.whl")) + sorted(destination.glob("*.tar.gz"))
+        files = [destination / file.name for file in package_files] + [archive]
         (destination / "SHA256SUMS").write_text(
             "".join(f"{checksum(file)}  {file.name}\n" for file in files)
         )
@@ -126,10 +129,12 @@ if __name__ == "__main__":
     parser.add_argument(
         "--include-image", action="store_true", help="bundle a local image for docker load"
     )
+    parser.add_argument("--allow-dirty", action="store_true", help="allow a development preview")
     args = parser.parse_args()
     version = tomllib.loads((REPO / "pyproject.toml").read_text())["project"]["version"]
     build(
         args.output,
         args.image or f"ghcr.io/lujker/acp-gateway:{version}",
         include_image=args.include_image,
+        allow_dirty=args.allow_dirty,
     )

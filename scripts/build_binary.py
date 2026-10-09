@@ -1,4 +1,4 @@
-"""Build a Linux executable and a versioned archive from the locked environment."""
+"""Build a native executable and versioned archive from the locked environment."""
 
 import hashlib
 import json

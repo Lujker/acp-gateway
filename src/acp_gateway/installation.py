@@ -1,4 +1,4 @@
-"""Installation diagnostics and explicit uv-tool maintenance on Linux/WSL.
+"""Installation diagnostics and explicit uv-tool maintenance.
 
 Package managers own the environment. Configuration and databases are never
 removed here. Runtime leases prevent replacing an environment used by this
