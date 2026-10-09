@@ -1428,6 +1428,38 @@ prepare.py создаёт приватный nginx.conf и каталог TLS б
 Обновлённый Docker smoke прошёл за 89.8 с: IP, WSS/nginx, два mock Goose,
 неверный ключ, отключение одного маршрута и восстановление сессии.
 
+## 2026-10-09 — P3.6: штатная установка и ручной updater
+
+По решению владельца выделен отдельный пункт road-map P3.6 с семью этапами:
+Python/uv, CLI maintenance, VPS bundle, ручной выпуск, обе приёмки, платформы,
+затем opt-in автоматизация с backup/health/recovery.
+
+Добавлены version (manager/source без URL), update --check (PyPI, stable/non-yanked,
+проверка repository identity), ручной update с версией/источником/constraints
+и uninstall для uv tool на Linux/WSL. Runtime SH/EX leases препятствуют замене
+окружения при работающих Gateway/connector/dispatcher. Все управляемые units
+проверяются до удаления, чужие установки не изменяются. Перед мутацией процесс
+передаёт управление uv через exec с наследуемым lock descriptor. Config/secrets/
+pins/credentials/SQLite сохраняются; purge/авторестарт/автооткат БД не обещаются.
+
+build_release.py собирает wheel/sdist, locked requirements, install.sh,
+документы и самостоятельный deployment bundle: Compose без source build,
+приватный prepare.py, свой nginx. Опционально вкладывается локальный образ
+для docker load до публикации registry. Запуск и установка не требуют checkout.
+Git/source путь сохранён отдельно. Runbook EN/RU переключён на штатную установку;
+команды в переводах совпадают. Публичный процесс выпуска описан в
+docs/setup/distribution.md; автоматических CI/publication triggers не добавлено.
+
+707 passed, 3 optional Hermes skipped; Ruff check/format и diff check чистые.
+Wheel smoke: установка в отдельный UV_TOOL_DIR, смена на вторую fixture-версию,
+отказ активному процессу, сохранение старой версии при ошибке источника,
+daemon/API/ACP/MCP/approvals/persistence и сохранение приватных файлов/БД при
+удалении. Настоящий bundle installer также прошёл вне checkout.
+Docker IP/WSS + два mock Goose, изоляция отключения, session/load и readonly
+runtime прошли за 89.3 с. В Docker установлен XDG_DATA_HOME=/data, чтобы
+runtime leases работали с read-only root filesystem.
+PyPI имя пока отвечает 404; пакеты/образы/публичный Release не опубликованы.
+
 ## Незакрытые вопросы
 
 - **Автотесты TLS/SSE** — наблюдавшиеся причины и исправления тестового стенда

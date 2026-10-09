@@ -49,7 +49,8 @@ def require(condition, message):
         raise RuntimeError(message)
 
 
-async def smoke(image):
+async def smoke(image, deployment=None):
+    deployment = deployment or REPO / "deploy/docker"
     name = "acpgw-smoke-" + secrets.token_hex(4)
     network = name + "-proxy"
     origin, mirror = name + "-origin", name + "-mirror"
@@ -57,7 +58,7 @@ async def smoke(image):
         root = Path(directory)
         for part in ("runtime", "state", "state/enrollment"):
             (root / part).mkdir(mode=0o700, parents=True, exist_ok=True)
-        settings = yaml.safe_load((REPO / "deploy/docker/gateway.example.yaml").read_text())
+        settings = yaml.safe_load((deployment / "gateway.example.yaml").read_text())
         for agent in settings["agents"]:
             agent["default_cwd"] = "/work"
         (root / "runtime/gateway.yaml").write_text(yaml.safe_dump(settings))
@@ -87,7 +88,7 @@ async def smoke(image):
             "-p",
             name,
             "-f",
-            str(REPO / "deploy/docker/compose.yaml"),
+            str(deployment / "compose.yaml"),
             "-f",
             str(root / "override.yaml"),
         ]
@@ -209,8 +210,8 @@ async def smoke(image):
             tasks.clear()
 
             cert, _key = make_cert(root, hostname="gateway.example.com")
-            snippet = (REPO / "deploy/docker/nginx-location.conf.example").read_text()
-            origin_config = (REPO / "deploy/docker/nginx.conf.example").read_text()
+            snippet = (deployment / "nginx-location.conf.example").read_text()
+            origin_config = (deployment / "nginx.conf.example").read_text()
             origin_config = (
                 origin_config.replace(
                     "listen 443 ssl;", "listen 443 ssl; listen 17443 ssl proxy_protocol;"
@@ -312,7 +313,8 @@ async def smoke(image):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--image", default="acpgw:local")
+    parser.add_argument("--deployment", type=Path, help="test an extracted release deploy/docker")
     args = parser.parse_args()
     started = time.monotonic()
-    asyncio.run(smoke(args.image))
+    asyncio.run(smoke(args.image, args.deployment.resolve() if args.deployment else None))
     print(f"Docker smoke completed in {time.monotonic() - started:.1f}s.")

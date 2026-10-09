@@ -16,13 +16,16 @@ Telegram ──> Gateway на VPS ──> home/goose
     исходящие коннекторы с каждого компьютера
 ```
 
-## 1. Подготовка репозитория на VPS
+## 1. Подготовка развёртывания на VPS
 
-Склонируйте репозиторий в отдельный каталог, например `~/acp-gateway`.
-Потребуются Docker Engine с Compose v2+, git и Python 3 для небольшого скрипта
-подготовки. Python и зависимости приложения уже входят в образ.
+Распакуйте проверенный релизный комплект в отдельный каталог, например
+`~/acp-gateway`. Артефакты и статус публикации описаны в
+[инструкции установки и обновления](distribution.md). Клонирование Git остаётся
+отдельным вариантом со сборкой из исходников.
+Потребуются Docker Engine с Compose v2+ и Python 3 для небольшого скрипта
+подготовки. Git нужен только для альтернативной сборки из исходников. Python и зависимости приложения уже входят в образ.
 
-Из каталога репозитория ACP Gateway:
+Из каталога распакованного комплекта или репозитория ACP Gateway:
 
 ```bash
 python3 deploy/docker/prepare.py
@@ -57,7 +60,13 @@ SQLite и ограничения ресурсов. Базовая конфигу
 Скрипт также создаёт `runtime/nginx.conf` и `runtime/tls/` для второго этапа.
 
 ```bash
-docker compose build
+if [ -f ../../gateway-image.tar ]; then
+  docker load -i ../../gateway-image.tar
+elif [ -f ../../release.json ]; then
+  docker compose pull
+else
+  docker compose build
+fi
 docker compose run --rm gateway config check
 ```
 
@@ -109,8 +118,10 @@ docker compose exec gateway acpgw --config /config/gateway.yaml --env-file /conf
 
 ## 3. Запуск Goose и коннекторов на обоих компьютерах
 
-Для этой приёмки используйте Linux/WSL на обоих компьютерах. Склонируйте
-репозиторий, выполните `uv sync --frozen` и создайте приватный каталог настроек:
+Для этой приёмки используйте Linux/WSL на обоих компьютерах. Установите утилиту
+по [инструкции релиза](distribution.md); из распакованного комплекта создайте
+приватный каталог настроек коннектора. Отдельный альтернативный способ —
+Git checkout и `sh scripts/install.sh`:
 
 ```bash
 install -d -m 700 ~/.config/acp-gateway-connector
@@ -128,11 +139,11 @@ cp deploy/docker/computer.example.yaml ~/.config/acp-gateway-connector/computer.
 Поместите рядом перенесённый ключ регистрации как `computer.key`, также
 с правами `0600`. Токены owner API, MCP и Telegram на коннекторе не нужны.
 
-На домашнем компьютере, из каталога репозитория:
+На домашнем компьютере, из любого каталога:
 
 ```bash
-uv run acpgw --config ~/.config/acp-gateway-connector/computer.yaml --env-file ~/.config/acp-gateway-connector/computer.env config check
-uv run acpgw --config ~/.config/acp-gateway-connector/computer.yaml --env-file ~/.config/acp-gateway-connector/computer.env connector --dispatcher-url ws://VPS_IP:18766/acpgw/connect --computer-id home --token-file ~/.config/acp-gateway-connector/computer.key
+acpgw --config ~/.config/acp-gateway-connector/computer.yaml --env-file ~/.config/acp-gateway-connector/computer.env config check
+acpgw --config ~/.config/acp-gateway-connector/computer.yaml --env-file ~/.config/acp-gateway-connector/computer.env connector --dispatcher-url ws://VPS_IP:18766/acpgw/connect --computer-id home --token-file ~/.config/acp-gateway-connector/computer.key
 ```
 
 На рабочем компьютере выполните те же команды с `--computer-id work`.
@@ -251,7 +262,7 @@ WebSocket/ACP-соединения.
 После успешной работы обоих компьютеров через WSS уберите временный прямой порт:
 
 ```bash
-# Из deploy/docker в репозитории ACP Gateway, когда нет активных заданий:
+# Из deploy/docker вашего развёртывания, когда нет активных заданий:
 docker compose -f compose.yaml -f compose.nginx.yaml up -d
 docker compose -f compose.yaml -f compose.nginx.yaml ps
 ```

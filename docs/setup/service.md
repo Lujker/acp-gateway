@@ -1,5 +1,9 @@
 # Install, configure and manage the gateway
 
+For installation without Git and internal update/uninstall commands, see
+[installation and updates](distribution.md). The Git checkout remains a separate
+supported route.
+
 ## Install from a checkout
 
 Install [uv](https://docs.astral.sh/uv/getting-started/installation/), then:
@@ -15,7 +19,7 @@ The installer constrains dependencies to the checked-in `uv.lock` and uses
 [uv's isolated tool environment](https://docs.astral.sh/uv/guides/tools/)
 and creates a private initial configuration through `acpgw setup`. You can
 run `acpgw` from any directory. To update a checkout installation, pull the
-changes and rerun the script. Existing configuration and tokens are kept.
+changes, stop the installed services/foreground processes and rerun the script. Existing configuration and tokens are kept.
 If the executable/interpreter path changes, rerun `service install` and
 `service restart` to update the installed unit.
 

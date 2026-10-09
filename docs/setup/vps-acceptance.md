@@ -15,13 +15,15 @@ Telegram ──> VPS Gateway ──> home/goose
     outbound connectors from each computer
 ```
 
-## 1. Prepare the VPS checkout
+## 1. Prepare the VPS deployment
 
-Clone into a separate directory, for example `~/acp-gateway`.
-Requirements: Docker Engine with Compose v2+, git, Python 3 for the small
-preparation script. Runtime Python and application dependencies are in the image.
+Extract a reviewed release bundle into a separate directory, for example
+`~/acp-gateway`. See [installation and updates](distribution.md) for artifacts
+and publication status. A Git clone is the separate source-build alternative.
+Requirements: Docker Engine with Compose v2+ and Python 3 for the small
+preparation script; Git is needed only for the source-build alternative. Runtime Python and application dependencies are in the image.
 
-From the ACP Gateway checkout:
+From the extracted bundle or ACP Gateway checkout:
 
 ```bash
 python3 deploy/docker/prepare.py
@@ -54,7 +56,13 @@ It does not require any existing reverse proxy or another application's network.
 Preparation also creates `runtime/nginx.conf` and `runtime/tls/` for stage 2.
 
 ```bash
-docker compose build
+if [ -f ../../gateway-image.tar ]; then
+  docker load -i ../../gateway-image.tar
+elif [ -f ../../release.json ]; then
+  docker compose pull
+else
+  docker compose build
+fi
 docker compose run --rm gateway config check
 ```
 
@@ -103,8 +111,10 @@ Each computer receives only its own key. Keep the file locally owned, mode
 
 ## 3. Start Goose and the connectors on both computers
 
-Use Linux/WSL on both computers for this acceptance. Clone the repository,
-run `uv sync --frozen`, and create a private configuration directory:
+Use Linux/WSL on both computers for this acceptance. Install the tool using
+[the release instructions](distribution.md); from the extracted bundle, create
+a private connector configuration directory. A Git checkout with
+`sh scripts/install.sh` is the separate alternative:
 
 ```bash
 install -d -m 700 ~/.config/acp-gateway-connector
@@ -122,11 +132,11 @@ Create `~/.config/acp-gateway-connector/computer.env`, mode `0600`, containing
 enrollment key beside it as `computer.key`, also mode `0600`. The connector
 does not need the VPS owner/MCP/Telegram tokens.
 
-On the home computer, from its checkout:
+On the home computer, from any directory:
 
 ```bash
-uv run acpgw --config ~/.config/acp-gateway-connector/computer.yaml --env-file ~/.config/acp-gateway-connector/computer.env config check
-uv run acpgw --config ~/.config/acp-gateway-connector/computer.yaml --env-file ~/.config/acp-gateway-connector/computer.env connector --dispatcher-url ws://VPS_IP:18766/acpgw/connect --computer-id home --token-file ~/.config/acp-gateway-connector/computer.key
+acpgw --config ~/.config/acp-gateway-connector/computer.yaml --env-file ~/.config/acp-gateway-connector/computer.env config check
+acpgw --config ~/.config/acp-gateway-connector/computer.yaml --env-file ~/.config/acp-gateway-connector/computer.env connector --dispatcher-url ws://VPS_IP:18766/acpgw/connect --computer-id home --token-file ~/.config/acp-gateway-connector/computer.key
 ```
 
 On the work computer run the same commands with `--computer-id work`.
@@ -234,7 +244,7 @@ prove the authenticated WebSocket/ACP route works.
 Once both computers work over WSS, remove the temporary IP-port exposure:
 
 ```bash
-# From ACP Gateway's deploy/docker, with no active jobs:
+# From the deployment's deploy/docker, with no active jobs:
 docker compose -f compose.yaml -f compose.nginx.yaml up -d
 docker compose -f compose.yaml -f compose.nginx.yaml ps
 ```
