@@ -312,6 +312,7 @@ Linux x86_64 подтверждён полным smoke в чистом Ubuntu 22
 GitHub Release и загрузка файлов вручную; Actions только по необязательному
 `workflow_dispatch`, без push/PR/tag/release триггеров.
 Рецепт — `docs/setup/binary.md`.
+Штатная установка без checkout, updater и выпуск пакета/образа выделены в P3.6.
 **Репозиторий:** `acp-gateway` (`scripts/`, сборка и release artifacts)
 **Решение владельца:** 2026-10-08 — удобство установки как у Goose/Hermes.
 
@@ -361,8 +362,10 @@ uninstall подтверждён на целевых ОС, включая пер
 **Статус:** PARTIAL — 2026-10-09. Первый Linux/WSL этап реализован:
 wheel/sdist и release bundle, uv CLI version/update/uninstall, runtime lease,
 сохранение данных, собственный Compose без build и опциональный вложенный образ.
-Общий набор: 707 passed, 3 optional Hermes skipped; wheel/bundle lifecycle и
-Docker IP/WSS с двумя mock Goose прошли. Публичная публикация PyPI/GHCR/Release,
+Общий набор: 707 passed, 3 optional Hermes skipped; wheel/bundle lifecycle,
+Git checkout/direct Git ref, автономный Linux-бинарник и Docker IP/WSS с двумя
+mock Goose прошли. Комплект с вложенным образом проверен через docker load
+и запуск Compose без checkout. Публичная публикация PyPI/GHCR/Release,
 другие ОС и автоматическое обновление ещё не выполнены.
 Приоритет перед серверной приёмкой:
 пройти её через штатную установку, затем отдельно подтвердить Git-путь.
