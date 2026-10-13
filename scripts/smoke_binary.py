@@ -21,6 +21,7 @@ from mcp import ClientSession
 from mcp.client.streamable_http import streamable_http_client
 
 from acp_gateway.cli.client import events
+from acp_gateway.storage.db import _migrations
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "tests"))
 from fakes.certs import fingerprint, make_cert
@@ -196,7 +197,8 @@ def main():
                             response = owner.get("/health")
                             if response.status_code == 200:
                                 require(
-                                    response.json()["database"]["schema_version"] == 5,
+                                    response.json()["database"]["schema_version"]
+                                    == max(version for version, _ in _migrations()),
                                     "SQL migrations were not bundled",
                                 )
                                 return
