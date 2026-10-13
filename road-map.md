@@ -665,82 +665,28 @@ sessions показывают attached/busy/uncertain/restore-unavailable.
 
 #### P4.8.3 — Завершённый CLI и настройка целевых ролей
 
-**Статус:** IN PROGRESS. Уже есть setup server/connector, Telegram, enrollment,
-Hermes selection, saved connection, doctor, start и service management.
-
-**Агенту доработать:** обеспечить
-одинаковое использование saved role/config в CLI, меню, службе и скриптах.
-Согласовать status процесса, подключения к dispatcher и готовности Hermes;
-закрыть пробелы CLI для computers/sessions/jobs/results/approvals. Сохранить
-понятное объяснение ограничений Hermes и идемпотентность повторной настройки.
-До session manager заложить channel-neutral logical dialogue/active context,
-authenticated actor и проверяемый owner/workspace scope в application contracts.
-Полноценный multi-user режим принят отдельным P4.10 с личными аккаунтами.
-Первый слой постоянного выбора реализован: core.submit_selected без implicit
-creation, core.switch_dialogue по stable row ID с ownership check; Telegram
-использует эти операции. Неудачный /new ALIAS не меняет route. SQLite revision
-защищает более позднее переключение от завершения старого async create (включая
-A → B → A); созданный диалог остаётся доступен для явного выбора. Полная
-channel-neutral identity/owner модель ещё открыта; сохранение idle Hermes attachment
-при потере VPS-связи реализовано первым session manager.
-Дополнительно реализовано: service connector install использует saved connection
-без повторного URL/computer ID/key; foreground start использует тот же helper.
-Partial explicit options не смешиваются с saved key/pin, invalid/oversized state
-отклоняется до регистрации службы. Windows wizard paths/ACL реализованы:
-постоянные data/log defaults, сохранение custom absolute paths, private mkdir
-после Save, ACL preflight перед чтением и до записи secret bytes. Existing ACL
-не меняются. Native disposable paths smoke прошёл. Wizard предлагает task
-install/enable/start перед Save, snapshots disabled/idle task той же установки
-и config/env; при ошибке восстанавливает task и config/env/state. Control ID и
-file content guards запрещают откат поверх параллельных изменений. Шесть новых
-native disposable Scheduler сценариев прошли; live приёмка идёт отдельно.
-Повторная настройка старого config с implicit platform data_dir сохраняет
-прежний каталог; мастер не выполняет скрытый перенос данных.
+**Статус:** READY как кодовая основа single-owner кандидата 0.2.0rc1.
+Setup server/connector, saved role/launch, doctor, service, sessions/jobs/
+approvals и model show/list/set/default/reconcile реализованы. Общие core/API,
+logical selection/revision и route/confirmation guards используются CLI/Telegram.
+Native Scheduler/ACL и installed-wheel CLI проверены; живые UX/автозапуск и
+VPS/Telegram — P4.8.5. Полноценные accounts/workspaces относятся к P4.10.
+[Runbook](docs/setup/p48-acceptance.md), [детали](docs/items/p48-delivery-plan.ru.md).
 
 #### P4.8.4 — Поставка и штатное обновление обеих ролей
 
-**Статус:** IN PROGRESS. Уже есть Linux checkout installer, release PowerShell
-installer, uv updater/snapshot/health check/rollback и Windows deferred helper.
-Preview wheel/sdist/locked dependencies: `dist/p4.8-preview`, не опубликованы.
-
-**Реализовано в исходниках:** checkout install/run/update scripts для sh и
-PowerShell, общий helper вне tool environment. Запуск использует проверенный
-uv tool entry point; Git update сохраняет выбранный источник, не сбрасывает
-dirty checkout и не переходит на registry незаметно. Update не запускает setup
-повторно; Windows helper ожидается синхронно с передачей реального exit code.
-Добавлен основной [uv/Git VPS runbook](docs/setup/vps-native-hermes.ru.md).
-
-**Агенту доработать:**
-Штатный lifecycle обновления сохраняет enabled/running state, выполняет stop/
-disable, existing updater, проверку и восстановление owned service при необходимости.
-На Windows queued не считается успехом; активные jobs/approvals блокируют цикл.
-Первый слой готов: owner-only maintenance reservation в core/API/CLI блокирует
-новые turns и session creation после атомарного idle check, включая queued
-requests. Приватный token и явный owner recovery; автоматический service update
-ещё не подключён. Для Hermes connector реализован local status/prepare/resume:
-private instance-fenced IPC, heartbeat и atomic activity check с admission gate.
-Pending/uncertain/lost attachment блокируют prepare; другие profiles unsupported.
-Нужен общий coordinator, который использует эти reservations перед service stop.
-Первый Linux/systemd coordinator реализован: `update --with-services`, selected
-owned unit/config/env, reserve/disable/stop, existing updater/health/rollback,
-restore enabled/running и startup check. Inherited lock закрывает параллельные
-internal mutations; status учитывает весь цикл. Isolated real uv+daemon update
-и invalid-wheel rollback прошли с fake systemctl. Real systemd acceptance
-остаётся открытым; вся P4.8.4 остаётся IN PROGRESS.
-Windows connector coordinator теперь реализован в исходниках: owned task snapshot,
-definition/control/instance fencing, admission, graceful disable/stop, ожидание
-package helper и восстановление четырёх state combinations. Native state/fence
-контракт прошёл; fresh installed-package update/rollback ещё требует P4.8.5.
-Сохраняются config/Telegram token/enrollment keys/SQLite. Финальный версионированный
-комплект готовить после функциональных доработок, перед пакетной приёмкой P4.8.5;
-промежуточные тестовые wheels не являются финальным релизом.
-
-**Session manager — PARTIAL:** attachment теперь живёт независимо от WSS relay.
-При живых connector/Hermes и завершённом ходе reconnect возвращает тот же chat
-с новой authority/epoch без replay; binding проверяется на dispatcher. Проверены
-реальный CLI процесс/WS reconnect/mocks и restart core/SQLite. Pending drop даёт
-quarantine; in-flight journal/reconciliation, retention handles и native/live
-приёмка ещё открыты. Cold restore не включён. Подробности в плане поставки.
+**Статус:** PARTIAL — кодовая основа и локальный кандидат 0.2.0rc1 готовы.
+Wheel/sdist/bundle/locked requirements/checksums: dist/p48-0.2.0rc1;
+source ref 3da8dffbd5d265c0b135e3aa1bd212e8e618c779, без публикации.
+Uv/Git scripts, maintenance reservations и Linux/Windows service coordinators
+реализованы; config/env/enrollment/SQLite сохраняются, setup не повторяется.
+Source WSL: 1152/28; installed Linux wheel: 1152/28;
+native source: 287/2; installed native wheel: 374/2, все 23 Scheduler cases.
+Bounded session journal, exact known model-outcome recovery и explicit idle/
+detached retention готовы. Prompt-loss/cold restore остаются fenced без replay.
+**Остаток:** fresh target uv/Git installation, реальные systemd/Task Scheduler
+package/service update/rollback и жизненный цикл хостов проверяются в P4.8.5.
+[План/evidence](docs/items/p48-delivery-plan.ru.md), [runbook](docs/setup/p48-acceptance.md).
 
 **Провайдер/модель Hermes — READY как кодовая основа кандидата 0.2.0rc1.**
 Show/list/set/default/reconcile, CLI/Telegram, durable intent/operation ID,
@@ -883,15 +829,18 @@ Goose/platform combinations остаются P4.9, cold/shared write recovery н
 в выбранный Windows MVP. [Runbook](docs/setup/p48-acceptance.md).
 Перечень ниже — незакрытые смежные задачи, не prerequisites всего трека.
 
-1. **P3.4/P3.5 — установка, настройка и контроль службы.** Основа Linux/WSL
+1. **P4.8.5 — живая установка и приёмка кандидата 0.2.0rc1.** VPS IP/domain-path,
+   бот, текущий Windows/Hermes+connector/автозапуск/CLI, затем второй PC;
+   [порядок проверок](docs/setup/p48-acceptance.md).
+2. **P3.4/P3.5 — установка, настройка и контроль службы.** Основа Linux/WSL
    и самостоятельная Linux-сборка подтверждены чистым контейнерным CI;
    выпускать версии вручную из локальной сборки; Actions только по ручному запуску.
-2. **P3.1/P3.5 — настоящий Windows reboot.** D-Bus восстановлен; systemd и
+3. **P3.1/P3.5 — настоящий Windows reboot.** D-Bus восстановлен; systemd и
    Task Scheduler lifecycles уже подтверждены на текущем хосте.
-3. **P2.3 — живая приёмка Telegram и streaming status.** Команды и основной
+4. **P2.3 — живая приёмка Telegram и streaming status.** Команды и основной
    человеческий канал подтверждений реализованы.
-4. **P3.3 — audit retention, лимиты остальных каналов и delivery recovery.**
-5. **P4.1 — VPS-диспетчер и собственный WebSocket-коннектор.** Основа для `P4.8`:
+5. **P3.3 — audit retention, лимиты остальных каналов и delivery recovery.**
+6. **P4.1 — VPS-диспетчер и собственный WebSocket-коннектор.** Основа для `P4.8`:
    один владелец, ACP-релей. Enrollment и WS/WSS-регистрация
    готовы; инъекция транспорта в AgentClient реализована и проверена на mock ACP
    без WebSocket; локальная политика ACP реализована и проверена (методы,
@@ -900,10 +849,10 @@ Goose/platform combinations остаются P4.9, cold/shared write recovery н
    Первый guarded ACP relay в serve готов и mock-tested.
    Два узла и изоляция mock-tested; служба и диагностика готовы.
    Дальше: живая приёмка в `P4.8.5`, затем recovery и stdio по их триггерам.
-6. **P3.2 — Windows native**, в составе `P4.8.4`, вместе с
+7. **P3.2 — Windows native**, в составе `P4.8.4`, вместе с
    Windows-частями `P3.4/P3.5`; Scheduler/ACL/locks уже проверены,
    остаются целевая поставка/update и сценарии P4.8.5 reboot/logon/sleep/network.
-7. **P4.2 → P4.3 → P4.4 — Snikket, Email, Web UI.** После первого рабочего
+8. **P4.2 → P4.3 → P4.4 — Snikket, Email, Web UI.** После первого рабочего
    маршрута `P4.8.5`, не блокируют разработку адаптеров.
 
 Условные `P4.5`–`P4.7` сохраняют свои триггеры.

@@ -2863,6 +2863,40 @@ IP/domain-path, бот, CLI обеих ролей, Hermes/connector per-user log
 IN PROGRESS до P4.8.5. Следующий шаг — clean Git ref, wheel/sdist/bundle/checksums
 и installed-wheel проверки; затем отдельная живая установка/приёмка.
 
+## 2026-10-13 — P4.8 candidate собран и проверен установленным пакетом
+
+Кодовая база зафиксирована локальным source commit
+3da8dffbd5d265c0b135e3aa1bd212e8e618c779 (включая ранее накопленную работу трека).
+Штатный build_release из чистого checkout создал 0.2.0rc1 wheel/sdist/bundle,
+runtime requirements.lock и checksums в dist/p48-0.2.0rc1. Все 81 runtime/SQL
+файлов wheel побайтно совпали с src; private config/env/database/key в wheel нет.
+Пакеты/Git ref никуда не опубликованы.
+
+Чистый Linux venv: hash-locked dev dependencies + wheel без editable source.
+Полный installed-wheel suite: **1152 passed / 28 skipped**, 150.18 s.
+Чистый native Windows venv CPython 3.12.13: те же hash-locked requirements +
+тот же wheel. Installed package import проверен под sys.prefix; **374 passed /
+2 skipped**, 251.10 s. Все 23 disposable Scheduler cases выполнены, skips —
+только POSIX permissions. Это не пользовательский service setup и не
+реальный uv tool service update/rollback на целевых хостах.
+
+Установленный кандидат прошёл readonly Hermes discovery/identity/RPC probe:
+0.21.6, ready, без prompt/new/config/approval mutation. Более старое native env
+дало auth-required, но кандидат с текущими locked Windows dependencies прошёл;
+пользовательские ACL/credentials для этого не менялись. VPS и Telegram не
+подключались. Wheel SHA256:
+d43e5692d9c1678c19bdd6895b5e3a982af2c48c3f13e18957c8172679a6a19a.
+
+PREVIEW.json, четыре JUnit reports, readonly observer и SHA256SUMS сохранены
+рядом с wheel. Preview manifest/все checksums проверены штатным verifier.
+Финальный staged ruff: 221 files, clean; secrets scanner без находок.
+P4.8.3 закрыт READY как single-owner кодовая основа; P4.8.4 — PARTIAL с
+пакетной основой и остатком целевой установки/update/rollback. P4.8 остаётся
+IN PROGRESS: следующий первый пункт очереди — P4.8.5, живая приёмка по
+docs/setup/p48-acceptance.md. Autostart текущих Hermes/connector, реальные
+provider/approval/Telegram, IP/domain-path, reboot/sleep/network и второй PC
+намеренно остаются отдельной приёмкой.
+
 ## Незакрытые вопросы
 
 - **Автотесты TLS/SSE** — наблюдавшиеся причины и исправления тестового стенда
