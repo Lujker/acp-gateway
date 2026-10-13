@@ -76,6 +76,9 @@ requirements, checksums и JUnit/manifest evidence сохранены. Все 81
 При checkout installation нужен штатный --refresh-package acp-gateway.
 Goose/platform expansion остаётся P4.9, multi-user accounts — P4.10.
 
+Самостоятельный этап владельца: [пошаговая установка](../setup/self-install-0.2.0rc1.ru.md).
+Кандидат остаётся замороженным; последующая разработка не подменяет его wheel.
+
 ## Следующие действия
 
 1. P4.8.5: fresh VPS uv/systemd dispatcher, bot allowlist/token на VPS; проверить

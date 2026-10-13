@@ -1,5 +1,7 @@
 # P4.8 candidate: VPS, Telegram and native Windows Hermes
 
+[Russian step-by-step self-install guide](self-install-0.2.0rc1.ru.md).
+
 The development candidate is 0.2.0rc1. Public 0.1.0 does not contain this workflow.
 Use the same verified candidate on the VPS and connector. Installation and live
 acceptance are separate from source tests. Start with the current Windows
