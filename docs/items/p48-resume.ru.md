@@ -63,21 +63,29 @@ Skips: 23 native Scheduler opt-in и 5 installed-Hermes compatibility.
 Ruff check/format: 220 files, clean. Source/tests во время полного прогона
 не редактировались. JUnit: /tmp/acpgw-p48-final-source.xml.
 
-Native профиль и пакетные результаты записываются в дневник и evidence
-кандидата после завершения. Старые 0.1.0/preview не содержат новые функции.
+Native source: **287 passed / 2 skipped**, 90.77 s.
+Installed Linux wheel: **1152 passed / 28 skipped**, 150.18 s.
+Installed native Windows wheel: **374 passed / 2 skipped**, 251.10 s;
+все 23 native Scheduler cases выполнены. Native skips — POSIX permissions.
+Кандидат: dist/p48-0.2.0rc1, source ref
+3da8dffbd5d265c0b135e3aa1bd212e8e618c779; wheel/sdist/bundle, locked
+requirements, checksums и JUnit/manifest evidence сохранены. Все 81 runtime/SQL
+файлов wheel побайтно совпали с source ref. Candidate установленный probe
+подтвердил существующий Hermes 0.21.6 readonly; prompts/config mutation не было.
+Ничего не опубликовано. Старые 0.1.0/preview не содержат новые функции.
 При checkout installation нужен штатный --refresh-package acp-gateway.
 Goose/platform expansion остаётся P4.9, multi-user accounts — P4.10.
 
 ## Следующие действия
 
-1. Собрать/проверить versioned wheel/sdist/bundle, checksums и Git ref кандидата.
-2. P4.8.5: fresh VPS uv/systemd dispatcher, bot allowlist/token на VPS; проверить
+1. P4.8.5: fresh VPS uv/systemd dispatcher, bot allowlist/token на VPS; проверить
    IP:port и domain/path ingress, owner API на loopback и CLI через SSH.
-3. Native Windows connector рядом с установленным Hermes; enrollment/doctor/
+2. Native Windows connector рядом с установленным Hermes; enrollment/doctor/
    CLI/service. Настроить per-user logon Hermes и connector после проверки
    фактического installed entry point, не запускать Desktop как SYSTEM.
-4. Диалог/память/once approvals/model/default/reconcile в Telegram и CLI;
+3. Диалог/память/once approvals/model/default/reconcile в Telegram и CLI;
    controlled reconnect/network/sleep/reboot, package/service update/rollback.
-5. Второй Windows connector: отдельный key/route/catalogue и изоляция.
+4. Второй Windows connector: отдельный key/route/catalogue и изоляция.
 
-Функциональные пункты закрыты как кодовая основа; живая приёмка ещё не проведена.
+Функциональные пункты закрыты как кодовая основа; кандидат собран и проверен.
+Живая установка/приёмка ещё не проведена; исходный ref кандидата указан выше.

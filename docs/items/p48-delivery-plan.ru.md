@@ -250,6 +250,15 @@ enrollment и повторный setup не требуются.
 183.75 s; ruff check/format — 220 files, clean.
 Текущий порядок приёмки и CLI команды: [runbook](../setup/p48-acceptance.md).
 
+Кандидат 0.2.0rc1 собран из чистого source ref
+3da8dffbd5d265c0b135e3aa1bd212e8e618c779: dist/p48-0.2.0rc1.
+Installed Linux wheel: **1152 passed / 28 skipped**, 150.18 s.
+Native source: **287 passed / 2 skipped**, 90.77 s.
+Installed native wheel: **374 passed / 2 skipped**, 251.10 s; все 23 Scheduler.
+Ruff финального staging: 221 files, clean; secrets scanner — 0 findings.
+Readonly probe установленного кандидата: Hermes 0.21.6 ready, без mutation.
+Manifest/JUnit/checksums сохранены рядом с wheel; пакет не опубликован.
+
 ## Отдельный этап: установка и приёмка P4.8.5
 
 Это полный перечень предполагаемых сценариев. Агент выполняет всё, что доступно
