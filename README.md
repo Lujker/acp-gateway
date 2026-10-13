@@ -1,5 +1,7 @@
 # ACP Gateway
 
+Development candidate 0.2.0rc1: [step-by-step self-install (Russian)](docs/setup/self-install-0.2.0rc1.ru.md). Published 0.1.0 does not include this workflow.
+
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 ![Python 3.12+](https://img.shields.io/badge/python-3.12%2B-blue.svg)
 ![Status: early development](https://img.shields.io/badge/status-early%20development-orange.svg)

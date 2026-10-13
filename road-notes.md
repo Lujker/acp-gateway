@@ -2897,6 +2897,27 @@ docs/setup/p48-acceptance.md. Autostart текущих Hermes/connector, реа�
 provider/approval/Telegram, IP/domain-path, reboot/sleep/network и второй PC
 намеренно остаются отдельной приёмкой.
 
+## 2026-10-13 — инструкция самостоятельной установки перед P4.8.5
+
+По просьбе владельца подготовлена docs/setup/self-install-0.2.0rc1.ru.md:
+точный комплект/версия, checksum, перенос с WSL на VPS/Windows, uv tool,
+вопросы server/connector wizard, Telegram allowlist/token, private Windows
+directory/key, службы, IP→WSS/nginx path, Hermes per-user Startup, model/CLI,
+повторная настройка и диагностический пакет для возвращения.
+
+Команды сверены с source CLI/wizard и uv docs через Context7. Порядок Windows
+Startup проверен по Microsoft Support. 49 Gateway CLI примеров прошли parser;
+14 Bash блоков прошли bash -n, 12 PowerShell блоков — настоящий Windows parser,
+без исполнения установки. Проверены локальные ссылки и diff whitespace.
+Раздельные CLI/Telegram conversations и перезапуск connector при смене URL
+объяснены явно, чтобы первый setup не создавал ожиданий shared/cold restore.
+
+README, VPS/Windows runbooks и checkpoint ссылаются на новый документ.
+Wheel 0.2.0rc1 заморожен: новые docs и дальнейшая разработка его не подменяют.
+Владелец сначала устанавливает самостоятельно; живая P4.8.5 ждёт результатов.
+Следующая доступная кодовая задача по очереди — P3.3 audit retention:
+установки/boot/реальный бот требуют действий владельца, retention не требует.
+
 ## Незакрытые вопросы
 
 - **Автотесты TLS/SSE** — наблюдавшиеся причины и исправления тестового стенда

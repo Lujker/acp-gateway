@@ -822,6 +822,7 @@ home aliases, чужие IDs/callbacks/events, pairing/revocation и мигра�
 **Следующий этап:** кандидат 0.2.0rc1 и отдельный P4.8.5 — установка/приёмка.
 Кодовые доработки model defaults, CLI/Telegram, exact model recovery,
 bounded session journal и explicit retention готовы; WSL source: 1152/28.
+Владелец сначала устанавливает сам по [инструкции](docs/setup/self-install-0.2.0rc1.ru.md).
 Начать с предоставляемого владельцем VPS (IP:port и domain/path), Telegram bot
 и текущего Windows/Hermes, затем второй connector. Проверить native autostart
 Hermes/connector, CLI обеих ролей, реальные model/approval и update/rollback.

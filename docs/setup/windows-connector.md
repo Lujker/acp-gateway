@@ -1,12 +1,12 @@
 # Native Windows connector logon task (development)
 
+[Current 0.2.0rc1 self-install guide](self-install-0.2.0rc1.ru.md).
+
 P4.8.4 includes a development Task Scheduler adapter behind `service --role connector`.
-On 2026-10-12, native Windows 10 build 19045 / CPython 3.12.13 acceptance passed:
-8 disposable Scheduler/ACL/ownership/locking/maintenance cases and 25 unit cases.
-Hermes 0.21.6 observer and dedicated conversation smoke checks passed without inference.
-On 2026-10-13 the final installed-wheel acceptance passed: 221 tests, 3 POSIX-only
-skips, all 13 Scheduler cases executed. Discovery ACL, graceful stop and force/
-instance fencing passed; Hermes Desktop stayed ready on the same endpoint.
+The current 0.2.0rc1 installed-wheel profile passed 374 tests with 2 POSIX-only
+skips, including all 23 disposable Scheduler cases. Native source passed 287
+tests with 2 POSIX skips. The installed candidate also verified the existing
+Hermes 0.21.6 in observer mode. Earlier 221-test/13-Scheduler results are historical.
 Reboot/logon, physical sleep/wake/network changes and a full package update
 lifecycle remain open. This remains a development path.
 See the [Russian handoff](../items/windows-acceptance-handoff.ru.md) and
@@ -206,14 +206,14 @@ restore, concurrent replacement, config mismatch and wizard rollback after a
 real task start. Four additional cases verify managed-update inspection and
 restoration flags for every enabled/running combination, including a disabled
 but running task. The consolidated runner requires all 23 to run successfully.
-The older 221-test installed-wheel result above remains historical; these new
-cases require a current source environment or the next tested wheel.
+All 23 cases ran in the current 0.2.0rc1 installed-wheel profile. The older
+221-test result is retained only as history in the handoff/journal.
 
 For the final preview, use one consolidated native Windows run from the current
 checkout with Windows uv installed:
 
 ```powershell
-uv run --no-project --python 3.12 --managed-python python scripts/accept_windows_track.py
+uv run --no-project --python 3.12 --managed-python python scripts/accept_windows_track.py --preview-dir dist/p48-0.2.0rc1
 ```
 
 It verifies preview checksums, installs the tested wheel into a fresh environment,
