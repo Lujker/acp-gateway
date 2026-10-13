@@ -87,6 +87,88 @@ Before updating, stop both services if installed and any foreground Gateway,
 connector or dispatcher from this installation. First complete/cancel active
 jobs; an update does not recover an interrupted tool action.
 
+Current development sources provide [admission reservation](maintenance.md)
+through `maintenance prepare/resume/status`. Linux systemd installations can
+use the opt-in managed cycle below. Plain `update` retains its stopped-process
+precondition. Current Windows connector sources also support a managed Task
+Scheduler cycle; fresh installed-package Windows acceptance remains open.
+
+### Linux systemd update with service restoration (development)
+
+```bash
+acpgw --config /absolute/path/config.yaml --env-file /absolute/path/.env \
+  update --with-services --from /absolute/path/reviewed-checkout
+# Select a connector service explicitly when needed:
+acpgw --config /absolute/path/computer.yaml --env-file /absolute/path/computer.env \
+  update --with-services --service-role connector --from /absolute/path/reviewed-checkout
+# With a checkout launcher:
+sh scripts/update.sh --config-dir /absolute/path/config-dir --with-services
+```
+
+The selected managed unit must use this installation and those exact config/env
+paths. Without `--service-role`, saved connector setup selects connector; other
+setups select gateway. The cycle handles one service. Other active processes or
+services still block package replacement through the existing exclusive lease
+and preflight; stop them explicitly or use separate tool installations.
+
+An external stdlib coordinator snapshots enabled/running state, reserves admission
+if running, disables autostart and stops the selected service. Only after confirmed
+stop does it invoke the existing updater with recovery snapshot and health checks.
+It restores the original enabled/running combination, including enabled-but-stopped
+and disabled-but-running. A previously running service is checked after restart.
+Owned unit contents are retained; changed definitions/processes refuse automatic
+recovery. Interpreter paths remain the same uv tool paths; this does not migrate
+services between installations. No setup/enrollment is repeated.
+
+Busy/uncertain work refuses reservation before stop. An installer or package
+health failure uses the existing program/database rollback, then attempts to
+restore service state. A stop failure attempts to resume the original process.
+It never forces a kill. A service restoration failure is reported as failure,
+with private recovery files retained. A newly started process is not silently
+rolled back again: that could discard new work. Inspect status/logs before retrying.
+
+`update --status` reports the whole service cycle, including restoration; an inner
+package success is not the final result. A coordinator lock serializes it with
+other internal package mutations. External uv/systemctl operations bypass this
+coordination. `--dry-run` changes nothing; it is a plan, not full live validation.
+`update --rollback --with-services` explicitly restores the previous package and
+database with the same service lifecycle; the database consequences below apply.
+Linux uses a synchronous coordinator; Windows has the handoff below. It does not reboot
+hosts, configure lingering, or prove remote Hermes/VPS connectivity.
+
+### Windows connector update with task restoration (development)
+
+```powershell
+acpgw --config C:\private\acpgw\config.yaml --env-file C:\private\acpgw\.env update --with-services --from C:\reviewed\acp-gateway
+acpgw update --status
+# From a checkout, wait for the verified result:
+powershell -NoProfile -File .\scripts\update.ps1 --config-dir C:\private\acpgw --with-services
+```
+
+The task must belong to this Windows user and installation and use the exact
+config/env/data paths. Windows supports role `connector`; gateway service updates
+use Linux/systemd. The coordinator captures the stable task definition, control
+ID, live instance and enabled/running state. It reserves an idle Hermes connector,
+disables and gracefully stops the task, waits for the existing package helper's
+actual update/health/rollback result, then restores the original state. All four
+enabled/running combinations are handled. Definition/instance changes,
+busy/uncertain work and unsupported profiles refuse automatic action.
+
+Both helpers run outside the tool environment after the original CLI exits.
+Direct Windows CLI exit 0 means queued; wait for `update --status` or use the
+synchronous checkout script. Status covers task restoration. A private pending
+marker and coordinator lock block unrelated internal maintenance; only its own
+inner package helper can pass. Unexpected process/power loss can leave a pending
+result; inspect the recovery plan and task status before repairing it.
+
+Task XML is retained apart from enabled state; interpreter/installation migration
+is not performed. A restarted task must publish its matching local activity
+record; VPS/Hermes connectivity remains separate. Package failure invokes the
+existing package/database rollback, then restores the task. Task restoration
+failure retains private recovery files. There is no force kill or second silent
+rollback after a new process has started. Fresh installed-package Windows
+acceptance remains a separate P4.8.5 step.
+
 ```bash
 acpgw service stop
 acpgw service --role connector stop
@@ -183,9 +265,61 @@ acpgw update --from 'git+https://github.com/Lujker/acp-gateway@NEW_REVIEWED_REF'
 
 Git refs above are placeholders. File/Git installations require explicit
 `update --from`; they do not silently switch to PyPI. For a development checkout,
-keep using `sh scripts/install.sh`, which exports constraints from its `uv.lock`.
-After pulling, stop the installed processes and repeat that installer. An
-editable `uv run acpgw` environment is not mistaken for an installed uv tool.
+use the checkout scripts below. An editable `uv run acpgw` environment is not
+mistaken for an installed uv tool.
+
+### Checkout scripts (Linux/WSL and Windows)
+
+The checkout is a package source; execution uses the isolated `uv tool`
+installation. Install uv first. The scripts request managed Python 3.12 and
+export dependencies from the checkout's frozen `uv.lock`. They never pull,
+reset or clean Git and never switch updates to PyPI. Select/review the desired
+checkout before updating. There is one installation per uv tool directory.
+Fresh checkout installs and explicit-source internal updates refresh the ACP
+Gateway package build so uv cannot reuse stale source merely because its package
+version is unchanged. Dependencies remain constrained by the selected lock.
+
+From a Linux checkout:
+
+```bash
+sh scripts/install.sh --config-dir "$HOME/.config/acp-gateway"
+sh scripts/run.sh version
+sh scripts/run.sh --config "$HOME/.config/acp-gateway/config.yaml" status
+# Finish active jobs; stop installed services and foreground processes first.
+sh scripts/update.sh --config-dir "$HOME/.config/acp-gateway"
+```
+
+From a native Windows checkout:
+
+```powershell
+powershell -NoProfile -File .\scripts\install.ps1 --config-dir C:\private\acpgw
+powershell -NoProfile -File .\scripts\run.ps1 version
+powershell -NoProfile -File .\scripts\run.ps1 --config C:\private\acpgw\config.yaml status
+# Finish active jobs; stop installed services and foreground processes first.
+powershell -NoProfile -File .\scripts\update.ps1 --config-dir C:\private\acpgw
+```
+
+If a downloaded/UNC script is blocked by execution policy, use the per-process
+`-ExecutionPolicy Bypass` option with a reviewed script. The scripts do not
+change persistent policy. Quote paths containing spaces in either shell.
+
+Only a fresh installation opens `setup`; its extra arguments (for example
+`--role connector`) are forwarded to the wizard. Repeating `install` on an
+existing managed installation performs the same guarded update as `update`,
+without setup. Extra setup arguments on an existing installation are rejected;
+use `run setup --config-dir ...` to reconfigure explicitly. `update` accepts only
+`--config-dir` and refuses a missing installation.
+
+`run` forwards all arguments unchanged and defaults to `start` without arguments.
+It locates the entry point through `uv tool dir --bin` and checks uv ownership,
+so a different `acpgw` on PATH is not launched. It retains the caller's working
+directory and normal config discovery; pass explicit `--config` and `--env-file`
+when using custom paths. Invoke scripts by absolute path from outside the checkout.
+Both update scripts wait for the updater's verified result, including the
+external Windows helper, and propagate failures. Settings, keys and the selected
+database follow the existing updater's preservation/rollback contract.
+Checkout updates accept `--with-services` and optional `--service-role` for the
+managed cycles above. Windows selects the connector task.
 
 ## VPS Docker installation without Git
 

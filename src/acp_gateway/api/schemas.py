@@ -24,3 +24,25 @@ class ApprovalDecision(BaseModel):
     model_config = ConfigDict(extra="forbid")
     option_id: str = Field(min_length=1, max_length=256)
     lease_id: str = Field(min_length=1, max_length=256)
+
+
+class MaintenanceResume(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    token: str | None = Field(default=None, pattern=r"^[a-f0-9]{32}$")
+    force: bool = Field(default=False, strict=True)
+
+
+class ModelSelectionRequest(ConversationRequest):
+    provider: str = Field(max_length=256, pattern=r"^[A-Za-z0-9][A-Za-z0-9_./:@+~-]*$")
+    model: str = Field(max_length=256, pattern=r"^[A-Za-z0-9][A-Za-z0-9_./:@+~-]*$")
+    expected_revision: int = Field(ge=0, strict=True)
+    confirmation_token: str | None = Field(default=None, pattern=r"^[0-9a-f]{32}$")
+
+
+class ModelDefaultRequest(ConversationRequest):
+    provider: str = Field(max_length=256, pattern=r"^[A-Za-z0-9][A-Za-z0-9_./:@+~-]*$")
+    model: str = Field(max_length=256, pattern=r"^[A-Za-z0-9][A-Za-z0-9_./:@+~-]*$")
+
+
+class ModelReconcileRequest(ConversationRequest):
+    expected_revision: int = Field(ge=0, strict=True)

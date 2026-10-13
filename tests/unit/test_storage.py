@@ -45,7 +45,7 @@ def test_upgrade_from_initial_schema_preserves_existing_sessions_and_jobs(tmp_pa
     old.close()
     upgraded = Store.open(path)
     try:
-        assert upgraded.schema_version == 5
+        assert upgraded.schema_version == 6
         assert upgraded.active_session(CLI).acp_session_id == "old-session"
         assert upgraded.job("old-job").status is JobStatus.RUNNING
         assert upgraded.approval_audit() == []
@@ -221,6 +221,36 @@ def test_conversations_are_isolated(store):
     assert store.find_session(TG, "s2") is not None
     other_agent = Conversation("cli", "default", "home")
     assert store.active_session(other_agent) is None
+
+
+def test_active_selection_refuses_foreign_dialogue_without_changing_revision(store):
+    own = store.add_session(CLI, "own", "/w")
+    foreign = store.add_session(TG, "foreign", "/w")
+    revision = store.active_revision(CLI)
+    with pytest.raises(ValueError, match="does not own"):
+        store.set_active(CLI, foreign.id)
+    assert store.active_session(CLI).id == own.id
+    assert store.active_revision(CLI) == revision
+
+
+def test_selection_generation_survives_reopen_and_fences_aba(tmp_path):
+    path = tmp_path / "selection.db"
+    store = Store.open(path)
+    first = store.add_session(CLI, "first", "/w")
+    second = store.add_session(CLI, "second", "/w", activate=False)
+    before = store.active_revision(CLI)
+    store.set_active(CLI, second.id)
+    store.set_active(CLI, first.id)
+    assert store.active_revision(CLI) == before + 2
+    store.close()
+    store = Store.open(path)
+    try:
+        saved = store.add_session(CLI, "late-create", "/w", expected_active_revision=before)
+        assert store.active_session(CLI).id == first.id
+        assert store.session(saved.id) is not None
+        assert store.active_revision(CLI) == before + 2
+    finally:
+        store.close()
 
 
 def test_an_agent_session_belongs_to_one_conversation(store):

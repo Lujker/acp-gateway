@@ -7,6 +7,14 @@ class GatewayError(Exception):
     """Base class of errors raised by the core itself (not by an agent)."""
 
 
+class MaintenanceBlocked(GatewayError):
+    """Maintenance cannot reserve an idle core, or new work is currently paused."""
+
+
+class SelectionChanged(GatewayError):
+    """A delayed action no longer matches the persistent active selection."""
+
+
 class UnknownAgent(GatewayError):
     """No agent profile with this alias."""
 

@@ -9,10 +9,11 @@ not a filesystem or tool sandbox.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from pathlib import PurePosixPath
+from pathlib import PurePosixPath, PureWindowsPath
 from typing import Any
 
 from acp_gateway.agents.errors import AgentError
+from acp_gateway.agents.model_control import MODEL_METHODS, MODEL_RECOVER, model_params
 from acp_gateway.agents.transport import AgentTransport
 from acp_gateway.config import AgentProfile
 
@@ -32,6 +33,16 @@ def _text(value: Any, limit: int = 4096) -> str:
 
 def _cwd(value: Any) -> str:
     value = _text(value)
+    if len(value) >= 3 and value[0].isascii() and value[0].isalpha() and value[1] == ":":
+        path = PureWindowsPath(value)
+        if (
+            not path.is_absolute()
+            or len(path.drive) != 2
+            or ".." in path.parts
+            or any(":" in part or part.endswith((" ", ".")) for part in path.parts[1:])
+        ):
+            raise LocalPolicyError("cwd must be an absolute Windows drive path without traversal")
+        return str(path)
     path = PurePosixPath(value)
     if not value.startswith("/") or value.startswith("//") or ".." in path.parts or "\\" in value:
         raise LocalPolicyError("cwd must be an absolute POSIX path without traversal")
@@ -99,9 +110,17 @@ class LocalAgentPolicy:
             }
         elif method in {"session/new", "session/load", "session/list"}:
             cwd = _cwd(self.allowed_cwds[0] if params.get("cwd") is None else params["cwd"])
-            if cwd not in self.allowed_cwds:
+            matched = next(
+                (
+                    c
+                    for c in self.allowed_cwds
+                    if c == cwd or (len(c) > 1 and c[1] == ":" and c.casefold() == cwd.casefold())
+                ),
+                None,
+            )
+            if matched is None:
                 raise LocalPolicyError("cwd is not allowed by local policy")
-            clean["cwd"] = cwd
+            clean["cwd"] = matched
             if method != "session/list":
                 clean["mcpServers"] = []
                 clean["additionalDirectories"] = []
@@ -109,6 +128,11 @@ class LocalAgentPolicy:
                 clean["sessionId"] = _text(params.get("sessionId"))
             if method == "session/list" and params.get("cursor") is not None:
                 clean["cursor"] = _text(params["cursor"])
+        elif method in MODEL_METHODS | {MODEL_RECOVER}:
+            try:
+                clean = model_params(method, params)
+            except ValueError:
+                raise LocalPolicyError("invalid model operation parameters") from None
         elif method in {"session/prompt", "session/cancel", "session/set_mode"}:
             clean["sessionId"] = _text(params.get("sessionId"))
             if method == "session/set_mode":
@@ -172,7 +196,10 @@ class PolicyTransport:
                 method = clean["method"]
                 params = clean["params"]
                 session = params.get("sessionId")
-                if method in {"session/prompt", "session/set_mode", "session/cancel"}:
+                if (
+                    method
+                    in {"session/prompt", "session/set_mode", "session/cancel"} | MODEL_METHODS
+                ):
                     if session not in self._sessions:
                         raise LocalPolicyError("session is not attached to this stream")
                     if method == "session/prompt" and not self._sessions[session]:
@@ -186,6 +213,12 @@ class PolicyTransport:
                         self._sessions[session] = False
                     if method == "session/cancel":
                         self._invalidate_permissions(session)
+                    if method in {"session/prompt"} | MODEL_METHODS and any(
+                        r["method"] in {"session/prompt"} | MODEL_METHODS
+                        and r["params"].get("sessionId") == session
+                        for r in self._pending.values()
+                    ):
+                        raise LocalPolicyError("session already has an active operation")
                 if method == "session/load" and session in self._sessions:
                     self._sessions[session] = False
                     self._invalidate_permissions(session)

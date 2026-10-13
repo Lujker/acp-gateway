@@ -440,3 +440,30 @@ async def test_malformed_dispatcher_frames_close_stream(guarded, message):
         await guard.send(message)
     assert raw.sent == []
     assert raw.closed.is_set()
+
+
+@pytest.mark.parametrize("method", ["_acpgw/model_options", "_acpgw/model_set"])
+async def test_model_extension_requires_a_session_attached_to_this_stream(guarded, method):
+    guard, raw = guarded
+    params = {"sessionId": "foreign"}
+    if method.endswith("model_set"):
+        params |= {"provider": "provider-b", "model": "model-b"}
+    with pytest.raises(LocalPolicyError, match="not attached"):
+        await guard.send(request(method, params))
+    assert raw.sent == []
+
+
+@pytest.mark.parametrize(
+    "extra",
+    [
+        {"scope": "global"},
+        {"api_key": "private"},
+        {"key": "other"},
+        {"provider": "x --global"},
+        {"confirmationToken": True},
+    ],
+)
+def test_model_extension_cannot_smuggle_flags_credentials_or_config_keys(policy, extra):
+    params = {"sessionId": "s1", "provider": "provider-b", "model": "model-b"} | extra
+    with pytest.raises(LocalPolicyError, match="invalid model"):
+        policy.prepare(request("_acpgw/model_set", params))

@@ -405,7 +405,7 @@ async def test_telegram_selects_computers_and_decides_relay_approvals(nodes):
     for number, name, option, answer in ((2, "home", 0, "home"), (5, "work", 1, "DENIED")):
         # Each segment represents a user interaction, outside the command throttle window.
         channel._recent.clear()
-        await send(number, "/agent " + name + "/goose")
+        await send(number, "/new " + name + "/goose")
         await send(number + 1, "run exactly: echo " + name + " .")
         await eventually(lambda: bool(channel._buttons))
         message = next(

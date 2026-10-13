@@ -2,6 +2,7 @@
 
 from dataclasses import dataclass
 from pathlib import Path
+from types import SimpleNamespace
 
 from acp_gateway.connectors.control import normalize_pin, validate_url
 from acp_gateway.connectors.policy import LocalAgentPolicy
@@ -12,12 +13,17 @@ def local_policies(config):
     profiles = config.settings.agents
     if not profiles:
         raise ValueError("configure at least one local agent before registering a computer")
-    if any(p.backend != "remote" for p in profiles):
+    if any(p.backend not in {"remote", "hermes"} for p in profiles):
         raise ValueError("a computer connector requires direct local agent profiles")
     missing = config.missing_agent_secrets()
     if missing:
         raise ValueError("missing agent secrets: " + ", ".join(missing))
-    return {p.alias: LocalAgentPolicy.from_profile(p) for p in profiles}
+    return {
+        p.alias: LocalAgentPolicy.from_profile(
+            p, max_prompt_length=config.settings.policy.max_prompt_length
+        )
+        for p in profiles
+    }
 
 
 @dataclass(frozen=True)
@@ -26,6 +32,30 @@ class ConnectorLaunch:
     computer_id: str
     token_file: Path
     tls_fingerprint: str | None = None
+
+    @classmethod
+    def from_saved(cls, config):
+        from acp_gateway.setup_state import read
+
+        state = read(config.config_path)
+        if state.get("role") != "connector":
+            raise ValueError(
+                "No saved connector connection; run acpgw setup --role connector "
+                "or provide all connector launch options explicitly"
+            )
+        connection = state["connection"]
+        token = Path(connection["token_file"])
+        if not token.is_absolute():
+            raise ValueError("Saved connector key path must be absolute; rerun acpgw connect")
+        return cls.from_args(
+            SimpleNamespace(
+                dispatcher_url=connection["dispatcher_url"],
+                computer_id=connection["computer_id"],
+                token_file=token,
+                tls_fingerprint=connection.get("tls_fingerprint"),
+            ),
+            config,
+        )
 
     @classmethod
     def from_args(cls, args, config):

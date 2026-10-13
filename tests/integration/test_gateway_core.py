@@ -18,6 +18,7 @@ from acp_gateway.config import AgentProfile
 from acp_gateway.core import (
     ApprovalRequested,
     GatewayCore,
+    GatewayError,
     JobFinished,
     JobNotFound,
     JobProgress,
@@ -130,6 +131,71 @@ async def test_first_message_creates_a_session_and_answers(server, tmp_path):
     assert session.acp_session_id == job.acp_session_id
     assert server.sessions[job.acp_session_id].mode == "smart_approve"
     assert session.title == "Pong"  # from goose's session_info_update
+
+
+async def test_selected_submit_never_creates_a_session_implicitly(server, tmp_path):
+    core = make_core(server.url("ws"), tmp_path)
+    try:
+        with pytest.raises(UnknownSession, match="/new"):
+            await core.submit_selected(TG, "do not create")
+        assert server.log == []
+        assert core.sessions(TG) == []
+        assert core.store._conn.execute("SELECT COUNT(*) FROM jobs").fetchone()[0] == 0
+        selected = await core.new_session(TG)
+        job = await core.submit_selected(TG, "say pong")
+        assert job.session_id == selected.id
+        assert (await core.wait(job.id, 5)).answer == "pong"
+    finally:
+        await core.close()
+
+
+async def test_stable_dialogue_selection_rejects_foreign_ids(server, tmp_path):
+    core = make_core(server.url("ws"), tmp_path)
+    try:
+        own = await core.new_session(TG)
+        foreign = await core.new_session(CLI)
+        revision = core.store.active_revision(TG)
+        for invalid in (foreign.id, 999999, True):
+            with pytest.raises(UnknownSession, match="does not own"):
+                core.switch_dialogue(TG, invalid)
+        assert core.active_session(TG).id == own.id
+        assert core.store.active_revision(TG) == revision
+        assert core.switch_dialogue(TG, own.id).id == own.id
+    finally:
+        await core.close()
+
+
+async def test_delayed_new_does_not_overwrite_later_explicit_selection(server, tmp_path):
+    core = make_core(server.url("ws"), tmp_path)
+    pending = None
+    try:
+        first = await core.new_session(TG)
+        second = await core.new_session(TG)
+        client = core.agent("work")
+        original = client.new_session
+        started, release = asyncio.Event(), asyncio.Event()
+
+        async def delayed(cwd=None):
+            started.set()
+            await release.wait()
+            return await original(cwd)
+
+        client.new_session = delayed
+        pending = asyncio.create_task(core.new_session(TG))
+        await asyncio.wait_for(started.wait(), 2)
+        # ABA: selecting away and back is still newer explicit intent.
+        core.switch_session(TG, first.acp_session_id)
+        core.switch_session(TG, second.acp_session_id)
+        release.set()
+        with pytest.raises(GatewayError, match=r"created.*selection changed"):
+            await pending
+        assert core.active_session(TG).id == second.id
+        assert len(core.sessions(TG)) == 3  # Created chat is kept, not retried or deleted.
+    finally:
+        if pending and not pending.done():
+            pending.cancel()
+            await asyncio.gather(pending, return_exceptions=True)
+        await core.close()
 
 
 async def test_multi_turn_dialog_keeps_context(server, tmp_path):

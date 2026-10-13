@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import json
 import secrets
 from collections import defaultdict
 from collections.abc import Mapping
@@ -23,9 +24,10 @@ from dataclasses import replace
 from datetime import timedelta
 from functools import partial
 
-from acp_gateway.agents import AgentClient, AgentError, SessionBusy
+from acp_gateway.agents import AgentClient, AgentError, SessionBusy, SessionNotFound
 from acp_gateway.agents.client import PermissionRequest
 from acp_gateway.agents.events import MessageChunk, SessionInfoUpdated, TurnFinished
+from acp_gateway.agents.model_control import identifier
 from acp_gateway.channels.base import Channel
 from acp_gateway.config import PolicySettings
 from acp_gateway.core.approvals import Approval, ApprovalManager
@@ -33,7 +35,9 @@ from acp_gateway.core.bus import EventBus, JobFinished, JobProgress, JobStarted,
 from acp_gateway.core.errors import (
     GatewayError,
     JobNotFound,
+    MaintenanceBlocked,
     PolicyDenied,
+    SelectionChanged,
     UnknownAgent,
     UnknownSession,
 )
@@ -89,6 +93,10 @@ class GatewayCore:
         self._locks: defaultdict[Conversation, asyncio.Lock] = defaultdict(asyncio.Lock)
         self._log = get_logger(__name__)
         self._closed = False
+        self._creating = 0
+        self._model_operations = 0
+        self._model_confirmations: dict[Conversation, tuple] = {}
+        self._maintenance_token: str | None = None
         self.policy = Policy(policy)
         self.approvals = ApprovalManager(store, self.bus, self.policy, lambda: self._channels)
         for alias, client in self._agents.items():
@@ -119,6 +127,7 @@ class GatewayCore:
         """Settle jobs left by a previous process, prune old jobs, start the channels."""
         if self._closed:
             raise GatewayError("the gateway has stopped")
+        self.store.models.recover_intents()
         interrupted = self.store.interrupt_running_jobs()
         pruned = self.store.prune_jobs(utcnow() - self._job_retention)
         self._log.info("gateway core started", interrupted_jobs=interrupted, pruned_jobs=pruned)
@@ -130,6 +139,7 @@ class GatewayCore:
         if self._closed:
             return
         self._closed = True
+        self._model_confirmations.clear()
         self.approvals.close()
         for channel in reversed(self._channels.values()):
             try:
@@ -158,18 +168,79 @@ class GatewayCore:
 
     # ---------------------------------------------------------------- sessions
 
+    def maintenance_status(self) -> dict:
+        return {
+            "reserved": self._maintenance_token is not None,
+            "running_jobs": len(self._running),
+            "creating_sessions": self._creating,
+            "pending_approvals": self.approvals.pending_count,
+            "model_operations": self._model_operations,
+            "unresolved_model_states": self.store.models.unresolved_count(),
+        }
+
+    def prepare_maintenance(self) -> str:
+        """Atomically reserve an idle event-loop core; no model work is cancelled."""
+        self._check_admission()
+        if (
+            self._running
+            or self._creating
+            or self.approvals.pending_count
+            or self._model_operations
+            or self.store.models.unresolved_count()
+        ):
+            raise MaintenanceBlocked(
+                "Finish active jobs, approvals, session creation and model operations "
+                "before maintenance."
+            )
+        self._maintenance_token = secrets.token_hex(16)
+        return self._maintenance_token
+
+    def resume_maintenance(self, token: str | None = None, *, force: bool = False) -> None:
+        if not force and (
+            self._maintenance_token is None
+            or not isinstance(token, str)
+            or not token.isascii()
+            or not secrets.compare_digest(self._maintenance_token, token)
+        ):
+            raise MaintenanceBlocked("The maintenance reservation does not match this process.")
+        self._maintenance_token = None
+
+    def _check_admission(self) -> None:
+        if self._closed:
+            raise GatewayError("the gateway has stopped")
+        if self._maintenance_token is not None:
+            raise MaintenanceBlocked(
+                "The dispatcher is reserved for maintenance; retry after resume."
+            )
+
     def sessions(self, conversation: Conversation) -> list[SessionRecord]:
         self.agent(conversation.agent)
-        return self.store.sessions(conversation)
+        return [self._session_view(record) for record in self.store.sessions(conversation)]
+
+    def _session_view(self, record: SessionRecord) -> SessionRecord:
+        client = self.agent(record.conversation.agent)
+        remember = getattr(client, "remember_session_binding", None)
+        if remember is not None and record.binding is not None:
+            remember(record.acp_session_id, record.binding)
+        availability = getattr(client, "session_availability", lambda sid: "unknown")
+        state = availability(record.acp_session_id)
+        model_state = self.store.models.state(record.id)
+        if model_state and model_state["state"] in {"intent", "unknown"}:
+            state = "uncertain"
+        if record.id in self._busy and state in {"unknown", "attached"}:
+            state = "busy"
+        return replace(record, availability=state)
 
     def active_session(self, conversation: Conversation) -> SessionRecord | None:
         self.agent(conversation.agent)
-        return self.store.active_session(conversation)
+        record = self.store.active_session(conversation)
+        return self._session_view(record) if record else None
 
     async def new_session(
         self, conversation: Conversation, cwd: str | None = None
     ) -> SessionRecord:
         """Create an agent session and make it the conversation's active session."""
+        self._check_admission()
         async with self._locks[conversation]:
             return await self._create_session(conversation, cwd)
 
@@ -180,29 +251,414 @@ class GatewayCore:
         if record is None:
             raise UnknownSession(f"this conversation has no session {acp_session_id}")
         self.store.set_active(conversation, record.id)
-        return record
+        return self._session_view(record)
+
+    def switch_dialogue(self, conversation: Conversation, dialogue_id: int) -> SessionRecord:
+        """Select an owned persistent row ID, independent of backend handles.
+
+        Entry points delegate ownership and selection to the core rather than
+        implementing their own storage checks. This is not account authorization;
+        the conversation is still supplied by a trusted channel adapter.
+        """
+        self.agent(conversation.agent)
+        record = self.store.session(dialogue_id) if type(dialogue_id) is int else None
+        if record is None or record.conversation != conversation:
+            raise UnknownSession("This conversation does not own that dialogue.")
+        self.store.set_active(conversation, record.id)
+        return self._session_view(record)
 
     async def _create_session(
         self, conversation: Conversation, cwd: str | None = None
     ) -> SessionRecord:
-        if self._closed:
-            raise GatewayError("the gateway has stopped")
+        self._check_admission()
         client = self.agent(conversation.agent)
         self.policy.check_new_session()
-        acp_session_id = await client.new_session(cwd)
+        revision = self.store.active_revision(conversation)
+        self._creating += 1
+        try:
+            acp_session_id = await client.new_session(cwd)
+        finally:
+            self._creating -= 1
         if self._closed:
             raise GatewayError("the gateway has stopped")
+        binding = getattr(client, "session_binding", lambda sid: None)(acp_session_id)
+        default = None
+        if client.profile.kind == "hermes":
+            if binding:
+                self.store.set_channel_state(
+                    "hermes_route_profile", conversation.agent, binding["profile"]
+                )
+            default = self.model_default(conversation)["selection"]
         record = self.store.add_session(
-            conversation, acp_session_id, cwd or client.profile.default_cwd
+            conversation,
+            acp_session_id,
+            cwd or client.profile.default_cwd,
+            binding=binding,
+            model_default_required=default,
+            expected_active_revision=revision,
         )
+        record = self._session_view(record)
         self._log.info("session created", conversation=str(conversation), session_id=acp_session_id)
         self.bus.publish(SessionCreated(conversation, record))
+        active = self.store.active_session(conversation)
+        if active is None or active.id != record.id:
+            raise GatewayError(
+                f"Session {record.id} was created, but your active selection changed meanwhile. "
+                f"It was kept; use /switch {record.id} to select the created session."
+            )
+        if default is not None:
+            # Retain the new dialogue on any failure; never prompt on an unintended model.
+            try:
+                result = await self._model_operation(
+                    conversation,
+                    record.id,
+                    self.store.active_revision(conversation),
+                    selection={**default, "confirmation_token": None},
+                    locked=True,
+                )
+            except (AgentError, GatewayError) as exc:
+                raise GatewayError(
+                    f"Session {record.id} was created, but its model default needs attention; "
+                    "use model state/show/set for this dialogue before prompting."
+                ) from exc
+            if result["status"] == "confirmation_required":
+                raise GatewayError(
+                    f"Session {record.id} needs model confirmation. "
+                    "Repeat model set explicitly to obtain a fresh confirmation token."
+                )
         return record
+
+    def _model_default_scope(self, conversation: Conversation) -> str:
+        profile = self.agent(conversation.agent).profile
+        if profile.kind != "hermes":
+            raise GatewayError("Dispatcher model defaults require a Hermes agent.")
+        # These identities are assigned by the application, never accepted from channels.
+        if profile.backend == "connector":
+            hermes_profile = self.store.channel_state("hermes_route_profile", conversation.agent)
+            if hermes_profile is None:
+                raise GatewayError(
+                    "Create a dialogue first to identify this connector's Hermes profile."
+                )
+        else:
+            hermes_profile = profile.hermes.profile if profile.hermes else "default"
+        return json.dumps(
+            [
+                "single-owner",
+                "default-workspace",
+                conversation.agent,
+                profile.computer_id,
+                profile.alias,
+                hermes_profile,
+            ],
+            separators=(",", ":"),
+        )
+
+    def model_default(self, conversation: Conversation) -> dict:
+        scope = self._model_default_scope(conversation)
+        return {
+            "agent": conversation.agent,
+            "selection": self.store.channel_state("model_default", scope),
+        }
+
+    def set_model_default(self, conversation: Conversation, *, provider: str, model: str) -> dict:
+        self._check_admission()
+        try:
+            selection = {"provider": identifier(provider), "model": identifier(model)}
+        except ValueError:
+            raise GatewayError("Invalid provider or model identifier.") from None
+        scope = self._model_default_scope(conversation)
+        self.store.set_channel_state("model_default", scope, selection)
+        return self.model_default(conversation)
+
+    def clear_model_default(self, conversation: Conversation) -> dict:
+        self._check_admission()
+        self.store.set_channel_state("model_default", self._model_default_scope(conversation), None)
+        return self.model_default(conversation)
+
+    def model_state(self, conversation: Conversation, dialogue_id: int) -> dict:
+        """Read durable evidence without reconnecting or interpreting it as applied."""
+        self.agent(conversation.agent)
+        record = self.store.session(dialogue_id)
+        if record is None or record.conversation != conversation:
+            raise UnknownSession("This conversation does not own that dialogue.")
+        return {
+            "dialogue_id": record.id,
+            "model_state": self.store.models.state(record.id),
+            "default_required": self.store.channel_state("model_default_required", str(record.id)),
+        }
+
+    async def model_options(
+        self,
+        conversation: Conversation,
+        *,
+        dialogue_id: int | None = None,
+        expected_revision: int | None = None,
+        admission=None,
+    ) -> dict:
+        return await self._model_operation(
+            conversation, dialogue_id, expected_revision, guard=admission
+        )
+
+    async def set_model(
+        self,
+        conversation: Conversation,
+        *,
+        provider: str,
+        model: str,
+        dialogue_id: int | None = None,
+        expected_revision: int | None = None,
+        confirmation_token: str | None = None,
+        admission=None,
+    ) -> dict:
+        return await self._model_operation(
+            conversation,
+            dialogue_id,
+            expected_revision,
+            guard=admission,
+            selection={
+                "provider": provider,
+                "model": model,
+                "confirmation_token": confirmation_token,
+            },
+        )
+
+    async def _model_operation(
+        self,
+        conversation,
+        dialogue_id,
+        expected_revision,
+        *,
+        selection=None,
+        locked=False,
+        guard=None,
+    ):
+        self._check_admission()
+        client = self.agent(conversation.agent)
+        async with contextlib.nullcontext() if locked else self._locks[conversation]:
+            self._check_admission()
+            record = self.store.active_session(conversation)
+            if record is None:
+                raise UnknownSession("No active dialogue; select or create one explicitly.")
+            if dialogue_id is not None and (
+                type(dialogue_id) is not int or record.id != dialogue_id
+            ):
+                raise UnknownSession("The selected conversation does not own this active dialogue.")
+            if record.id in self._busy:
+                raise SessionBusy("Finish the current job before changing model settings.")
+            revision = self.store.active_revision(conversation)
+            if expected_revision is not None and (
+                type(expected_revision) is not int or expected_revision != revision
+            ):
+                raise SelectionChanged("Dialogue selection changed; refresh before retrying.")
+            durable = self.store.models.state(record.id)
+            if (
+                selection is not None
+                and durable
+                and durable["state"] in {"intent", "pending", "unknown"}
+            ):
+                raise SessionBusy("Model selection is pending or unknown; no automatic retry")
+            confirmation = None
+            if selection is not None and selection.get("confirmation_token") is not None:
+                confirmation = (
+                    selection["confirmation_token"],
+                    record.id,
+                    selection["provider"],
+                    selection["model"],
+                    revision,
+                )
+                if self._model_confirmations.get(conversation) != confirmation:
+                    raise SelectionChanged("Model confirmation belongs to an earlier selection.")
+            self._session_view(record)
+
+            sent = False
+            operation_id = secrets.token_hex(16) if selection is not None else None
+
+            def admission():
+                nonlocal sent
+                self._check_admission()
+                if guard is not None:
+                    guard()
+                active = self.store.active_session(conversation)
+                if (
+                    active is None
+                    or active.id != record.id
+                    or self.store.active_revision(conversation) != revision
+                ):
+                    raise SelectionChanged("Dialogue selection changed before the model operation.")
+                if selection is not None:
+                    if (
+                        confirmation is not None
+                        and self._model_confirmations.get(conversation) != confirmation
+                    ):
+                        raise SelectionChanged("Model confirmation is no longer current.")
+                    self._model_confirmations.pop(conversation, None)
+                    self.store.models.begin(
+                        record.id,
+                        selection["provider"],
+                        selection["model"],
+                        revision,
+                        operation_id=operation_id,
+                    )
+                    sent = True
+
+            self._model_operations += 1
+            try:
+                if selection is None:
+                    result = await client.model_options(record.acp_session_id, admission=admission)
+                else:
+                    result = await client.set_model(
+                        record.acp_session_id,
+                        admission=admission,
+                        operation_id=operation_id,
+                        **selection,
+                    )
+                if selection is None:
+                    self.store.models.observe(record.id, result)
+                else:
+                    status = result["status"]
+                    self.store.models.settle(
+                        record.id,
+                        "confirmation_required" if status == "confirmation_required" else "pending",
+                        deferred=status == "deferred",
+                        resolved_request=result.get("resolved_request"),
+                    )
+                    if status in {"accepted", "deferred"}:
+                        self.store.set_channel_state("model_default_required", str(record.id), None)
+                changed = self.store.active_revision(conversation) != revision
+                if result.get("status") == "confirmation_required" and not changed:
+                    if len(self._model_confirmations) >= 1024:
+                        self._model_confirmations.pop(next(iter(self._model_confirmations)))
+                    self._model_confirmations[conversation] = (
+                        result["confirmation_token"],
+                        record.id,
+                        selection["provider"],
+                        selection["model"],
+                        revision,
+                    )
+                return {
+                    "dialogue_id": record.id,
+                    "selection_revision": revision,
+                    "selection_changed": changed,
+                    "model_state": self.store.models.state(record.id),
+                    **result,
+                }
+            except BaseException as exc:
+                if sent:
+                    from acp import RequestError
+
+                    from acp_gateway.agents.model_control import MODEL_REFUSED
+
+                    cause = exc.__cause__
+                    refused = isinstance(cause, RequestError) and cause.code in {
+                        MODEL_REFUSED,
+                        -32601,
+                    }
+                    self.store.models.settle(record.id, "refused" if refused else "unknown")
+                raise
+            finally:
+                self._model_operations -= 1
+
+    async def reconcile_model(
+        self,
+        conversation: Conversation,
+        *,
+        dialogue_id: int,
+        expected_revision: int,
+        admission=None,
+    ) -> dict:
+        self._check_admission()
+        if (
+            type(dialogue_id) is not int
+            or type(expected_revision) is not int
+            or expected_revision < 0
+        ):
+            raise SelectionChanged("Reconciliation requires an explicit dialogue and revision.")
+        client = self.agent(conversation.agent)
+        async with self._locks[conversation]:
+            record = self.store.active_session(conversation)
+            if record is None or record.id != dialogue_id:
+                raise UnknownSession("Select the owned dialogue before reconciling its model.")
+            self._session_view(record)
+
+            def guard():
+                self._check_admission()
+                if admission is not None:
+                    admission()
+                active = self.store.active_session(conversation)
+                if (
+                    active is None
+                    or active.id != record.id
+                    or self.store.active_revision(conversation) != expected_revision
+                ):
+                    raise SelectionChanged("Dialogue selection changed before reconciliation.")
+
+            guard()
+            if record.id in self._busy:
+                raise SessionBusy("Finish the current job before model reconciliation.")
+            state = self.store.models.state(record.id)
+            operation = self.store.channel_state("model_operation_id", str(record.id))
+            self._model_operations += 1
+            try:
+                if state and state["state"] in {"intent", "unknown"}:
+                    outcome = (
+                        await client.recover_model(
+                            record.acp_session_id, operation, admission=guard
+                        )
+                        if operation
+                        else {"status": "unavailable"}
+                    )
+                    if outcome["status"] in {"accepted", "deferred"}:
+                        self.store.models.settle(
+                            record.id,
+                            "pending",
+                            deferred=outcome["status"] == "deferred",
+                            resolved_request=outcome.get("resolved_request"),
+                        )
+                        self.store.set_channel_state("model_default_required", str(record.id), None)
+                    elif outcome["status"] == "not_applied":
+                        self.store.models.settle(record.id, "refused")
+                    else:
+                        return {
+                            "dialogue_id": record.id,
+                            "selection_revision": expected_revision,
+                            "selection_changed": self.store.active_revision(conversation)
+                            != expected_revision,
+                            "reconciliation": outcome["status"],
+                            "model_state": self.store.models.state(record.id),
+                        }
+                # A fresh observation is still required after a known ACK.
+                result = await client.model_options(record.acp_session_id, admission=guard)
+                self.store.models.observe(record.id, result)
+                return {
+                    "dialogue_id": record.id,
+                    "selection_revision": expected_revision,
+                    "selection_changed": self.store.active_revision(conversation)
+                    != expected_revision,
+                    "reconciliation": self.store.models.state(record.id)["state"],
+                    "model_state": self.store.models.state(record.id),
+                    **result,
+                }
+            finally:
+                self._model_operations -= 1
 
     # -------------------------------------------------------------------- jobs
 
+    async def submit_selected(self, conversation: Conversation, text: str) -> Job:
+        """Send to the persistent selection, without implicit session creation.
+
+        Shared by interactive entry points; selection and job creation happen
+        together under the conversation lock. Legacy programmatic submit keeps
+        its existing auto-create contract until callers explicitly opt in.
+        """
+        return await self.submit(conversation, text, create_session=False)
+
     async def submit(
-        self, conversation: Conversation, text: str, *, acp_session_id: str | None = None
+        self,
+        conversation: Conversation,
+        text: str,
+        *,
+        acp_session_id: str | None = None,
+        create_session: bool = True,
     ) -> Job:
         """Start a turn in the active or explicitly selected owned session.
 
@@ -210,13 +666,11 @@ class GatewayCore:
         is already running a job, and agent errors if a session cannot be created.
         An explicit session leaves the active pointer unchanged.
         """
-        if self._closed:
-            raise GatewayError("the gateway has stopped")
+        self._check_admission()
         client = self.agent(conversation.agent)
         self.policy.check_prompt(text)
         async with self._locks[conversation]:
-            if self._closed:
-                raise GatewayError("the gateway has stopped")
+            self._check_admission()
             if acp_session_id is not None:
                 session = self.store.find_session(conversation, acp_session_id)
                 if session is None:
@@ -224,13 +678,33 @@ class GatewayCore:
             else:
                 session = self.store.active_session(conversation)
             if session is None:
+                if not create_session:
+                    raise UnknownSession("No active dialogue; use /new or /switch SESSION_ID.")
                 session = await self._create_session(conversation)
             if session.id in self._busy:
                 raise SessionBusy(
                     f"{client.profile.display_name} is still working on the previous request"
                     " in this session"
                 )
+            if self.store.channel_state("model_default_required", str(session.id)):
+                raise SessionBusy(
+                    "This dialogue needs its model default selected or confirmed first."
+                )
+            durable = self.store.models.state(session.id)
+            if durable and durable["state"] in {"intent", "unknown"}:
+                raise SessionBusy("Model selection outcome is unknown; no automatic retry")
+            state = self._session_view(session).availability
+            if state == "restore-unavailable" or (
+                state == "uncertain"
+                and session.binding
+                and session.binding.get("restore") == "disabled"
+            ):
+                raise SessionNotFound(
+                    "This Hermes dialogue remains recorded but cannot safely be restored; "
+                    "create a new session with /new. The previous prompt will not be replayed."
+                )
             job = self.store.add_job(_new_job_id(), session.id)
+            self._model_confirmations.pop(conversation, None)
             self.store.touch_session(session.id)
             run = _RunningJob(job)
             self._running[job.id] = run
@@ -279,6 +753,8 @@ class GatewayCore:
         run = self._running.get(job_id)
         if run is None:
             return self.job(job_id)
+        if not getattr(self.agent(run.job.conversation.agent), "supports_cancel", True):
+            raise AgentError("safe turn cancellation is unavailable for this agent")
         run.cancel_requested = True
         self.approvals.cancel_job(job_id)
         await self.agent(run.job.conversation.agent).cancel(run.job.acp_session_id)
@@ -361,6 +837,8 @@ class GatewayCore:
             }
             try:
                 final = self.store.finish_job(job.id, status, **outcome)
+                if status is JobStatus.COMPLETED:
+                    self.store.models.turn_finished(job.session_id)
             except Exception:
                 # Still release the session and wake the waiters.
                 self._log.exception("could not record the job result", job_id=job.id)

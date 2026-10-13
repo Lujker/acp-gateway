@@ -2,6 +2,10 @@
 
 [Русская версия](vps-acceptance.ru.md)
 
+For the current P4.8 Windows Hermes target, use the
+[VPS → two Windows Hermes acceptance guide](vps-hermes-acceptance.ru.md).
+The Goose/Linux procedure below is the earlier deployment scenario.
+
 This runbook prepares the first live deployment: the **Gateway** runs on the
 VPS in Docker; an outgoing **connector** runs on each Linux/WSL computer;
 Goose runs locally on both computers. Start with a direct IP/port connection,

@@ -1,0 +1,190 @@
+{
+  "kind": "installed_upstream_helpers_with_synthetic_state",
+  "source_sha256": {
+    "tui_gateway/method_ctx.py": "2f8b8098dc16bfecb6c31de15eca21ab426f48f7e18e8adb78492a0bb70d5514",
+    "tui_gateway/session_auto_continue.py": "ffbd7412578f41c5a798b5ba787fb504559b4273546e11b6e93cb6e3f1598ad7",
+    "tui_gateway/methods_session_interrupt.py": "0daa4a4d774e3524672d8813e3cee49bf3d881a099b03fd899ba8ee30a52bd5c",
+    "tui_gateway/server_requests.py": "f1c3e234ac0adea06a831d410db6b579987208080a978ae8b807b8e727fad841"
+  },
+  "busy": {
+    "queue": {
+      "response": {
+        "jsonrpc": "2.0",
+        "id": "busy-test",
+        "result": {
+          "status": "queued"
+        }
+      },
+      "actions": [
+        "queue"
+      ]
+    },
+    "steer": {
+      "response": {
+        "jsonrpc": "2.0",
+        "id": "busy-test",
+        "result": {
+          "status": "steered"
+        }
+      },
+      "actions": [
+        "steer"
+      ]
+    },
+    "interrupt": {
+      "response": {
+        "jsonrpc": "2.0",
+        "id": "busy-test",
+        "result": {
+          "status": "redirected"
+        }
+      },
+      "actions": [
+        "redirect"
+      ]
+    },
+    "client_queued": {
+      "response": {
+        "jsonrpc": "2.0",
+        "id": "busy-test",
+        "result": {
+          "status": "queued"
+        }
+      },
+      "actions": [
+        "queue"
+      ]
+    },
+    "interrupt_legacy": {
+      "response": {
+        "jsonrpc": "2.0",
+        "id": "busy-test",
+        "result": {
+          "status": "queued"
+        }
+      },
+      "actions": [
+        "queue",
+        "interrupt"
+      ]
+    }
+  },
+  "interrupt": {
+    "late_session_cancel": {
+      "jsonrpc": "2.0",
+      "id": "late-cancel",
+      "result": {
+        "status": "interrupted"
+      }
+    },
+    "interrupted_owner": [
+      "desktop-later"
+    ],
+    "hosted_guard_on_ordinary_session": {
+      "jsonrpc": "2.0",
+      "id": "hosted-cancel",
+      "result": {
+        "status": "not_interrupted",
+        "interrupted": false
+      }
+    },
+    "tts_stop_calls_including_refused_interrupt": 2
+  },
+  "approvals": {
+    "first_response_wins": true,
+    "duplicate_ignored": true,
+    "cancel_scoped_to_session": true,
+    "cancelled_and_expired_answers_ignored": true,
+    "frames": [
+      {
+        "jsonrpc": "2.0",
+        "id": "server-request-1",
+        "method": "approval",
+        "params": {
+          "session_id": "live-test",
+          "request_id": "approval-test",
+          "command": "synthetic; never executed",
+          "description": "Compatibility lab",
+          "choices": [
+            "once",
+            "deny"
+          ]
+        }
+      },
+      {
+        "jsonrpc": "2.0",
+        "id": "server-request-1",
+        "result": {
+          "choice": "deny"
+        }
+      },
+      {
+        "jsonrpc": "2.0",
+        "id": "server-request-1",
+        "result": {
+          "choice": "once"
+        }
+      },
+      {
+        "jsonrpc": "2.0",
+        "id": "server-request-2",
+        "method": "approval",
+        "params": {
+          "session_id": "live-test",
+          "request_id": "approval-test",
+          "command": "synthetic; never executed",
+          "description": "Compatibility lab",
+          "choices": [
+            "once",
+            "deny"
+          ]
+        }
+      },
+      {
+        "jsonrpc": "2.0",
+        "id": "server-request-3",
+        "method": "approval",
+        "params": {
+          "session_id": "live-test",
+          "request_id": "approval-test",
+          "command": "synthetic; never executed",
+          "description": "Compatibility lab",
+          "choices": [
+            "once",
+            "deny"
+          ]
+        }
+      }
+    ],
+    "notifications": [
+      {
+        "jsonrpc": "2.0",
+        "method": "event",
+        "params": {
+          "type": "request.cancel",
+          "session_id": "live-test",
+          "payload": {
+            "id": "server-request-2",
+            "method": "approval",
+            "reason": "interrupted"
+          }
+        }
+      },
+      {
+        "jsonrpc": "2.0",
+        "method": "event",
+        "params": {
+          "type": "request.cancel",
+          "session_id": "live-test",
+          "payload": {
+            "id": "server-request-3",
+            "method": "approval",
+            "reason": "timeout"
+          }
+        }
+      }
+    ]
+  },
+  "live_desktop_test": false,
+  "model_or_tools_called": false
+}

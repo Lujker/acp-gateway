@@ -27,9 +27,19 @@ is working. Known authorized chats survive restart; removing a user from
 the configuration also removes their access. The owner API, MCP and bot
 tokens must be independent.
 
+Create a dialogue explicitly with `/new [ALIAS]` or select one with `/switch ID`
+before sending plain text. Plain text never creates a dialogue implicitly.
+The selected agent and dialogue survive restart; unavailable agents and failed
+requests do not select a replacement. A failed `/new ALIAS` keeps the previous
+route. For newly created managed connector dialogues, idle reconnect to the VPS
+or dispatcher restart retains the same Hermes chat while connector/Hermes stay
+alive. A drop during a pending turn, connector restart or lost Hermes attachment
+does not enable restoration. The active choice remains; no new chat or prompt
+is created automatically. Older direct/disabled bindings retain their refusal rule.
+
 | Command | Action |
 |---|---|
-| Plain text | Send a prompt; receive a working status and final answer |
+| Plain text | Send to the selected dialogue; refuse if none is selected |
 | `/start`, `/help` | Show commands |
 | `/agent`, `/agent ALIAS` | List available routes or select one, e.g. `home/goose` |
 | `/new [ALIAS]` | Create and activate a new session |
@@ -82,3 +92,14 @@ The automated integration tests use real aiogram types/dispatcher with a
 fake Telegram session and the recorded Goose ACP server. A live test needs
 an authorized person to send messages/click buttons in the bot; a valid
 token or successful `getMe` alone does not prove that user journey.
+
+
+## Hermes provider/model controls (0.2.0rc1 candidate)
+
+Use /model for observation, /models for the catalogue, and /model state for
+stored evidence without a host connection. Set with
+/model set PROVIDER MODEL ID REVISION [TOKEN], using the target/revision from
+the response. /model default [PROVIDER MODEL | clear] affects later new
+dispatcher dialogues only. /model reconcile ID REVISION reads the exact retained
+operation outcome without repeating the mutation. See the
+[P4.8 acceptance guide](p48-acceptance.md) for confirmation and recovery limits.

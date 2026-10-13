@@ -1,0 +1,56 @@
+{
+  "kind": "sanitized_observation_summary_not_wire_transcript",
+  "date": "2026-10-12",
+  "platform": "Windows native",
+  "agent": "Hermes Desktop",
+  "version": "0.21.6",
+  "rendezvous_protocol": 1,
+  "role": "desktop-serve",
+  "read_only_probe": "ready",
+  "create_activate": {
+    "same_live_session": true,
+    "same_stored_session": true,
+    "remaining_peer_pong": true
+  },
+  "model_run": {
+    "fixed_text_prompt_count": 1,
+    "submit": "streaming",
+    "peer_count": 2,
+    "each_peer": {
+      "events": {
+        "session.info": 1,
+        "message.start": 1,
+        "session.title": 1,
+        "thinking.delta": 3,
+        "message.delta": 5,
+        "reasoning.available": 1,
+        "message.complete": 1
+      },
+      "status": "complete",
+      "has_error": false,
+      "text_received": true
+    },
+    "denied_server_requests": [],
+    "remaining_peer_pong": true
+  },
+  "resume_activate": {
+    "saved_id_preserved_from_model_run": true,
+    "live_id_changed_since_model_run": true,
+    "same_live_session_between_peers": true,
+    "same_stored_session_between_peers": true,
+    "remaining_peer_pong": true,
+    "inference": "not_requested"
+  },
+  "upstream_capabilities": {"per_session_exclusive_submit": true},
+  "not_verified": [
+    "GUI rendering of shared session",
+    "real interactive approvals and arbitration",
+    "busy race and turn ownership",
+    "safe cancellation",
+    "Goose attach",
+    "second Windows host",
+    "Linux, WSL and macOS agent instances",
+    "VPS and Telegram production route"
+  ],
+  "cleanup": "test conversations left for owner inspection; no shared-session close or delete"
+}

@@ -51,6 +51,8 @@ class SessionRecord:
     title: str | None
     created_at: datetime
     last_used_at: datetime
+    binding: dict[str, str] | None = None
+    availability: str = field(default="unknown", compare=False)
 
 
 class JobStatus(StrEnum):

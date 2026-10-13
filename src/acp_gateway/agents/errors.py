@@ -37,3 +37,7 @@ class ModeNotAvailable(AgentError):
 
 class PromptFailed(AgentError):
     """The agent returned an error for a prompt."""
+
+
+class ModelRefused(AgentError):
+    """A known refusal before the model setter executed; safe to refresh, never auto-retry."""

@@ -61,6 +61,10 @@ class ApprovalManager:
         channel = self._channels().get(name)
         return channel is not None and self._policy.can_approve(channel)
 
+    @property
+    def pending_count(self) -> int:
+        return len(self._pending)
+
     def pending(self, channel: str) -> list[Approval]:
         if not self._eligible(channel):
             raise PolicyDenied("this channel is not a connected human approver")

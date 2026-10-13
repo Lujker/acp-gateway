@@ -21,8 +21,8 @@ def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="acpgw",
         description="ACP Gateway: route conversations to ACP agents with human approvals.",
-        epilog="Getting started: acpgw setup → edit configuration → acpgw config check → "
-        "acpgw serve (foreground) or acpgw service install / enable (autostart). "
+        epilog="Getting started: acpgw setup (interactive) → acpgw start. "
+        "Use acpgw setup --non-interactive to create templates for automation. "
         "Use acpgw <command> --help for details.",
     )
     parser.add_argument("--version", action="version", version=f"acpgw {__version__}")
@@ -44,6 +44,14 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     target.add_argument("--from", dest="source", help="install a wheel path/URL or Git URL/ref")
     update.add_argument("--dry-run", action="store_true", help="inspect without changing files")
+    update.add_argument(
+        "--with-services",
+        action="store_true",
+        help="reserve and restore a selected systemd service or Windows connector task",
+    )
+    update.add_argument("--service-role", choices=("gateway", "connector"))
+    update.add_argument("--service-coordinator-fd", type=int, help=argparse.SUPPRESS)
+    update.add_argument("--service-coordinator-file", type=Path, help=argparse.SUPPRESS)
     update.add_argument("--handoff-file", type=Path, help=argparse.SUPPRESS)
     update.add_argument(
         "--constraints", type=Path, help="release requirements.lock.txt (with --from)"
@@ -57,20 +65,117 @@ def _build_parser() -> argparse.ArgumentParser:
     config_cmd = commands.add_parser("config", help="inspect configuration")
     config_sub = config_cmd.add_subparsers(dest="config_command", required=True)
     config_sub.add_parser("check", help="validate configuration and show a summary")
+    edit = config_sub.add_parser("edit", help="edit settings with the interactive wizard")
+    edit.add_argument(
+        "--section",
+        choices=("all", "agents", "gateway", "telegram", "hermes", "connection"),
+        default="all",
+    )
+
+    doctor = commands.add_parser("doctor", help="diagnose configuration and suggest repairs")
+    doctor.add_argument(
+        "--live", action="store_true", help="also probe ACP, API and dispatcher TLS"
+    )
+    doctor.add_argument("--json", action="store_true", help="machine-readable report")
+    doctor.add_argument(
+        "--timeout", type=float, default=5, help="per-probe deadline in seconds (0-60)"
+    )
+    commands.add_parser("connect", help="configure this computer's outgoing dispatcher connection")
+    agents = commands.add_parser("agents", help="prepare and manage local executor agents")
+    agent_sub = agents.add_subparsers(dest="agent_command", required=True)
+    agent_sub.add_parser("list", help="show configured agents without secrets")
+    probe = agent_sub.add_parser("probe", help="probe an existing local agent without a model call")
+    probe.add_argument("kind", choices=("hermes", "goose"))
+    probe.add_argument("--url", help="Goose: explicit numeric-loopback ACP URL")
+    probe.add_argument("--secret-env", help="Goose: environment variable holding the backend key")
+    probe.add_argument("--tls-fingerprint", help="Goose: required SHA-256 pin for TLS")
+    probe.add_argument(
+        "--lock-dir", type=Path, help="Hermes rendezvous directory in this OS environment"
+    )
+    probe.add_argument("--role", choices=("desktop-serve", "serve"))
+    probe.add_argument(
+        "--timeout", type=float, default=5, help="per-request deadline, at most 60 seconds"
+    )
+    probe.add_argument("--json", action="store_true")
+    agent_sub.add_parser("configure", help="edit agent profiles interactively")
+    install_agent = agent_sub.add_parser(
+        "install", help="install Goose using its official installer"
+    )
+    install_agent.add_argument("kind", choices=("goose",))
+    install_agent.add_argument("--version", help="pin the Goose release")
+    install_agent.add_argument("--dry-run", action="store_true", help="show installation plan")
+    install_agent.add_argument(
+        "--yes", action="store_true", help="accept installation without prompting"
+    )
+    agent_sub.add_parser("provider", help="run Goose provider/model configuration")
+    agent_serve = agent_sub.add_parser("serve", help="run a configured local Goose listener")
+    agent_serve.add_argument("alias")
+    agent_service = agent_sub.add_parser(
+        "service", help="manage a local Goose systemd user service"
+    )
+    agent_service.add_argument("alias")
+    agent_service.add_argument(
+        "action",
+        choices=(
+            "install",
+            "start",
+            "stop",
+            "restart",
+            "enable",
+            "disable",
+            "status",
+            "logs",
+            "uninstall",
+        ),
+    )
 
     commands.add_parser("paths", help="show platform directories used by the gateway")
     commands.add_parser("serve", help="run the gateway daemon on loopback")
+    commands.add_parser("start", help="run the role saved by interactive setup")
+    commands.add_parser("menu", help="interactive configuration and management console")
     commands.add_parser("status", help="show gateway, agents and channels")
+    local_sessions = commands.add_parser(
+        "connector-sessions", help="inspect or retire local Hermes attachments without VPS access"
+    )
+    local_sub = local_sessions.add_subparsers(dest="session_command", required=True)
+    for action in ("list", "journal", "retire"):
+        cmd = local_sub.add_parser(action)
+        cmd.add_argument("--agent", required=True, help="local connector agent alias")
+        if action != "list":
+            cmd.add_argument("handle", help="opaque local handle from connector-sessions list")
+    maintenance_mode = commands.add_parser(
+        "maintenance", help="reserve an idle dispatcher before planned maintenance"
+    )
+    maintenance_mode.add_argument("--role", choices=("gateway", "connector"), default="gateway")
+    maintenance_sub = maintenance_mode.add_subparsers(dest="maintenance_command", required=True)
+    maintenance_sub.add_parser("status", help="show admission and active work counts")
+    for action in ("prepare", "resume"):
+        maintenance_action = maintenance_sub.add_parser(action)
+        maintenance_action.add_argument("--reservation-file", type=Path)
+        if action == "resume":
+            maintenance_action.add_argument(
+                "--force", action="store_true", help="owner recovery for a lost reservation token"
+            )
     setup_cmd = commands.add_parser(
-        "setup", help="create initial config and private tokens; keep existing files"
+        "setup", help="configure interactively in a terminal; create templates otherwise"
     )
     setup_cmd.add_argument(
         "--config-dir", type=Path, help="destination (default: platform config dir)"
     )
+    setup_cmd.add_argument(
+        "--role",
+        choices=("local", "server", "connector"),
+        help="preselect role in the interactive wizard",
+    )
+    setup_mode = setup_cmd.add_mutually_exclusive_group()
+    setup_mode.add_argument("--interactive", action="store_true", help="run the setup wizard")
+    setup_mode.add_argument(
+        "--non-interactive", action="store_true", help="create templates without questions"
+    )
     service = commands.add_parser(
         "service",
-        help="install and manage autostart (Linux/WSL systemd user service)",
-        description="Control the systemd user service independently of the gateway API. "
+        help="manage autostart (systemd user service or Windows connector task)",
+        description="Control the user service independently of the gateway API. "
         "enable/disable also start/stop it; start/stop leave autostart unchanged.",
     )
     service_sub = service.add_subparsers(dest="service_command", required=True)
@@ -87,6 +192,12 @@ def _build_parser() -> argparse.ArgumentParser:
         ("uninstall", "stop and remove the managed unit; keep configuration and data"),
     ):
         sub = service_sub.add_parser(action, help=help_text)
+        if action in {"stop", "disable", "restart", "uninstall"}:
+            sub.add_argument(
+                "--force",
+                action="store_true",
+                help="Windows connector only: terminate the task instead of graceful stop",
+            )
         if action == "install":
             sub.add_argument(
                 "--dispatcher-url", help="connector dispatcher ws[s]://host[:port][/path]"
@@ -106,6 +217,7 @@ def _build_parser() -> argparse.ArgumentParser:
     connector = commands.add_parser(
         "connector", help="outgoing WS/WSS computer connection and local ACP relay"
     )
+    connector.add_argument("--control-id", help=argparse.SUPPRESS)
     connector.add_argument("--dispatcher-url", required=True, help="ws[s]://host[:port][/path]")
     connector.add_argument("--computer-id", required=True)
     connector.add_argument(
@@ -137,6 +249,32 @@ def _build_parser() -> argparse.ArgumentParser:
     def conversation_options(cmd):
         cmd.add_argument("--agent", help="agent alias (optional with one configured agent)")
         cmd.add_argument("--thread", default="default", help="conversation name")
+
+    models = commands.add_parser("model", help="inspect or select the active dialogue model")
+    model_sub = models.add_subparsers(dest="model_command", required=True)
+    for action in ("show", "list", "state"):
+        cmd = model_sub.add_parser(action)
+        conversation_options(cmd)
+        cmd.add_argument("--session", type=int, required=True, help="owned gateway dialogue row ID")
+    cmd = model_sub.add_parser("reconcile", help="inspect the exact retained outcome without retry")
+    conversation_options(cmd)
+    cmd.add_argument("--session", type=int, required=True)
+    cmd.add_argument("--revision", type=int, required=True)
+    cmd = model_sub.add_parser("set", help="explicit session-scoped provider/model selection")
+    conversation_options(cmd)
+    cmd.add_argument("provider")
+    cmd.add_argument("model")
+    cmd.add_argument("--session", type=int, required=True)
+    cmd.add_argument("--revision", type=int, required=True, help="active_revision from sessions")
+    cmd.add_argument("--confirmation-token", help="single-use token from confirmation_required")
+    defaults = model_sub.add_parser("default", help="default for new dispatcher dialogues only")
+    default_sub = defaults.add_subparsers(dest="default_command", required=True)
+    for action in ("show", "clear", "set"):
+        cmd = default_sub.add_parser(action)
+        conversation_options(cmd)
+        if action == "set":
+            cmd.add_argument("provider")
+            cmd.add_argument("model")
 
     conversation_options(commands.add_parser("sessions", help="list conversation sessions"))
     new = commands.add_parser("new", help="create and activate a session")
@@ -191,6 +329,8 @@ def _cmd_config_check(cfg: AppConfig) -> int:
         print(f"  - {agent.address} [{agent.kind}/{agent.backend}] {agent.display_name}")
         if agent.backend == "connector":
             print(f"    route: {agent.address} (computer credentials remain on the computer)")
+        elif agent.backend == "hermes":
+            print(f"    attach: local Hermes/{agent.hermes.profile}; dedicated conversations")
         else:
             print(f"    url: {agent.url}  tls: {tls}")
         print(f"    secret: {secret}  cwd: {agent.default_cwd}")
@@ -213,6 +353,9 @@ def _cmd_paths() -> int:
 
 
 def main(argv: Sequence[str] | None = None) -> int:
+    argv = list(sys.argv[1:] if argv is None else argv)
+    if not argv and sys.stdin.isatty() and sys.stdout.isatty():
+        argv = ["menu"]
     args = _build_parser().parse_args(argv)
     if args.command in {"version", "update", "uninstall"}:
         try:
@@ -222,7 +365,9 @@ def main(argv: Sequence[str] | None = None) -> int:
         except (OSError, ValueError, httpx.HTTPError) as exc:
             print(f"error: {redact_text(str(exc))}", file=sys.stderr)
             return 1
-    if args.command in {"serve", "connector", "dispatcher"}:
+    if args.command in {"serve", "connector", "dispatcher"} or (
+        args.command == "agents" and args.agent_command == "serve"
+    ):
         try:
             from acp_gateway.installation import runtime_lease
 
@@ -239,20 +384,110 @@ def _run_configured(args) -> int:
 
     from acp_gateway.config import load_config
 
+    if args.command == "agents" and args.agent_command == "probe":
+        from acp_gateway.cli.probe import run
+
+        try:
+            return run(args)
+        except KeyboardInterrupt:
+            return 130
+    if args.command == "doctor":
+        from acp_gateway.cli.doctor import doctor
+
+        return doctor(
+            args.config, args.env_file, live=args.live, as_json=args.json, timeout=args.timeout
+        )
+    if args.command == "agents" and args.agent_command in {"install", "provider"}:
+        from acp_gateway.cli.executors import run_bootstrap
+
+        try:
+            return run_bootstrap(args)
+        except (OSError, ValueError, httpx.HTTPError) as exc:
+            print(f"error: {redact_text(str(exc))}", file=sys.stderr)
+            return 1
+        except (KeyboardInterrupt, EOFError):
+            return 130
+
     if args.command == "paths":
         return _cmd_paths()
-    if args.command == "setup" or (args.command == "service" and args.service_command != "install"):
+    if (
+        args.command in {"setup", "start", "menu", "connect"}
+        or (args.command == "agents" and args.agent_command == "configure")
+        or (
+            args.command == "agents"
+            and args.agent_command == "service"
+            and args.action != "install"
+        )
+        or (args.command == "config" and args.config_command == "edit")
+        or (args.command == "service" and args.service_command != "install")
+    ):
         try:
+            if args.command == "agents" and args.agent_command == "service":
+                from acp_gateway.cli.executors import service
+
+                return service(None, args.alias, args.action, config_file=args.config)
+            if args.command == "connect" or (
+                args.command == "agents" and args.agent_command == "configure"
+            ):
+                if not sys.stdin.isatty() or not sys.stdout.isatty():
+                    raise ValueError("interactive configuration requires a terminal")
+                from acp_gateway.cli.wizard import wizard
+                from acp_gateway.config import find_config_file
+
+                return wizard(
+                    config_file=find_config_file(args.config),
+                    env_file=args.env_file,
+                    section="connection" if args.command == "connect" else "agents",
+                )
+            if args.command == "menu":
+                from acp_gateway.cli.menu import menu
+
+                return menu(args.config, args.env_file)
+            if args.command == "config":
+                if not sys.stdin.isatty() or not sys.stdout.isatty():
+                    raise ValueError("interactive configuration requires a terminal")
+                from acp_gateway.cli.wizard import wizard
+                from acp_gateway.config import find_config_file
+
+                return wizard(
+                    config_file=find_config_file(args.config),
+                    env_file=args.env_file,
+                    section=args.section,
+                )
+            if args.command == "start":
+                from acp_gateway.cli.wizard import start
+
+                return start(args.config, args.env_file)
             if args.command == "setup":
+                interactive = args.interactive or (
+                    not args.non_interactive and sys.stdin.isatty() and sys.stdout.isatty()
+                )
+                if interactive:
+                    if not sys.stdin.isatty() or not sys.stdout.isatty():
+                        raise ValueError("interactive setup requires a terminal")
+                    from acp_gateway.cli.wizard import wizard
+
+                    return wizard(
+                        args.config_dir,
+                        config_file=args.config,
+                        env_file=args.env_file,
+                        role=args.role,
+                    )
+                if args.role:
+                    raise ValueError("--role requires interactive setup")
                 from acp_gateway.setup import setup
 
                 return setup(args.config_dir)
             from acp_gateway.service import control
 
-            return control(args.service_command, role=args.role)
+            options = {"force": True} if getattr(args, "force", False) else {}
+            return control(args.service_command, role=args.role, **options)
         except (OSError, ValueError) as exc:
             print(f"error: {redact_text(str(exc))}", file=sys.stderr)
             return 1
+        except (KeyboardInterrupt, EOFError):
+            print("\nInteractive command cancelled.", file=sys.stderr)
+            return 130
 
     try:
         cfg = load_config(args.config, args.env_file)
@@ -266,6 +501,18 @@ def _run_configured(args) -> int:
     if args.command == "config" and args.config_command == "check":
         return _cmd_config_check(cfg)
     try:
+        if args.command == "connector-sessions":
+            from acp_gateway.cli.connector_maintenance import sessions
+
+            return sessions(cfg, args)
+        if args.command == "maintenance" and args.role == "connector":
+            from acp_gateway.cli.connector_maintenance import run
+
+            return run(cfg, args)
+        if args.command == "agents":
+            from acp_gateway.cli.executors import run
+
+            return run(cfg, args)
         if args.command in {"connector", "dispatcher"}:
             from acp_gateway.connectors.commands import run as run_connector_command
 
@@ -285,7 +532,14 @@ def _run_configured(args) -> int:
             if args.role == "connector":
                 from acp_gateway.connectors.launch import ConnectorLaunch
 
-                launch = ConnectorLaunch.from_args(args, cfg)
+                explicit = any(
+                    (args.dispatcher_url, args.computer_id, args.token_file, args.tls_fingerprint)
+                )
+                launch = (
+                    ConnectorLaunch.from_args(args, cfg)
+                    if explicit
+                    else ConnectorLaunch.from_saved(cfg)
+                )
             elif any(
                 (args.dispatcher_url, args.computer_id, args.token_file, args.tls_fingerprint)
             ):
