@@ -36,8 +36,10 @@ New directories use mode `700`; log files and rotated files use mode `600`
 on Linux. The active file cannot be a symlink. `max_bytes` bounds each file
 approximately to one record beyond the limit; `backup_count` bounds retained
 backups. The systemd installer requires an absolute log path for unattended
-startup. JSON log rotation does not prune SQLite approval audit; audit
-retention is a separate pending P3.3 item.
+startup. JSON log rotation is independent of SQLite history. Development
+version 0.2.0rc2.dev0 adds bounded scheduled job/audit cleanup; audit expiry
+is opt-in. See [retention configuration](retention.md). The frozen 0.2.0rc1
+acceptance package keeps its existing behavior.
 
 Agent connection recovery already uses bounded backoff and restores owned
 sessions on demand. Authentication and certificate pin failures are not

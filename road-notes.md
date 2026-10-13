@@ -2918,6 +2918,39 @@ Wheel 0.2.0rc1 заморожен: новые docs и дальнейшая ра�
 Следующая доступная кодовая задача по очереди — P3.3 audit retention:
 установки/boot/реальный бот требуют действий владельца, retention не требует.
 
+## 2026-10-13 — P3.3: ограниченная периодическая SQLite retention
+
+После передачи инструкции владельцу выполнен следующий независимый пункт очереди.
+Версия разработки повышена до 0.2.0rc2.dev0, uv.lock обновлён offline; frozen
+0.2.0rc1 wheel и внешний установочный архив не пересобирались. Их hashes проверены.
+
+RetentionSettings передаётся из daemon в GatewayCore: jobs_days=7,
+approval_audit_days=null (удаление аудита только по явной настройке),
+sweep_interval_seconds=3600, batch_size=1000. Startup и фоновый task очищают
+не более одной порции каждой таблицы; строгий timestamp cutoff сохраняет
+пограничные и свежие записи. Миграция 0007 добавляет индексы; сама данные не
+удаляет. Running jobs, sessions/bindings/model state и pending approvals не
+затрагиваются. Job expiry обнуляет FK аудита, сохраняя решение до отдельного
+audit cutoff. Ошибка sweep логируется без SQLite exception text; serve продолжает
+работу, следующая попытка идёт по интервалу. Фоновый task отменяется/ожидается
+до закрытия store. Автоматического VACUUM и удаления upstream истории нет.
+
+14 новых cases проверяют batch/boundary/FK, запрет некорректных размеров,
+bounds/env конфигурации, opt-in, periodic expiry без restart, retry после
+ошибки и shutdown. Выборочный WSL suite: 173 passed. Полный WSL source:
+**1166 passed / 28 skipped**, 163.46 s; JUnit /tmp/acpgw-p33-retention.xml.
+Native Windows source (retention/storage/config в изолированном temporary
+Python): **85 passed / 2 POSIX skipped**, 7.62 s; JUnit
+C:/Users/vladz/AppData/Local/Temp/acpgw-p33-retention-native.xml.
+Ruff check/format: 224 files clean. Пользовательские службы/БД не менялись.
+
+Настройки и ограничения: docs/setup/retention.md; observability/architecture,
+config.example.yaml и очередь обновлены. Schema 7 несовместима с откатом binary
+на 0.2.0rc1 без восстановления старой БД; это явно описано, кандидат живой
+приёмки использует прежнюю schema 6. P3.3 остаётся PARTIAL: следующие кодовые
+пункты — лимиты остальных каналов и durable outbound delivery. P4.8.5 ждёт
+самостоятельной установки владельцем и фактических live результатов.
+
 ## Незакрытые вопросы
 
 - **Автотесты TLS/SSE** — наблюдавшиеся причины и исправления тестового стенда

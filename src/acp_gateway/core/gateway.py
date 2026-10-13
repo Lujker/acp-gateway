@@ -29,7 +29,7 @@ from acp_gateway.agents.client import PermissionRequest
 from acp_gateway.agents.events import MessageChunk, SessionInfoUpdated, TurnFinished
 from acp_gateway.agents.model_control import identifier
 from acp_gateway.channels.base import Channel
-from acp_gateway.config import PolicySettings
+from acp_gateway.config import PolicySettings, RetentionSettings
 from acp_gateway.core.approvals import Approval, ApprovalManager
 from acp_gateway.core.bus import EventBus, JobFinished, JobProgress, JobStarted, SessionCreated
 from acp_gateway.core.errors import (
@@ -78,14 +78,21 @@ class GatewayCore:
         agents: Mapping[str, AgentClient],
         *,
         bus: EventBus | None = None,
-        job_retention: timedelta = DEFAULT_JOB_RETENTION,
+        job_retention: timedelta | None = None,
+        retention: RetentionSettings | None = None,
         cancel_grace: float = DEFAULT_CANCEL_GRACE,
         policy: PolicySettings | None = None,
     ) -> None:
         self.store = store
         self.bus = bus or EventBus()
         self._agents = dict(agents)
-        self._job_retention = job_retention
+        self._retention = retention or RetentionSettings()
+        self._job_retention = (
+            job_retention
+            if job_retention is not None
+            else timedelta(days=self._retention.jobs_days)
+        )
+        self._retention_task: asyncio.Task[None] | None = None
         self._cancel_grace = cancel_grace
         self._channels: dict[str, Channel] = {}
         self._running: dict[str, _RunningJob] = {}
@@ -129,16 +136,49 @@ class GatewayCore:
             raise GatewayError("the gateway has stopped")
         self.store.models.recover_intents()
         interrupted = self.store.interrupt_running_jobs()
-        pruned = self.store.prune_jobs(utcnow() - self._job_retention)
-        self._log.info("gateway core started", interrupted_jobs=interrupted, pruned_jobs=pruned)
+        self._sweep_retention()
+        self._log.info("gateway core started", interrupted_jobs=interrupted)
+        if self._retention_task is None:
+            self._retention_task = asyncio.create_task(
+                self._run_retention(), name="gateway-retention"
+            )
         for channel in self._channels.values():
             await channel.start(self)
+
+    def _sweep_retention(self) -> None:
+        try:
+            now = utcnow()
+            jobs = self.store.prune_jobs(
+                now - self._job_retention, limit=self._retention.batch_size
+            )
+            approvals = 0
+            if self._retention.approval_audit_days is not None:
+                approvals = self.store.prune_approval_audit(
+                    now - timedelta(days=self._retention.approval_audit_days),
+                    limit=self._retention.batch_size,
+                )
+            self._log.info(
+                "retention sweep completed", pruned_jobs=jobs, pruned_approvals=approvals
+            )
+        except Exception:
+            # A cleanup failure must not prevent serving or the next scheduled attempt.
+            # Avoid SQLite exception text, which can contain database paths.
+            self._log.warning("retention sweep failed; will retry on next interval")
+
+    async def _run_retention(self) -> None:
+        while True:
+            await asyncio.sleep(self._retention.sweep_interval_seconds)
+            self._sweep_retention()
 
     async def close(self) -> None:
         """Stop channels, interrupt running jobs, close agent connections and the store."""
         if self._closed:
             return
         self._closed = True
+        if self._retention_task is not None:
+            self._retention_task.cancel()
+            await asyncio.gather(self._retention_task, return_exceptions=True)
+            self._retention_task = None
         self._model_confirmations.clear()
         self.approvals.close()
         for channel in reversed(self._channels.values()):

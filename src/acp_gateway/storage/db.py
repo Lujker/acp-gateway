@@ -353,12 +353,30 @@ class Store:
         )
         return cursor.rowcount
 
-    def prune_jobs(self, finished_before: datetime) -> int:
+    def prune_jobs(self, finished_before: datetime, *, limit: int = 1000) -> int:
+        """Delete at most one batch of finished jobs, keeping live jobs and sessions."""
+        self._check_prune_limit(limit)
         cursor = self._conn.execute(
-            "DELETE FROM jobs WHERE status != ? AND finished_at < ?",
-            (JobStatus.RUNNING.value, _ts(finished_before)),
+            "DELETE FROM jobs WHERE id IN (SELECT id FROM jobs "
+            "WHERE status != ? AND finished_at < ? ORDER BY finished_at, id LIMIT ?)",
+            (JobStatus.RUNNING.value, _ts(finished_before), limit),
         )
         return cursor.rowcount
+
+    def prune_approval_audit(self, resolved_before: datetime, *, limit: int = 1000) -> int:
+        """Expire settled decisions only; pending approvals are never stored here."""
+        self._check_prune_limit(limit)
+        cursor = self._conn.execute(
+            "DELETE FROM approvals_audit WHERE id IN (SELECT id FROM approvals_audit "
+            "WHERE resolved_at < ? ORDER BY resolved_at, id LIMIT ?)",
+            (_ts(resolved_before), limit),
+        )
+        return cursor.rowcount
+
+    @staticmethod
+    def _check_prune_limit(limit: int) -> None:
+        if type(limit) is not int or not 1 <= limit <= 10000:
+            raise ValueError("retention batch limit must be 1..10000")
 
     # --------------------------------------------------------------- approvals
 
