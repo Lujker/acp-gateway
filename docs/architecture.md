@@ -304,7 +304,8 @@ Semantics the design must respect:
     (the gateway stopped). `cancel(conversation)` stops every running job of
     the conversation; if the agent does not end the turn within a grace
     period, the gateway stops waiting for it. The answer is stored, the prompt
-    is not; finished jobs are pruned after 7 days;
+    is not; finished jobs expire after 7 days by default. Development version
+    0.2.0rc2.dev0 adds [bounded periodic retention](setup/retention.md);
   - *approvals* — implemented in `P1.4`; see section 6;
   - *policy* — implemented in `P1.4`; see section 7;
   - *event bus* — `SessionCreated`, `JobStarted`, `JobProgress` (raw agent
@@ -370,7 +371,9 @@ response can reach the agent. Audit failures fail closed. The audit includes
 the originating conversation, job, tool and arguments, timestamps, outcome,
 deciding channel and human identity. Registered secrets and sensitive keys are
 masked in stored titles and arguments. Decisions survive restart and job
-retention cleanup; pending requests are never restored.
+retention cleanup; pending requests are never restored. Development version
+0.2.0rc2.dev0 supports optional audit expiry, disabled by default; decisions
+older than the configured period are removed in bounded sweeps.
 
 - Nothing is approved automatically by default; an expired request becomes
   `reject`/`cancelled`.

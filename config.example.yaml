@@ -47,3 +47,10 @@ policy:
 logging:
   level: INFO
   format: auto              # auto | console | json
+
+# Development version 0.2.0rc2.dev0 and newer (not the frozen 0.2.0rc1 installer).
+retention:
+  jobs_days: 7
+  approval_audit_days: null  # null keeps all decisions; e.g. 90 explicitly enables expiry
+  sweep_interval_seconds: 3600
+  batch_size: 1000          # maximum deletions per table per sweep

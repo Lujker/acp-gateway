@@ -237,6 +237,14 @@ class PolicySettings(_Section):
     approver_channels: list[str] = Field(default_factory=lambda: ["cli"])
 
 
+class RetentionSettings(_Section):
+    jobs_days: int = Field(default=7, ge=1, le=36500)
+    # Audit expiry is opt-in; existing installations retain all decisions.
+    approval_audit_days: int | None = Field(default=None, ge=1, le=36500)
+    sweep_interval_seconds: int = Field(default=3600, ge=60, le=86400)
+    batch_size: int = Field(default=1000, ge=1, le=10000)
+
+
 class LoggingSettings(_Section):
     level: Literal["DEBUG", "INFO", "WARNING", "ERROR"] = "INFO"
     format: Literal["auto", "console", "json"] = "auto"
@@ -290,6 +298,7 @@ class Settings(BaseSettings):
     connector: ConnectorSettings = Field(default_factory=ConnectorSettings)
     agents: list[AgentProfile] = Field(default_factory=list)
     policy: PolicySettings = Field(default_factory=PolicySettings)
+    retention: RetentionSettings = Field(default_factory=RetentionSettings)
     logging: LoggingSettings = Field(default_factory=LoggingSettings)
     telegram: TelegramSettings = Field(default_factory=TelegramSettings)
     data_dir: Path | None = None

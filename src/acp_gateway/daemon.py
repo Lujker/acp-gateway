@@ -76,7 +76,9 @@ def configured_app(config: AppConfig):
             )
             for p in config.settings.agents
         }
-        core = GatewayCore(store, agents, policy=config.settings.policy)
+        core = GatewayCore(
+            store, agents, policy=config.settings.policy, retention=config.settings.retention
+        )
         cli = CliChannel()
         core.add_channel(cli)
         if config.settings.telegram.enabled:
