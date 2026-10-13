@@ -26,6 +26,7 @@ from acp_gateway.core import (
     JobProgress,
     MaintenanceBlocked,
     PolicyDenied,
+    RateLimited,
     SelectionChanged,
     UnknownAgent,
     UnknownSession,
@@ -90,6 +91,12 @@ def create_app(
     @app.exception_handler(AgentError)
     @app.exception_handler(GatewayError)
     async def known_error(request, exc):
+        if isinstance(exc, RateLimited):
+            return JSONResponse(
+                {"detail": str(exc)},
+                status_code=429,
+                headers={"Retry-After": str(exc.retry_after)},
+            )
         if isinstance(exc, (UnknownAgent, UnknownSession, JobNotFound, ApprovalNotFound)):
             status = 404
         elif isinstance(exc, (SessionBusy, ModelRefused, MaintenanceBlocked, SelectionChanged)):

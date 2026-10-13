@@ -47,3 +47,8 @@ retried. Interrupted agent prompts are not automatically replayed: command
 execution may have begun before the connection failed. Systemd's
 `Restart=on-failure` restarts a crashed gateway; running jobs left in SQLite
 are marked interrupted at startup. Saved sessions/configuration survive.
+
+Development version 0.2.0rc2.dev0 also adds a shared per-channel admission
+budget for new sessions and prompts. HTTP 429 includes Retry-After; MCP/CLI
+show the waiting time. Result polling, cancellation and human approval
+remain available. See [channel work limits](rate-limits.md).

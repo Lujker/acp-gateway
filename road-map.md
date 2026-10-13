@@ -290,21 +290,15 @@ Task Scheduler («при входе», `python -m acp_gateway`), позже — 
 
 ### P3.3. Надёжность и наблюдаемость
 
-**Статус:** PARTIAL — 2026-10-08: component health/probes (owner auth, ACP
-initialize без prompt), ограниченная ротация приватных JSON logs, Telegram
-per-user throttle, polling backoff и retry после явного 429. Agent reconnect
-и восстановление сессий уже проверены core/ACP тестами. 2026-10-13: в версии
-разработки 0.2.0rc2.dev0 добавлена bounded periodic SQLite retention: jobs
-по умолчанию 7 дней, audit opt-in, startup/interval sweep и retry после ошибки.
-[Настройка](docs/setup/retention.md). Остаток: лимиты
-других каналов, durable outbound delivery и полный
-live e2e Work Goose/Telegram. Сетевые таймауты отправки и agent prompts
-автоматически не переигрываются из-за неопределённого результата.
-**Репозиторий:** `acp-gateway`
-
-Rate limiting по каналам, retry отправки в каналы, ротация логов и audit,
-`/health/work-goose` и `/health/<channel>`, e2e-проверка (`scripts/smoke`)
-против реального Work Goose.
+**Статус:** PARTIAL — health/probes, JSON log rotation, Telegram throttle и
+polling/429 retry проверены; core/ACP reconnect и session persistence готовы.
+2026-10-13: в 0.2.0rc2.dev0 добавлены bounded periodic SQLite retention
+(audit opt-in) и общий rolling work budget CLI/API, MCP, Telegram.
+Остаток: durable outbound delivery и живая e2e Work Goose/Telegram.
+Неопределённые отправки и agent prompts автоматически не переигрываются.
+[Решения и проверки](docs/items/p3.3-reliability.ru.md),
+[retention](docs/setup/retention.md), [лимиты](docs/setup/rate-limits.md).
+**Репозиторий:** acp-gateway
 
 ### P3.4. Дистрибуция, установка и первичная настройка
 
@@ -843,8 +837,9 @@ Goose/platform combinations остаются P4.9, cold/shared write recovery н
    Task Scheduler lifecycles уже подтверждены на текущем хосте.
 4. **P2.3 — живая приёмка Telegram и streaming status.** Команды и основной
    человеческий канал подтверждений реализованы.
-5. **P3.3 — лимиты остальных каналов и delivery recovery.** Audit retention
-   реализован в 0.2.0rc2.dev0; кандидат живой установки остаётся 0.2.0rc1.
+5. **P3.3 — durable outbound delivery.** Retention и admission limits готовы
+   в 0.2.0rc2.dev0; [журнал](docs/items/p3.3-reliability.ru.md).
+   Кандидат живой установки остаётся 0.2.0rc1.
 6. **P4.1 — VPS-диспетчер и собственный WebSocket-коннектор.** Основа для `P4.8`:
    один владелец, ACP-релей. Enrollment и WS/WSS-регистрация
    готовы; инъекция транспорта в AgentClient реализована и проверена на mock ACP

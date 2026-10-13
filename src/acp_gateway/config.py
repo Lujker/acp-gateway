@@ -237,6 +237,12 @@ class PolicySettings(_Section):
     approver_channels: list[str] = Field(default_factory=lambda: ["cli"])
 
 
+class RateLimitSettings(_Section):
+    # One aggregate budget per channel, shared by all its threads and agents.
+    work_requests: int = Field(default=60, ge=1, le=10000)
+    window_seconds: int = Field(default=60, ge=1, le=3600)
+
+
 class RetentionSettings(_Section):
     jobs_days: int = Field(default=7, ge=1, le=36500)
     # Audit expiry is opt-in; existing installations retain all decisions.
@@ -298,6 +304,7 @@ class Settings(BaseSettings):
     connector: ConnectorSettings = Field(default_factory=ConnectorSettings)
     agents: list[AgentProfile] = Field(default_factory=list)
     policy: PolicySettings = Field(default_factory=PolicySettings)
+    rate_limits: RateLimitSettings = Field(default_factory=RateLimitSettings)
     retention: RetentionSettings = Field(default_factory=RetentionSettings)
     logging: LoggingSettings = Field(default_factory=LoggingSettings)
     telegram: TelegramSettings = Field(default_factory=TelegramSettings)

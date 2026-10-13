@@ -54,3 +54,8 @@ retention:
   approval_audit_days: null  # null keeps all decisions; e.g. 90 explicitly enables expiry
   sweep_interval_seconds: 3600
   batch_size: 1000          # maximum deletions per table per sweep
+
+# Same development-version requirement as retention above.
+rate_limits:
+  work_requests: 60        # shared new-session/prompt attempts per channel
+  window_seconds: 60

@@ -29,7 +29,7 @@ from acp_gateway.agents.client import PermissionRequest
 from acp_gateway.agents.events import MessageChunk, SessionInfoUpdated, TurnFinished
 from acp_gateway.agents.model_control import identifier
 from acp_gateway.channels.base import Channel
-from acp_gateway.config import PolicySettings, RetentionSettings
+from acp_gateway.config import PolicySettings, RateLimitSettings, RetentionSettings
 from acp_gateway.core.approvals import Approval, ApprovalManager
 from acp_gateway.core.bus import EventBus, JobFinished, JobProgress, JobStarted, SessionCreated
 from acp_gateway.core.errors import (
@@ -42,6 +42,7 @@ from acp_gateway.core.errors import (
     UnknownSession,
 )
 from acp_gateway.core.policy import Policy
+from acp_gateway.core.rate_limits import WorkRateLimiter
 from acp_gateway.log import get_logger
 from acp_gateway.storage import Conversation, Job, JobStatus, SessionRecord, Store
 from acp_gateway.storage.records import utcnow
@@ -80,12 +81,14 @@ class GatewayCore:
         bus: EventBus | None = None,
         job_retention: timedelta | None = None,
         retention: RetentionSettings | None = None,
+        rate_limits: RateLimitSettings | None = None,
         cancel_grace: float = DEFAULT_CANCEL_GRACE,
         policy: PolicySettings | None = None,
     ) -> None:
         self.store = store
         self.bus = bus or EventBus()
         self._agents = dict(agents)
+        self.work_rate_limiter = WorkRateLimiter(rate_limits)
         self._retention = retention or RetentionSettings()
         self._job_retention = (
             job_retention
@@ -281,6 +284,9 @@ class GatewayCore:
     ) -> SessionRecord:
         """Create an agent session and make it the conversation's active session."""
         self._check_admission()
+        self.agent(conversation.agent)
+        self.policy.check_new_session()
+        self.work_rate_limiter.check(conversation.channel)
         async with self._locks[conversation]:
             return await self._create_session(conversation, cwd)
 
@@ -709,6 +715,7 @@ class GatewayCore:
         self._check_admission()
         client = self.agent(conversation.agent)
         self.policy.check_prompt(text)
+        self.work_rate_limiter.check(conversation.channel)
         async with self._locks[conversation]:
             self._check_admission()
             if acp_session_id is not None:
