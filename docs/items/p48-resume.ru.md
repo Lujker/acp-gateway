@@ -1,6 +1,6 @@
 # P4.8 — переход от разработки к установке и приёмке
 
-Срез: 2026-10-13, candidate 0.2.0rc1. Статус всего P4.8: IN PROGRESS;
+Срез: 2026-10-13, frozen candidate 0.2.0rc1; development отдельно ниже. Статус всего P4.8: IN PROGRESS;
 кодовая основа готова, P4.8.5 требует реальной установки и приёмки.
 Владелец подтвердил доступность VPS адресов IP:port и domain/path, Telegram bot
 и установленного native Hermes на текущем Windows-хосте. Первым проверяется
@@ -56,7 +56,7 @@
    IP и domain/path, reboot/sleep/network проверяются в P4.8.5.
    Credentials и пользовательские службы в функциональной итерации не менялись.
 
-## Проверенная source база
+## Проверенная база кандидата 0.2.0rc1
 
 Полная WSL regression: **1152 passed / 28 skipped**, 183.75 s.
 Skips: 23 native Scheduler opt-in и 5 installed-Hermes compatibility.
@@ -78,6 +78,29 @@ Goose/platform expansion остаётся P4.9, multi-user accounts — P4.10.
 
 Самостоятельный этап владельца: [пошаговая установка](../setup/self-install-0.2.0rc1.ru.md).
 Кандидат остаётся замороженным; последующая разработка не подменяет его wheel.
+
+## Отдельная development-ветка после freeze rc1
+
+HEAD реализации: f0961ca; версия 0.2.0rc2.dev0, schema 8. Это не пересобранный
+кандидат и не новая опубликованная поставка. Последний сохранённый WSL JUnit:
+1198 passed / 28 skipped, failures/errors=0; native source профиль 62 passed.
+Подробный журнал: [P3.3](p3.3-reliability.ru.md); результаты при этой сверке
+прочитаны из сохранённого отчёта, не выдаются за повторный full suite.
+
+Готовы bounded periodic retention (audit opt-in), общий work admission limit,
+persistent Telegram outbox с chunk ACK/digest/unknown fence, partial/final
+status edits и дополнительные update/rollback recovery checks. Изолированные
+wheel lifecycle прошли, включая настоящий переход rc1 schema 6→8.
+Незавершённые delivery records после rollback требуют явного /result; runtime
+unknown prompt не повторяется. Все 85 runtime/SQL файлов private development
+wheel были сверены с source; artifact оставался в /tmp, не включён в rc1 bundle.
+
+Будущие OPEN направления по запросу владельца:
+[сценарии/manual+schedule](scenarios-and-schedules.ru.md),
+[client Web API/mobile](client-api-and-mobile.ru.md),
+[Codex/Claude и другие adapters](connector-harness-adapters.ru.md).
+Это proposals, не новые команды/поддерживаемые backend. P4.10 ownership нужен
+до shared user release; mobile P4.14 CONDITIONAL. P4.9 остаётся DEFERRED.
 
 ## Следующие действия
 

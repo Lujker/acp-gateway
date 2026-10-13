@@ -293,8 +293,9 @@ Semantics the design must respect:
   the agent clients:
   - *sessions* — a conversation `(channel, conversation_key, agent)` owns
     any number of agent sessions and points at the active one (`/new`,
-    `/sessions`, switching); the first message of a conversation creates a
-    session. An agent session belongs to exactly one conversation;
+    `/sessions`, switching). Legacy core/API submit may create a session;
+    Telegram requires explicit creation/selection. An agent session belongs
+    to exactly one conversation;
   - *jobs* — every prompt is a job: `submit → job` returns at once,
     `wait(job_id, timeout)` returns the finished job or its running snapshot
     (partial answer), `ask` = submit + wait; needed for the MCP channel and its
@@ -318,7 +319,9 @@ Semantics the design must respect:
   reads results from `wait` or the bus.
   **What a channel sees** (owner decision 2026-10-06): by default only the
   request and the agent's final answer, a short "working" status and — if the
-  channel is an approver — approval requests. Intermediate `tool_call`, `plan`
+  channel is an approver — approval requests. Development 0.2.0rc2.dev0 can
+  edit Telegram working messages with bounded redacted partial answer text;
+  its durable result outbox is separate from advisory status edits. Intermediate `tool_call`, `plan`
   and agent reasoning are not forwarded to Telegram or Hermes; the detailed
   event stream is available through the local API's SSE (CLI, web UI).
 - **`api/` — local HTTP API + SSE.** Used by the CLI, the web UI and
@@ -537,3 +540,21 @@ goose 1.53.0 recordings in `tests/fixtures/acp/` via `tests/fakes/recordings.py`
 `tests/unit/test_recorded_contract.py` checks that every recorded agent
 message parses with the SDK schema and maps to a known gateway event.
 Recordings are cleaned with `scripts/sanitize_fixture.py` before committing.
+
+## Future application contracts (proposals, 2026-10-13)
+
+The current local owner HTTP/SSE API is administrative and single-owner.
+A network client API for separate users/devices is [P4.12](items/client-api-and-mobile.ru.md),
+built on [P4.10 identity/ownership](items/dispatcher-accounts-and-dialogues.ru.md).
+It must not distribute the owner token or bypass the loopback guard. Web/mobile
+surfaces share authenticated application services, scoped operations and events.
+
+[P4.11 scenarios](items/scenarios-and-schedules.ru.md) use the same persisted
+execution path for manual triggers and dispatcher-time schedules, current actor/
+workspace/connector authority and independent result delivery. Trigger dedupe
+does not establish external prompt idempotency; unknown outcomes stay fenced.
+
+[P4.13 adapters](items/connector-harness-adapters.ru.md) wrap documented native
+protocols through capability/lifecycle contracts. Managed sessions, owned resume
+and live shared UI attach are distinct capabilities. These contracts are proposed,
+not current backend enum additions. Native mobile P4.14 remains conditional.

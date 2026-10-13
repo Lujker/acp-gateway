@@ -303,3 +303,46 @@ MVP: дополнительно подтверждён реальный марш
   P4.1. Новые каналы управления — отдельные треки поверх того же dispatcher.
 - Полноценные аккаунты, self-service connectors и межпользовательская изоляция
   приняты в P4.10; контракты ownership/actor/dialogue закладываются в P4.8.
+
+## Историческая промежуточная сводка P4.8.5 (перенесена 2026-10-13)
+
+Ниже сохранён прежний срез roadmap. Фразы «новый wheel не собирался» и
+старые counts относятся к промежуточным этапам; текущий frozen rc1 и
+development evidence сведены в [checkpoint](p48-resume.ru.md).
+
+**Подтверждено:** Linux source + isolated wheel 937 passed / 17 skipped;
+native Windows installed wheel 221 passed / 3 POSIX skips, все 13 Scheduler
+cases; discovery ACL, OWNER RIGHTS при trusted owner, ownership/locks,
+graceful stop/force/instance fencing, mock ACP/relay/bindings/recovery/setup.
+Hermes Desktop 0.21.6 ready до/после; live selector без сохранения, модель не вызывалась.
+Это не полный uv tool update lifecycle и не живая VPS/Telegram приёмка.
+После selection guards, saved connector launch и idle Hermes session manager
+текущие исходники, включая checkout scripts, Windows wizard paths/ACL и task
+setup/rollback, dispatcher/connector maintenance и Linux/Windows service updater,
+прошли **1113 passed / 28 skipped** после model transport/core/API
+(23 native opt-in + 5 compatibility).
+Новый wheel не собирался; native
+221/3 относится к предыдущей сборке. Consolidated Windows runner расширен
+Telegram, saved-launch, live-manager и checkout helper cases для следующей пакетной приёмки.
+Отдельно прошёл isolated Linux uv tool lifecycle текущего checkout через новые
+scripts: install/run/update/repeated install/uninstall, config/env/key и
+enrollment registry сохранены. Windows checkout и service update lifecycle открыты.
+Отдельный native Windows source paths/ACL профиль: **20 passed**; disposable
+private mkdir/write/read/public ACL rejection и fresh/repeat wizard save прошли
+без сети, tasks и изменений Hermes. Это не новая installed-wheel приёмка.
+Windows source Scheduler + wizard профиль: **28 passed**, все 19 Scheduler
+cases выполнены на временных задачах, включая rollback после настоящего start.
+После Windows coordinator native source профиль: **49 passed**, включая все
+**23 Scheduler cases** и четыре сочетания enabled/running. Consolidated runner
+теперь требует минимум 23 Scheduler cases без skips/failures. Полный установленный
+Windows uv package/service update ещё не проверен.
+Maintenance core/API/CLI профиль: 39 passed на Linux и 39 passed в native Windows
+на текущих исходниках. Реальный Linux CLI/loopback daemon prepare/status/resume,
+duplicate refusal и owner recovery прошли изолированно без служб/модели/update.
+Connector manager/IPC/graceful source профиль в Windows: **26 passed**;
+Linux real connector CLI/WS с fake Hermes прошёл status/prepare/resume, busy
+refusal и продолжение того же чата. Новый installed-wheel прогон остаётся открытым.
+Real isolated uv tool + dispatcher + fake systemctl: managed update и rollback
+при invalid wheel, восстановление running/enabled, сохранение env/key/registry
+прошли; smoke повторён после Windows изменений. Настоящий systemd lifecycle
+и полный установленный Windows uv/task update ещё не приняты.

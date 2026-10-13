@@ -1,7 +1,8 @@
 # Дорожная карта ACP Gateway
 
 > Статус: единый действующий план ACP Gateway.
-> Последняя сверка: 2026-10-13 — VPS/Telegram + два Windows/Hermes connectors,
+> Последняя сверка: 2026-10-13 — frozen rc1 и development P2.3/P3.3/P3.6;
+> новые предложения P4.11–P4.14. VPS/Telegram + два Windows/Hermes connectors,
 > поставка uv/Git, CLI/update (`P4.8`); Goose и платформенное расширение — `P4.9`.
 > VPS-диспетчер с собственным WebSocket-коннектором
 > (`P4.1`) поставлен перед расширениями каналов; готовы MCP-фасад Hermes и
@@ -569,7 +570,8 @@ Allowlist отправителей, тред письма → сессия, то
 
 ### P4.4. Web UI
 
-**Статус:** OPEN — после `P4.3`, поверх API `P1.5`.
+**Статус:** OPEN — после P4.3; пользовательский Web UI зависит от P4.12/P4.10.
+Локальный owner prototype может использовать P1.5 без multi-user обещания.
 **Репозиторий:** `acp-gateway`
 
 Новая сессия, чат, статус, список сессий, подтверждения.
@@ -697,69 +699,16 @@ known model-loss reconciliation не повторяет mutation, prompt-loss о
 
 #### P4.8.5 — Отдельный этап установки и приёмки
 
-**Статус:** PARTIAL. Вся установка и проверка текущего трека относятся сюда.
-Сценарии и ответственная сторона перечислены в
-[полной матрице](docs/items/p48-delivery-plan.ru.md).
-
-**Подтверждено:** Linux source + isolated wheel 937 passed / 17 skipped;
-native Windows installed wheel 221 passed / 3 POSIX skips, все 13 Scheduler
-cases; discovery ACL, OWNER RIGHTS при trusted owner, ownership/locks,
-graceful stop/force/instance fencing, mock ACP/relay/bindings/recovery/setup.
-Hermes Desktop 0.21.6 ready до/после; live selector без сохранения, модель не вызывалась.
-Это не полный uv tool update lifecycle и не живая VPS/Telegram приёмка.
-После selection guards, saved connector launch и idle Hermes session manager
-текущие исходники, включая checkout scripts, Windows wizard paths/ACL и task
-setup/rollback, dispatcher/connector maintenance и Linux/Windows service updater,
-прошли **1113 passed / 28 skipped** после model transport/core/API
-(23 native opt-in + 5 compatibility).
-Новый wheel не собирался; native
-221/3 относится к предыдущей сборке. Consolidated Windows runner расширен
-Telegram, saved-launch, live-manager и checkout helper cases для следующей пакетной приёмки.
-Отдельно прошёл isolated Linux uv tool lifecycle текущего checkout через новые
-scripts: install/run/update/repeated install/uninstall, config/env/key и
-enrollment registry сохранены. Windows checkout и service update lifecycle открыты.
-Отдельный native Windows source paths/ACL профиль: **20 passed**; disposable
-private mkdir/write/read/public ACL rejection и fresh/repeat wizard save прошли
-без сети, tasks и изменений Hermes. Это не новая installed-wheel приёмка.
-Windows source Scheduler + wizard профиль: **28 passed**, все 19 Scheduler
-cases выполнены на временных задачах, включая rollback после настоящего start.
-После Windows coordinator native source профиль: **49 passed**, включая все
-**23 Scheduler cases** и четыре сочетания enabled/running. Consolidated runner
-теперь требует минимум 23 Scheduler cases без skips/failures. Полный установленный
-Windows uv package/service update ещё не проверен.
-Maintenance core/API/CLI профиль: 39 passed на Linux и 39 passed в native Windows
-на текущих исходниках. Реальный Linux CLI/loopback daemon prepare/status/resume,
-duplicate refusal и owner recovery прошли изолированно без служб/модели/update.
-Connector manager/IPC/graceful source профиль в Windows: **26 passed**;
-Linux real connector CLI/WS с fake Hermes прошёл status/prepare/resume, busy
-refusal и продолжение того же чата. Новый installed-wheel прогон остаётся открытым.
-Real isolated uv tool + dispatcher + fake systemctl: managed update и rollback
-при invalid wheel, восстановление running/enabled, сохранение env/key/registry
-прошли; smoke повторён после Windows изменений. Настоящий systemd lifecycle
-и полный установленный Windows uv/task update ещё не приняты.
-
-**Агент проверяет:** чистые изолированные uv/Git установки Linux/Windows,
-скрипты/CLI, saved settings и ACL, управление службами, настоящий package update
-и failure/rollback на тестовых данных; автоматизированные relay/Telegram сценарии.
-При доступе к целевым хостам агент также выполняет установку VPS/двух connectors,
-WSS/enrollment/Telegram настройку и собирает результаты живого маршрута.
-
-**Пользователь обеспечивает:** VPS/SSH, домен/TLS и необходимые права хоста,
-bot token/user ID и ключи через приватные файлы, доступ к двум Windows-ПК и
-запущенный Hermes. Визуально проверяет Desktop/Telegram, отвечает на реальные
-approval cards, выполняет reboot/logon, sleep/wake и физическую смену сети.
-Доступные агенту операции не передаются пользователю только из-за прежнего handoff.
-
-**Сценарии:** оба способа установки; VPS user service без интерактивного SSH;
-setup и подключение каждого ПК; реальные запросы/approvals; home/work isolation;
-idle WSS, disconnect, restart каждого слоя, key rotate/revoke; update/rollback/
-uninstall с сохранностью данных; reboot/logon и sleep/network. Старый Docker
-runbook [VPS/Hermes](docs/setup/vps-hermes-acceptance.ru.md) остаётся дополнительным.
-
-**Готовность к передаче:** доработки P4.8.3–P4.8.4 и доступные агенту установки/
-обновления выполнены. **Готовность Windows MVP:** дополнительно прошёл реальный
-маршрут VPS → home/work Hermes → Telegram и целевой lifecycle. Непроверенные
-живые/физические сценарии остаются открытыми в отчёте.
+**Статус:** PARTIAL — frozen 0.2.0rc1 проверен source и installed wheel:
+Linux 1152/28; native wheel 374/2 POSIX skips, все 23 Scheduler cases.
+Readonly Hermes probe готов; реальный VPS→Windows/Hermes→Telegram не принят.
+Целевые uv/Git install/update/services, второй PC, approvals/model calls,
+reboot/logon/sleep/network остаются открытыми. Владелец сначала устанавливает сам.
+Development 0.2.0rc2.dev0 имеет отдельные 1198/28 source, 62 native source checks
+и isolated wheel schema 6→8/update/rollback; это не обновлённый rc1 или live proof.
+[Матрица и обязанности](docs/items/p48-delivery-plan.ru.md),
+[checkpoint/evidence](docs/items/p48-resume.ru.md),
+[самостоятельная установка](docs/setup/self-install-0.2.0rc1.ru.md).
 
 #### P4.8.6 — Перенесено в P4.9
 
@@ -810,6 +759,53 @@ home aliases, чужие IDs/callbacks/events, pairing/revocation и мигра�
 предоставляет два Telegram accounts/PCs для живого smoke. Полные варианты,
 предложения UX и сценарии: [диалоги и аккаунты](docs/items/dispatcher-accounts-and-dialogues.ru.md).
 
+
+### P4.11. Сценарии и расписания диспетчера
+
+**Статус:** OPEN — направление запрошено владельцем 2026-10-13; записан proposal,
+реализации нет. Ручной trigger и расписание создают общий persisted Run с
+user/workspace/connector/agent scope, snapshot версии сценария и audit.
+Время — явная zone диспетчера, UTC persistence; unknown prompt не повторяется.
+Сначала один prompt/target и manual run, затем one-shot/daily scheduling.
+Зависимости: P4.10 ownership и P4.12 client contract; multi-step workflow отдельно.
+Режим dialogue, offline/misfire и approval policy требуют обсуждения.
+**Репозиторий:** acp-gateway.
+[Предложение и критерии](docs/items/scenarios-and-schedules.ru.md).
+
+### P4.12. Клиентский Web API для Web UI, CLI и mobile
+
+**Статус:** OPEN — направление запрошено владельцем 2026-10-13; контракт
+предложен, публичный пользовательский API не реализован. Versioned OpenAPI,
+per-user/device auth, scopes/revoke, async jobs/runs, idempotency и scoped events.
+Текущий loopback owner API остаётся административным; его token не выдаётся
+внешним клиентам. Shared application authorization зависит от P4.10.
+Нужен до multi-user Web UI и мобильного клиента; identity provider — решение
+перед реализацией auth, не выбран молча.
+**Репозиторий:** acp-gateway.
+[API и mobile proposal](docs/items/client-api-and-mobile.ru.md).
+
+### P4.13. Адаптеры Codex, Claude Code и других harness
+
+**Статус:** OPEN — интерфейсы исследованы 2026-10-13, adapters не реализованы.
+Предложение: общий capability/lifecycle contract, затем managed Codex App Server
+и Claude Agent SDK spikes; Gemini/OpenCode — следующие кандидаты по запросу.
+Managed dialogue, owned resume и shared existing UI attach проверяются отдельно.
+Native protocol не считается ACP автоматически; approvals/cancel/auth/OS —
+отдельная versioned acceptance. P4.9 Goose остаётся DEFERRED; P4.7 stdio связан.
+Spikes возможны после базы P4.8; общий пользовательский выпуск требует P4.10 scopes.
+**Репозиторий:** acp-gateway.
+[Исследование и источники](docs/items/connector-harness-adapters.ru.md).
+
+### P4.14. Мобильное приложение диспетчера
+
+**Статус:** CONDITIONAL — когда подтверждены удобство/спрос на продукт и
+стабилен P4.12 с user/device auth; после отдельного выбора mobile MVP.
+Диалоги/jobs/approvals/scenarios через общий API, secure storage, optional push
+и background/resume. Native framework/OS/store distribution сейчас не выбираются.
+Мобильное приложение не блокирует API и не выполняет scheduler роль.
+**Репозиторий:** клиент/структура будут определены при активации.
+[Границы и trigger](docs/items/client-api-and-mobile.ru.md).
+
 ## 8. Очередь дальнейшей разработки
 
 Точка продолжения P4.8 после перерыва: [checkpoint от 2026-10-13](docs/items/p48-resume.ru.md).
@@ -818,7 +814,10 @@ home aliases, чужие IDs/callbacks/events, pairing/revocation и мигра�
 
 **Следующий этап:** кандидат 0.2.0rc1 и отдельный P4.8.5 — установка/приёмка.
 Кодовые доработки model defaults, CLI/Telegram, exact model recovery,
-bounded session journal и explicit retention готовы; WSL source: 1152/28.
+bounded session journal и explicit retention готовы; candidate WSL source: 1152/28.
+Отдельный development 0.2.0rc2.dev0 (schema 8): 1198/28 WSL и 62 native source;
+retention, rate limits, durable Telegram delivery/status и update recovery.
+Это сохранённое evidence предыдущих прогонов, не live приёмка новой поставки.
 Владелец сначала устанавливает сам по [инструкции](docs/setup/self-install-0.2.0rc1.ru.md).
 Начать с предоставляемого владельцем VPS (IP:port и domain/path), Telegram bot
 и текущего Windows/Hermes, затем второй connector. Проверить native autostart
@@ -850,7 +849,17 @@ Goose/platform combinations остаются P4.9, cold/shared write recovery н
 6. **P3.2 — Windows native**, в составе `P4.8.4`, вместе с
    Windows-частями `P3.4/P3.5`; Scheduler/ACL/locks уже проверены,
    остаются целевая поставка/update и сценарии P4.8.5 reboot/logon/sleep/network.
-7. **P4.2 → P4.3 → P4.4 — Snikket, Email, Web UI.** После первого рабочего
-   маршрута `P4.8.5`, не блокируют разработку адаптеров.
+7. **P4.10 — user/workspace ownership.** Основа новых shared сценариев,
+   пользовательского API и connector scopes; [контракт](docs/items/dispatcher-accounts-and-dialogues.ru.md).
+8. **P4.12 — client Web API.** Контракт и auth вместе с P4.10; нужен до
+   multi-user Web UI/mobile. [Предложение](docs/items/client-api-and-mobile.ru.md).
+9. **P4.11 — сценарии.** Согласовать dialogue/offline правила; manual runs,
+   затем scheduler по времени диспетчера. [Предложение](docs/items/scenarios-and-schedules.ru.md).
+10. **P4.13 — harness adapters.** Managed Codex/Claude spikes, capability tests;
+    исследование возможно независимо, публичный scope зависит от P4.10.
+    [Источники и этапы](docs/items/connector-harness-adapters.ru.md).
+11. **P4.2 → P4.3 → P4.4 — Snikket, Email, Web UI.** После рабочего P4.8.5;
+    пользовательский Web UI использует P4.12/P4.10.
 
-Условные `P4.5`–`P4.7` сохраняют свои триггеры.
+Новые пункты — будущие этапы; runtime реализации нет. Условные P4.5–P4.7
+и P4.14 сохраняют свои триггеры, P4.9 — прежний DEFERRED.
