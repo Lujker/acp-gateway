@@ -3,7 +3,8 @@
 **Статус:** OPEN — направление запрошено владельцем 2026-10-13; исследование и
 предлагаемый MVP записаны, реализации нет. Зависимости: P4.10 (identity/scope),
 контракты P4.12 (клиенты/API), существующие core/jobs/approvals/outbox.
-Объём ниже — предложение для обсуждения, не утверждённые команды/настройки.
+Режим диалога и offline policy утверждены владельцем ниже. Остальные детали —
+предложения для обсуждения, не существующие команды/настройки.
 
 ## Задача и пример
 
@@ -19,6 +20,20 @@ prompt внутри канала. Telegram, CLI, Web API и будущий мо�
 к одному application service. Реальный cron/systemd/Windows scheduler не получает
 provider keys и не запускает agent CLI в обход connector.
 
+## Решения владельца — 2026-10-13
+
+- Каждый ручной или плановый Run создаёт новый отдельный dialogue. Закреплённый
+  диалог и повторное использование активного пользовательского чата не входят
+  в первый вариант.
+- Если в назначенное время connector недоступен, Run пропускается с причиной
+  и уведомлением владельца. Ожидания подключения и автоматического догоняющего
+  запуска после reconnect в первом варианте нет.
+- Пропуск сохраняется в истории Run; уведомление доставляется отдельно от
+  agent execution. Unknown после возможного dispatch по-прежнему не становится
+  skipped и не разрешает повторить prompt.
+- Это решения MVP, не факт реализации. Busy target, misfire после простоя самого
+  dispatcher и approval policy остаются отдельными вопросами.
+
 ## Предлагаемый первый этап
 
 - Один текстовый prompt, один явно выбранный connector/agent/cwd, один Run.
@@ -26,11 +41,10 @@ provider keys и не запускает agent CLI в обход connector.
   список запусков, просмотр результата и явная отмена.
 - Сначала ручной запуск; затем разовое время и ежедневный запуск. Произвольный
   cron, цепочки шагов, условия, webhooks, fan-out и загрузка файлов — расширения.
-- Предлагается новый отдельный dialogue на каждый Run. Закреплённый dialogue
-  возможен отдельной настройкой после проверки ownership, busy и writer lease;
-  никогда не использовать текущий активный чат пользователя неявно.
-- Предлагается пропуск недоступного/busy target с причиной и уведомлением.
-  Ограниченное ожидание с expires_at — возможный режим, не бесконечный backlog.
+- Принято: новый отдельный dialogue на каждый Run; закреплённый dialogue —
+  возможное расширение после отдельного решения.
+- Принято: offline connector → skipped + уведомление, без ожидания/reconnect retry.
+  Для busy agent предлагается skip; это ещё не выбранная владельцем policy.
 - Approval идёт человеку с действующими правами; без ответа действует deadline
   и отказ. Сам факт расписания не выдаёт allow, always или bypass permissions.
 - По умолчанию concurrency=1 на сценарий, плюс общий lock диалога и квоты
@@ -101,7 +115,8 @@ lock/transaction перед созданием execution intent. После ат
 |---|---|
 | Диспетчер перезапустился до due | Восстановить сохранённое расписание |
 | Пропущено несколько сроков | Не разгребать все подряд; MVP skip + audit, позднее latest-within-TTL |
-| Connector offline / agent busy | MVP skipped; опциональное bounded waiting с expiry |
+| Connector offline | Принято: skipped + уведомление, без запуска после reconnect |
+| Agent busy | Предлагается skip; отдельное решение до реализации |
 | Два scheduler workers увидели due | Unique occurrence + lease/fencing; один dispatch intent |
 | Prompt мог быть принят, ACK потерян | Run unknown, никакого автоматического повторения prompt |
 | Dispatcher/connector упал в работе | Сохранить target/session/run; recovery только по доказанным capabilities |
@@ -123,7 +138,7 @@ Timeout, max turns/tokens/cost — capability-dependent: нельзя обеща
 
 ## Этапы и критерии
 
-1. Согласовать scopes, target/dialogue policy, offline/misfire/approval правила.
+1. Согласовать scopes и busy/misfire/approval правила; dialogue/offline policy уже выбраны.
 2. Schema/application service для Scenario/Run и ручной запуск через CLI/test API.
 3. Fake clock scheduler, durable claims/lease/fencing и одна node deployment.
 4. Telegram/API UI, approvals/notifications и отдельная живая приёмка.
@@ -136,7 +151,8 @@ ACK lost после side effect; no human; restore snapshot; bounded quotas.
 Живые: один известный connector/agent, разовое время по zone диспетчера,
 ручной запуск, отдельный dialogue, сохранённый результат и ответ на approval.
 
-Открытые решения: новый или закреплённый dialogue; skip либо bounded wait;
-нужны ли cron/workdays в первом выпуске; зона диспетчера и экран её изменения;
-retention и ограничения Run; сценарии без доступного approver.
-Технические defaults выше — предложения, пока владелец не выбрал.
+Открытые решения: busy target и misfire после простоя dispatcher; нужны ли
+cron/workdays в первом выпуске; зона диспетчера и экран её изменения;
+retention/ограничения Run; сценарии без доступного approver.
+Новый dialogue и пропуск offline connector с уведомлением уже приняты.
+Остальные технические defaults выше остаются предложениями.
