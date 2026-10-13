@@ -768,7 +768,8 @@ user/workspace/connector/agent scope, snapshot версии сценария и 
 Время — явная zone диспетчера, UTC persistence; unknown prompt не повторяется.
 Сначала один prompt/target и manual run, затем one-shot/daily scheduling.
 Зависимости: P4.10 ownership и P4.12 client contract; multi-step workflow отдельно.
-Режим dialogue, offline/misfire и approval policy требуют обсуждения.
+Принято 2026-10-13: каждый Run в новом dialogue; offline connector —
+skip + уведомление без догоняющего запуска. Busy/misfire/approval policy открыты.
 **Репозиторий:** acp-gateway.
 [Предложение и критерии](docs/items/scenarios-and-schedules.ru.md).
 
@@ -853,8 +854,8 @@ Goose/platform combinations остаются P4.9, cold/shared write recovery н
    пользовательского API и connector scopes; [контракт](docs/items/dispatcher-accounts-and-dialogues.ru.md).
 8. **P4.12 — client Web API.** Контракт и auth вместе с P4.10; нужен до
    multi-user Web UI/mobile. [Предложение](docs/items/client-api-and-mobile.ru.md).
-9. **P4.11 — сценарии.** Согласовать dialogue/offline правила; manual runs,
-   затем scheduler по времени диспетчера. [Предложение](docs/items/scenarios-and-schedules.ru.md).
+9. **P4.11 — сценарии.** Приняты новый dialogue на Run и offline skip+notify;
+   manual runs, затем scheduler по времени диспетчера. [Предложение](docs/items/scenarios-and-schedules.ru.md).
 10. **P4.13 — harness adapters.** Managed Codex/Claude spikes, capability tests;
     исследование возможно независимо, публичный scope зависит от P4.10.
     [Источники и этапы](docs/items/connector-harness-adapters.ru.md).
