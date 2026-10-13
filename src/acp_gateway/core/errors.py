@@ -7,6 +7,14 @@ class GatewayError(Exception):
     """Base class of errors raised by the core itself (not by an agent)."""
 
 
+class RateLimited(GatewayError):
+    """New work exceeded its channel's aggregate admission budget."""
+
+    def __init__(self, retry_after: int) -> None:
+        self.retry_after = retry_after
+        super().__init__(f"Too many work requests; retry after {retry_after} seconds.")
+
+
 class MaintenanceBlocked(GatewayError):
     """Maintenance cannot reserve an idle core, or new work is currently paused."""
 

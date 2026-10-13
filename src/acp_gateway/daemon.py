@@ -77,7 +77,11 @@ def configured_app(config: AppConfig):
             for p in config.settings.agents
         }
         core = GatewayCore(
-            store, agents, policy=config.settings.policy, retention=config.settings.retention
+            store,
+            agents,
+            policy=config.settings.policy,
+            retention=config.settings.retention,
+            rate_limits=config.settings.rate_limits,
         )
         cli = CliChannel()
         core.add_channel(cli)
