@@ -128,12 +128,29 @@ def restore(plan: dict, backup: Path) -> None:
     else:
         shutil.copy2(saved, entry)
     database = Path(plan["database"]) if plan.get("database") else None
-    if database and (backup / "database").is_file():
+    if database:
         for suffix in ("-wal", "-shm"):
             Path(str(database) + suffix).unlink(missing_ok=True)
-        temporary = database.with_name(database.name + ".acpgw-recovery")
-        shutil.copy2(backup / "database", temporary)
-        temporary.replace(database)
+        if (backup / "database").is_file():
+            temporary = database.with_name(database.name + ".acpgw-recovery")
+            shutil.copy2(backup / "database", temporary)
+            temporary.replace(database)
+            # Rollback can rewind a previously acknowledged remote send. Do
+            # not automatically replay outbound work from an older snapshot.
+            with contextlib.closing(sqlite3.connect(database)) as connection:
+                if connection.execute(
+                    "SELECT 1 FROM sqlite_master WHERE type = 'table' "
+                    "AND name = 'outbound_deliveries'"
+                ).fetchone():
+                    connection.execute(
+                        "UPDATE outbound_deliveries SET state = 'unknown' "
+                        "WHERE state IN ('waiting', 'pending', 'sending')"
+                    )
+                    connection.commit()
+        else:
+            # A failed new release may have created a database during health.
+            # Restore the original absence as well as existing file contents.
+            database.unlink(missing_ok=True)
 
 
 def health(plan: dict) -> None:

@@ -140,6 +140,12 @@ class Store:
 
         return ModelStateStore(self._conn)
 
+    @cached_property
+    def deliveries(self):
+        from acp_gateway.storage.deliveries import DeliveryStore
+
+        return DeliveryStore(self._conn)
+
     def close(self) -> None:
         self._conn.close()
 
@@ -300,11 +306,19 @@ class Store:
 
     # -------------------------------------------------------------------- jobs
 
-    def add_job(self, job_id: str, session_id: int) -> Job:
-        self._conn.execute(
-            "INSERT INTO jobs (id, session_id, status, created_at) VALUES (?, ?, ?, ?)",
-            (job_id, session_id, JobStatus.RUNNING.value, _ts(utcnow())),
-        )
+    def add_job(
+        self, job_id: str, session_id: int, *, delivery_namespace: str | None = None
+    ) -> Job:
+        with self._transaction():
+            self._conn.execute(
+                "INSERT INTO jobs (id, session_id, status, created_at) VALUES (?, ?, ?, ?)",
+                (job_id, session_id, JobStatus.RUNNING.value, _ts(utcnow())),
+            )
+            if delivery_namespace is not None:
+                self._conn.execute(
+                    "INSERT INTO outbound_deliveries (job_id, namespace) VALUES (?, ?)",
+                    (job_id, delivery_namespace),
+                )
         return self._require(self.job(job_id))
 
     def finish_job(

@@ -1,5 +1,9 @@
 # Telegram channel
 
+Development 0.2.0rc2.dev0 adds durable result delivery and advisory status
+edits. See [recovery and status configuration](telegram-recovery.md).
+The frozen 0.2.0rc1 self-install candidate keeps its earlier behavior.
+
 Use a separate development bot created with BotFather, and put its token in
 `.env` as `TELEGRAM_BOT_TOKEN`. Never put the token in YAML or a command line.
 Enable the channel with an explicit numeric user allowlist:
@@ -47,6 +51,7 @@ is created automatically. Older direct/disabled bindings retain their refusal ru
 | `/switch ID` | Activate a session owned by this chat and selected agent |
 | `/status` | Agent/channel connections and this chat's running jobs |
 | `/result JOB_ID` | Retrieve a saved answer or status owned by this chat |
+| `/delivery JOB_ID` | Development: inspect saved automatic delivery state |
 | `/stop` | Cancel this chat's selected agent jobs |
 | `/approvals` | Redisplay pending human approval buttons |
 
@@ -62,9 +67,9 @@ channel still has no approval tools.
 Messages are escaped for HTML and split into chunks of at most 2000 Unicode
 codepoints (at most 4000 UTF-16 units). Registered credentials and sensitive
 approval fields are redacted. Tool progress/reasoning is not forwarded;
-this version sends working status and the final answer, without streaming
-edits. Human approval requests include the tool title/input needed for a
-decision.
+0.2.0rc1 sends working status and the final answer. Development 0.2.0rc2.dev0
+edits the working message with a bounded partial answer and final job status.
+Human approval requests include the tool title/input needed for a decision.
 
 The adapter limits commands to five messages per user per ten seconds,
 uses bounded exponential backoff for polling, and retries outbound messages
@@ -74,11 +79,11 @@ use `/result` or `/approvals` after recovery. Polling failure removes approval
 eligibility until the connection recovers. An unreachable human is never
 replaced by an automatic allow decision.
 
-Final answers and saved `/result` replies use a separate bounded delivery queue
-(32 replies). Long multi-part answers and their explicit-429 retry waits do
-not block processing approval events or polling for button clicks. An exhausted
-queue is logged; results remain in SQLite and can be requested again. This is
-not durable automatic outbound delivery.
+In 0.2.0rc1, final answers and saved `/result` replies use a separate bounded
+in-memory queue (32 replies). Development 0.2.0rc2.dev0 persists automatic
+plain-text submission results with a chunk ACK cursor; /result retains its
+explicit bounded queue. Long replies and status edits do not block approval
+events or button clicks. See [delivery states and restart/rollback rules](telegram-recovery.md).
 
 The SQLite cursor is committed before command handling. A crash can lose a
 reply, but replaying an update cannot submit the same command again after

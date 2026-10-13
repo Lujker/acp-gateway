@@ -689,14 +689,18 @@ class GatewayCore:
 
     # -------------------------------------------------------------------- jobs
 
-    async def submit_selected(self, conversation: Conversation, text: str) -> Job:
+    async def submit_selected(
+        self, conversation: Conversation, text: str, *, delivery_namespace: str | None = None
+    ) -> Job:
         """Send to the persistent selection, without implicit session creation.
 
         Shared by interactive entry points; selection and job creation happen
         together under the conversation lock. Legacy programmatic submit keeps
         its existing auto-create contract until callers explicitly opt in.
         """
-        return await self.submit(conversation, text, create_session=False)
+        return await self.submit(
+            conversation, text, create_session=False, delivery_namespace=delivery_namespace
+        )
 
     async def submit(
         self,
@@ -705,6 +709,7 @@ class GatewayCore:
         *,
         acp_session_id: str | None = None,
         create_session: bool = True,
+        delivery_namespace: str | None = None,
     ) -> Job:
         """Start a turn in the active or explicitly selected owned session.
 
@@ -750,7 +755,9 @@ class GatewayCore:
                     "This Hermes dialogue remains recorded but cannot safely be restored; "
                     "create a new session with /new. The previous prompt will not be replayed."
                 )
-            job = self.store.add_job(_new_job_id(), session.id)
+            job = self.store.add_job(
+                _new_job_id(), session.id, delivery_namespace=delivery_namespace
+            )
             self._model_confirmations.pop(conversation, None)
             self.store.touch_session(session.id)
             run = _RunningJob(job)

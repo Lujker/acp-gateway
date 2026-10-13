@@ -2,6 +2,7 @@
 
 import asyncio
 import contextlib
+import hashlib
 import html
 import json
 import time
@@ -9,7 +10,12 @@ from collections import deque
 
 from aiogram import BaseMiddleware, Bot, Dispatcher
 from aiogram.client.default import DefaultBotProperties
-from aiogram.exceptions import TelegramAPIError, TelegramRetryAfter
+from aiogram.exceptions import (
+    TelegramAPIError,
+    TelegramBadRequest,
+    TelegramForbiddenError,
+    TelegramRetryAfter,
+)
 from aiogram.methods import GetUpdates
 from aiogram.types import CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup, Message
 from pydantic import SecretStr
@@ -27,7 +33,8 @@ HELP = (
     "/start, /help — help\n/agent — list agents\n/agent ALIAS — select agent\n"
     "/new [ALIAS] — new session\n/sessions — list sessions\n"
     "/switch ID — activate a session\n/status — connections and jobs\n"
-    "/result JOB_ID — saved result\n/stop — cancel this chat's jobs\n"
+    "/result JOB_ID — saved result\n/delivery JOB_ID — automatic delivery state\n"
+    "/stop — cancel this chat's jobs\n"
     "/model, /models — observed model and catalogue\n"
     "/model state — saved evidence without reconnect\n"
     "/model reconcile ID REVISION — inspect retained outcome, no retry\n"
@@ -79,6 +86,8 @@ class TelegramChannel(Channel):
         self._tasks: list[asyncio.Task] = []
         self._subscription = None
         self._deliveries: asyncio.Queue[tuple[int, str]] = asyncio.Queue(maxsize=32)
+        self._outbound_ready = asyncio.Event()
+        self._statuses: dict[str, tuple[int, int, str, float]] = {}
         self._log = get_logger(__name__)
 
     @property
@@ -118,11 +127,15 @@ class TelegramChannel(Channel):
                 or (isinstance(e, ApprovalResolved) and self.name in e.approver_channels)
             )
         )
+        core.store.deliveries.recover(self.namespace)
         self._tasks = [
+            asyncio.create_task(self._deliver_results(), name="telegram-outbound"),
             asyncio.create_task(self._poll()),
             asyncio.create_task(self._events()),
             asyncio.create_task(self._deliver()),
         ]
+        if self.settings.status_enabled:
+            self._tasks.append(asyncio.create_task(self._update_statuses()))
 
     async def _poll(self):
         delay = 1
@@ -162,6 +175,7 @@ class TelegramChannel(Channel):
         if self._subscription is not None:
             self._subscription.close()
         self._buttons.clear()
+        self._statuses.clear()
         while not self._deliveries.empty():
             self._deliveries.get_nowait()
         await self.bot.session.close()
@@ -184,6 +198,104 @@ class TelegramChannel(Channel):
             except Exception:
                 self._log.exception("Telegram result could not be delivered; use /result")
 
+    async def _deliver_results(self):
+        while True:
+            try:
+                self._outbound_ready.clear()
+                row = self.core.store.deliveries.due(self.namespace)
+                if row is None:
+                    with contextlib.suppress(TimeoutError):
+                        await asyncio.wait_for(self._outbound_ready.wait(), 1)
+                    continue
+                await self._deliver_result(row)
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                self._log.warning("Telegram outbound storage unavailable; retrying")
+                await asyncio.sleep(1)
+
+    async def _deliver_result(self, row):
+        deliveries = self.core.store.deliveries
+        job_id = row["job_id"]
+        if not deliveries.claim(self.namespace, job_id):
+            return
+        try:
+            chat = int(row["conversation_key"])
+            if chat not in self._chats or chat not in self.settings.allowed_user_ids:
+                deliveries.settle(self.namespace, job_id, "failed")
+                return
+            job = self.core.job(job_id)
+            chunks = self._chunks(job.answer or job.error or f"Job: {job.status.value}")
+            digest = hashlib.sha256(
+                json.dumps(chunks, ensure_ascii=True).encode("utf-8")
+            ).hexdigest()
+            if not deliveries.bind_content(self.namespace, job_id, digest):
+                return
+            index = row["next_chunk"]
+            if index >= len(chunks):
+                # A changed formatter must not silently restart old content.
+                deliveries.settle(self.namespace, job_id, "unknown")
+                return
+            await self._send(chat, chunks[index])
+            deliveries.acknowledge(self.namespace, job_id, last=index == len(chunks) - 1)
+        except TelegramRetryAfter as exc:
+            # Every send attempt for this chunk was explicitly rejected.
+            deliveries.settle(self.namespace, job_id, "pending", retry_after=exc.retry_after)
+        except (TelegramBadRequest, TelegramForbiddenError):
+            deliveries.settle(self.namespace, job_id, "failed")
+        except asyncio.CancelledError:
+            deliveries.settle(self.namespace, job_id, "unknown")
+            raise
+        except Exception:
+            # Includes loss of a local ACK commit after a successful remote send.
+            deliveries.settle(self.namespace, job_id, "unknown")
+            self._log.warning("Telegram delivery outcome unknown; use /result")
+
+    async def _update_statuses(self):
+        while True:
+            await asyncio.sleep(self.settings.status_interval_seconds)
+            for job_id, (chat, message_id, previous, retry_at) in list(self._statuses.items()):
+                if time.monotonic() < retry_at:
+                    continue
+                try:
+                    job = self.core.job(job_id)
+                    if job.status.finished:
+                        text = f"Job {job.id}: {job.status.value}. Use /result {job.id}."
+                    else:
+                        preview = redact_text(job.answer)[:1500]
+                        text = f"Working: {job.id}\nUse /stop to cancel."
+                        if preview:
+                            text += "\n" + preview
+                    if text != previous:
+                        await self.bot.edit_message_text(
+                            chat_id=chat,
+                            message_id=message_id,
+                            text=html.escape(text, quote=False),
+                            parse_mode="HTML",
+                        )
+                    if job.status.finished:
+                        self._statuses.pop(job_id, None)
+                    else:
+                        self._statuses[job_id] = (chat, message_id, text, 0)
+                except TelegramRetryAfter as exc:
+                    self._statuses[job_id] = (
+                        chat,
+                        message_id,
+                        previous,
+                        time.monotonic() + max(1, exc.retry_after),
+                    )
+                except Exception:
+                    # Status edits are advisory; final answers use the durable queue.
+                    self._statuses.pop(job_id, None)
+                    self._log.warning("Telegram status edit unavailable; use /status or /result")
+
+    @staticmethod
+    def _chunks(text):
+        text = redact_text(text)
+        return [
+            chunk for i in range(0, len(text), 2000) if (chunk := text[i : i + 2000]).strip()
+        ] or ["(empty response)"]
+
     def _authorized(self, user, chat):
         return (
             user is not None
@@ -197,12 +309,7 @@ class TelegramChannel(Channel):
         first = None
         # Telegram's limit is 4096 after entity parsing. 2000 codepoints also
         # fit when every character occupies two UTF-16 code units.
-        text = redact_text(text)
-        # Telegram rejects whitespace-only messages, which would abort the rest.
-        chunks = [
-            chunk for i in range(0, len(text), 2000) if (chunk := text[i : i + 2000]).strip()
-        ] or ["(empty response)"]
-        for chunk in chunks:
+        for chunk in self._chunks(text):
             for attempt in range(3):
                 try:
                     message = await self.bot.send_message(
@@ -409,6 +516,18 @@ class TelegramChannel(Channel):
                 raise GatewayError("Use /switch SESSION_ID.")
             session = self.core.switch_dialogue(conv, int(argument))
             await self._send(chat, f"Active session: {session.id}")
+        elif command == "/delivery":
+            job = self.core.job(argument)
+            if job.conversation != conv:
+                raise GatewayError("This chat does not own that job.")
+            delivery = self.core.store.deliveries.get(self.namespace, job.id)
+            await self._send(
+                chat,
+                f"Delivery {job.id}: {delivery['state']}; "
+                f"acknowledged chunks: {delivery['next_chunk']}. Use /result {job.id}."
+                if delivery
+                else "No automatic delivery record for this job.",
+            )
         elif command == "/result":
             job = self.core.job(argument)
             if job.conversation != conv:
@@ -423,8 +542,13 @@ class TelegramChannel(Channel):
         elif command.startswith("/"):
             await self._send(chat, "Unknown command. Use /help.")
         else:
-            job = await self.core.submit_selected(conv, text)
-            await self._send(chat, f"Working: {job.id}\nUse /stop to cancel.")
+            job = await self.core.submit_selected(conv, text, delivery_namespace=self.namespace)
+            status_text = f"Working: {job.id}\nUse /stop to cancel."
+            message = await self._send(chat, status_text)
+            if self.settings.status_enabled:
+                if len(self._statuses) >= 32:
+                    self._statuses.pop(next(iter(self._statuses)))
+                self._statuses[job.id] = (chat, message.message_id, status_text, 0)
 
     def _approval_chats(self, approval):
         conversation = approval.conversation
@@ -507,7 +631,9 @@ class TelegramChannel(Channel):
             try:
                 if isinstance(event, JobFinished):
                     chat = int(event.conversation.key)
-                    if chat in self._chats:
+                    if self.core.store.deliveries.get(self.namespace, event.job.id):
+                        self._outbound_ready.set()
+                    elif chat in self._chats:
                         self._queue_delivery(
                             chat,
                             event.job.answer or event.job.error or f"Job: {event.job.status.value}",

@@ -41,7 +41,7 @@ Deletion releases SQLite pages for reuse; it does not guarantee shrinking
 the database file or removing copies from backups. No automatic VACUUM runs.
 
 Migration 0007 adds timestamp indexes and does not delete rows by itself.
-An older binary, including 0.2.0rc1, refuses a database migrated to schema 7.
+An older binary, including 0.2.0rc1, refuses a database migrated to a newer schema (currently 8).
 Keep the live acceptance installation separate from development databases.
-This is bounded history cleanup; durable outbound delivery and additional
-channel limits remain separate P3.3 work.
+Outbound references expire with their jobs. Development now also supports
+[channel limits](rate-limits.md) and [Telegram delivery recovery](telegram-recovery.md).

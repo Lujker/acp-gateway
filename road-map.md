@@ -233,16 +233,14 @@ MCP не имеет инструментов принятия решений.
 
 ### P2.3. Telegram
 
-**Статус:** PARTIAL — 2026-10-08: aiogram 3, private user allowlist, команды,
-сохранённые сессии/результаты, inline allow_once/reject_once, проверка
-user/chat/message/request/deadline, audit и durable update cursor реализованы.
-Реальные aiogram dispatcher/types проверены с Telegram fake session и ACP mock;
-токен отдельного development-бота прошёл getMe, Work Goose прошёл настоящий
-pinned TLS/ACP initialize. Остаток: живая приёмка сообщений/кнопок владельцем,
-редактируемый streaming status (сейчас working + final) и дополнительные
-recovery/delivery сценарии. Ограничений на данные через Telegram нет
-(решение владельца 2026-10-06), в канал идут только запросы, ответы и
-подтверждения.
+**Статус:** PARTIAL — private allowlist, команды, sessions/results,
+inline allow_once/reject_once, audit и durable update cursor реализованы.
+2026-10-13 в development 0.2.0rc2.dev0 добавлены persistent result outbox,
+partial/final status edits и recovery/rollback fence. Проверены real aiogram
+dispatcher/types с fake Bot API и ACP mock; ранее getMe и pinned TLS/ACP probe.
+Остаток: живая приёмка сообщений, кнопок и статусов владельцем.
+[Журнал](docs/items/p3.3-reliability.ru.md). Ограничений на данные через Telegram
+нет (решение владельца 2026-10-06); в канал идут запросы, ответы и подтверждения.
 **Репозиторий:** `acp-gateway` (`channels/telegram.py`, `docs/setup/telegram.md`)
 
 2026-10-09: `/agent` перечисляет маршруты; отправка итогов и `/result` вынесена
@@ -290,14 +288,14 @@ Task Scheduler («при входе», `python -m acp_gateway`), позже — 
 
 ### P3.3. Надёжность и наблюдаемость
 
-**Статус:** PARTIAL — health/probes, JSON log rotation, Telegram throttle и
-polling/429 retry проверены; core/ACP reconnect и session persistence готовы.
-2026-10-13: в 0.2.0rc2.dev0 добавлены bounded periodic SQLite retention
-(audit opt-in) и общий rolling work budget CLI/API, MCP, Telegram.
-Остаток: durable outbound delivery и живая e2e Work Goose/Telegram.
-Неопределённые отправки и agent prompts автоматически не переигрываются.
-[Решения и проверки](docs/items/p3.3-reliability.ru.md),
-[retention](docs/setup/retention.md), [лимиты](docs/setup/rate-limits.md).
+**Статус:** PARTIAL — health/probes, JSON log rotation, Telegram throttle,
+core/ACP reconnect и session persistence проверены. В 0.2.0rc2.dev0 готовы
+bounded SQLite retention (audit opt-in), admission limits всех каналов и
+persistent Telegram result outbox с chunk ACK/restart/rollback fence.
+Остаток: живая e2e-приёмка Work Goose/Telegram; неопределённые отправки и
+agent prompts автоматически не переигрываются.
+[Журнал и проверки](docs/items/p3.3-reliability.ru.md),
+[retention](docs/setup/retention.md), [delivery/status](docs/setup/telegram-recovery.md).
 **Репозиторий:** acp-gateway
 
 ### P3.4. Дистрибуция, установка и первичная настройка
@@ -363,7 +361,9 @@ uninstall подтверждён на целевых ОС, включая пер
 
 ### P3.6. Штатная установка, обновление и удаление
 
-**Статус:** PARTIAL — 2026-10-09. Первый Linux/WSL этап реализован:
+**Статус:** PARTIAL — 2026-10-13: расширены isolated wheel update/rollback и
+crashed-installer/WAL recovery проверки; [журнал](docs/items/p3.3-reliability.ru.md).
+Ранее, 2026-10-09: первый Linux/WSL этап реализован:
 wheel/sdist и release bundle, uv CLI version/update/uninstall/rollback, runtime lease,
 backup окружения/entry point/SQLite с WAL, health check и восстановление при ошибке,
 собственный Compose без build и опциональный вложенный образ.
@@ -835,12 +835,10 @@ Goose/platform combinations остаются P4.9, cold/shared write recovery н
    выпускать версии вручную из локальной сборки; Actions только по ручному запуску.
 3. **P3.1/P3.5 — настоящий Windows reboot.** D-Bus восстановлен; systemd и
    Task Scheduler lifecycles уже подтверждены на текущем хосте.
-4. **P2.3 — живая приёмка Telegram и streaming status.** Команды и основной
-   человеческий канал подтверждений реализованы.
-5. **P3.3 — durable outbound delivery.** Retention и admission limits готовы
-   в 0.2.0rc2.dev0; [журнал](docs/items/p3.3-reliability.ru.md).
-   Кандидат живой установки остаётся 0.2.0rc1.
-6. **P4.1 — VPS-диспетчер и собственный WebSocket-коннектор.** Основа для `P4.8`:
+4. **P2.3/P3.3 — живая приёмка Telegram.** Команды/подтверждения реализованы;
+   persistent delivery и status edits готовы в development 0.2.0rc2.dev0,
+   [журнал](docs/items/p3.3-reliability.ru.md). Кандидат установки — 0.2.0rc1.
+5. **P4.1 — VPS-диспетчер и собственный WebSocket-коннектор.** Основа для `P4.8`:
    один владелец, ACP-релей. Enrollment и WS/WSS-регистрация
    готовы; инъекция транспорта в AgentClient реализована и проверена на mock ACP
    без WebSocket; локальная политика ACP реализована и проверена (методы,
@@ -849,10 +847,10 @@ Goose/platform combinations остаются P4.9, cold/shared write recovery н
    Первый guarded ACP relay в serve готов и mock-tested.
    Два узла и изоляция mock-tested; служба и диагностика готовы.
    Дальше: живая приёмка в `P4.8.5`, затем recovery и stdio по их триггерам.
-7. **P3.2 — Windows native**, в составе `P4.8.4`, вместе с
+6. **P3.2 — Windows native**, в составе `P4.8.4`, вместе с
    Windows-частями `P3.4/P3.5`; Scheduler/ACL/locks уже проверены,
    остаются целевая поставка/update и сценарии P4.8.5 reboot/logon/sleep/network.
-8. **P4.2 → P4.3 → P4.4 — Snikket, Email, Web UI.** После первого рабочего
+7. **P4.2 → P4.3 → P4.4 — Snikket, Email, Web UI.** После первого рабочего
    маршрута `P4.8.5`, не блокируют разработку адаптеров.
 
 Условные `P4.5`–`P4.7` сохраняют свои триггеры.

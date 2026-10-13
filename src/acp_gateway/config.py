@@ -266,6 +266,8 @@ class LoggingSettings(_Section):
 
 class TelegramSettings(_Section):
     enabled: bool = False
+    status_enabled: bool = True
+    status_interval_seconds: int = Field(default=2, ge=1, le=60)
     token_env: str = "TELEGRAM_BOT_TOKEN"  # noqa: S105
     allowed_user_ids: list[int] = Field(default_factory=list, max_length=100)
 

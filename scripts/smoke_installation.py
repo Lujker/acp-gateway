@@ -8,9 +8,11 @@ version; it is never copied to release output or published.
 import argparse
 import json
 import os
+import re
 import shutil
 import signal
 import socket
+import sqlite3
 import subprocess
 import sys
 import tempfile
@@ -29,7 +31,9 @@ def require(condition, message):
         raise RuntimeError(message)
 
 
-def smoke(wheel: Path, git_ref: str | None, bundle: Path | None = None):
+def smoke(
+    wheel: Path, git_ref: str | None, bundle: Path | None = None, *, verify_delivery_state=False
+):
     uv = shutil.which("uv")
     require(uv is not None, "uv is required")
     wheel = wheel.resolve()
@@ -130,14 +134,48 @@ def smoke(wheel: Path, git_ref: str | None, bundle: Path | None = None):
         finally:
             stop(process)
 
+        database = root / "data/acp-gateway/gateway.db"
+        installed_python = root / "tools/acp-gateway/bin/python"
+        if verify_delivery_state:
+            code = (
+                "import sys; from acp_gateway.storage import Store, Conversation, JobStatus; "
+                "s=Store.open(sys.argv[1]); "
+                "r=s.add_session(Conversation('telegram','12345','acceptance'),"
+                "'acceptance','/work'); "
+                "s.add_job('delivery-acceptance',r.id,delivery_namespace='telegram:acceptance'); "
+                "s.finish_job('delivery-acceptance',JobStatus.COMPLETED,answer='KEEP_RESULT'); "
+                "s.close()"
+            )
+            run(str(installed_python), "-c", code, str(database))
+
+        def verify_delivery(expected_state):
+            if not verify_delivery_state:
+                return
+            with sqlite3.connect(database) as connection:
+                row = connection.execute(
+                    "SELECT d.state,d.next_chunk,j.answer FROM outbound_deliveries d "
+                    "JOIN jobs j ON j.id=d.job_id WHERE d.job_id='delivery-acceptance'"
+                ).fetchone()
+                require(row == (expected_state, 0, "KEEP_RESULT"), "delivery state lost on update")
+                require(
+                    connection.execute("PRAGMA integrity_check").fetchone()[0] == "ok",
+                    "database integrity check failed",
+                )
+            require(secret_file.read_bytes() == original, "update changed tokens")
+            require(key.read_bytes() == credential, "update changed enrollment key")
+
         fixture = root / "fixture"
         fixture.mkdir()
         for name in ("pyproject.toml", "README.md", "LICENSE"):
             shutil.copy(REPO / name, fixture / name)
         metadata = fixture / "pyproject.toml"
         metadata.write_text(
-            metadata.read_text().replace(
-                f'version = "{installed["version"]}"', 'version = "0.1.0+acceptance"', 1
+            re.sub(
+                r'^version = "[^"]+"',
+                'version = "0.1.0+acceptance"',
+                metadata.read_text(),
+                count=1,
+                flags=re.MULTILINE,
             )
         )
         shutil.copytree(REPO / "src", fixture / "src", ignore=shutil.ignore_patterns("__pycache__"))
@@ -148,7 +186,18 @@ def smoke(wheel: Path, git_ref: str | None, bundle: Path | None = None):
             json.loads(command("version", "--json"))["version"] == "0.1.0+acceptance",
             "second version was not installed",
         )
+        verify_delivery("pending")
+        if verify_delivery_state:
+            command("update", "--rollback")
+            require(
+                json.loads(command("version", "--json"))["version"] == installed["version"],
+                "rollback did not restore the original wheel",
+            )
+            # Restoring an old DB cannot prove that pending sends never ran.
+            verify_delivery("unknown")
+            command("update", "--from", str(next_wheel))
         command("update", "--from", (root / "missing.whl").as_uri(), ok=False)
+        verify_delivery("unknown" if verify_delivery_state else "pending")
         require(
             json.loads(command("version", "--json"))["version"] == "0.1.0+acceptance",
             "failed install removed the previous version",
@@ -173,6 +222,8 @@ def smoke(wheel: Path, git_ref: str | None, bundle: Path | None = None):
         require(configuration.read_bytes() == saved_config, "config changed on uninstall")
         require(key.read_bytes() == credential, "enrollment key changed")
         require(database.read_bytes() == saved_database, "database changed on uninstall")
+        if verify_delivery_state:
+            print("PASS: real rollback preserves result/key data and fences old outbound cursors.")
         print(
             "PASS: wheel install, setup, real version change, active-runtime refusal, failed "
             "update, daemon/API/ACP/MCP/approvals and data-preserving uninstall.",
@@ -241,5 +292,10 @@ if __name__ == "__main__":
     parser.add_argument("wheel", type=Path)
     parser.add_argument("--git-ref", help="also clone/install this local commit/tag (e.g. HEAD)")
     parser.add_argument("--bundle", type=Path, help="also test the extracted release installer")
+    parser.add_argument(
+        "--verify-delivery-state",
+        action="store_true",
+        help="test development schema delivery state across update/rollback",
+    )
     args = parser.parse_args()
-    smoke(args.wheel, args.git_ref, args.bundle)
+    smoke(args.wheel, args.git_ref, args.bundle, verify_delivery_state=args.verify_delivery_state)
