@@ -2930,6 +2930,47 @@ Wheel 0.2.0rc1 заморожен: новые docs и дальнейшая ра�
 Кандидат самостоятельной установки 0.2.0rc1 заморожен; development 0.2.0rc2.dev0
 использует schema 8. Живые проверки/службы и публикация не выполнялись.
 
+## 2026-10-13 — сверка статусов и новые направления P4.11–P4.14
+
+По просьбе владельца сверены HEAD f0961ca, рабочее дерево, актуальные API/auth
+и сохранённый финальный JUnit: 1226 cases, failures/errors=0, skipped=28
+(1198 passed). Это чтение предыдущего подтверждённого прогона, не новый full suite.
+Frozen candidate 0.2.0rc1/schema 6 отделён от development 0.2.0rc2.dev0/schema 8.
+Checkpoint/README/architecture и короткие статусы приведены к этой границе.
+Промежуточная P4.8.5 сводка перенесена из roadmap в delivery journal с пометкой
+исторической; latest candidate evidence заменяет старые package counts.
+Живая VPS/Telegram приёмка и физические lifecycle проверки не объявлены пройденными.
+
+Добавлены OPEN P4.11 (ручные/плановые сценарии), P4.12 (client API) и P4.13
+(native harness adapters); P4.14 mobile — CONDITIONAL по успешности/спросу и API.
+Запрос подтверждает направления, но defaults/MVP/auth vendor не выдаются за
+согласованные решения. Обсуждение dialogue/offline policies запрошено отдельно.
+Queue будущих этапов выстроена через P4.10 ownership → P4.12 API → P4.11 runs,
+со связанным P4.13 и будущими каналами; существующая приёмка остаётся впереди.
+P4.9 DEFERRED и текущие Hermes cold/shared ограничения не изменены.
+
+Сценарии: persisted Run для manual/schedule, clock zone диспетчера/UTC, scopes,
+final authorization/revoke, durable claims/idempotency, misfire/DST/overlap,
+approval deadlines и unknown без prompt replay. Shared active user dialogue
+не выбран как неявный target; fresh dialogue/skip offline — предложения для MVP.
+Client API: current loopback/global owner token не является per-user/mobile API;
+отдельная surface/audience, versioned contract, device auth/revoke, operations,
+scoped events/approvals и будущие scenarios endpoints. P4.14 не выбирает framework.
+
+Research через Context7 и прочитанные официальные OpenAI/Anthropic/Google/OpenCode
+pages подтвердил программные маршруты: Codex App Server, Claude Agent SDK/CLI,
+Gemini headless и OpenCode local server. Managed session не объявлена safe live
+attach к произвольному открытому Desktop/IDE. Перечень capability/approval/cancel/
+resume/auth/OS tests и источники записаны в harness proposal; adapters/model calls
+этой итерацией не запускались. MCP client capability не означает ACP server.
+
+Подробности: docs/items/scenarios-and-schedules.ru.md,
+docs/items/client-api-and-mobile.ru.md, docs/items/connector-harness-adapters.ru.md.
+Runtime/config/schema/кандидат этой документальной итерацией не изменялись.
+Документальная проверка: 115 local links без обрывов, уникальные новые IDs,
+очередь остаётся последним разделом; secrets scanner suite 42 passed.
+Устранена trailing blank line при переносе исторической сводки; diff clean.
+
 ## Незакрытые вопросы
 
 - **Автотесты TLS/SSE** — наблюдавшиеся причины и исправления тестового стенда

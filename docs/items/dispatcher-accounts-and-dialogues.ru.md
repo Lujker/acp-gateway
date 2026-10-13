@@ -61,8 +61,9 @@ upstream-контракта; выбранный указатель не устр
 HermesSessionManager и restore=connector-live binding. ACP load не вызывает
 Hermes resume; допускаются только свои живые idle handles в том же manager.
 Dispatcher сверяет сохранённую provenance перед prompt. In-flight drop пока
-даёт постоянную quarantine этого handle, а не recovery результата; журнал и
-reconciliation остаются открытыми. Restart connector/потеря Hermes WS снимают
+даёт quarantine этого handle, а не автоматическое recovery результата.
+Bounded journal и exact known model-outcome reconciliation уже реализованы;
+поздний prompt result не снимает prompt-loss fence. Restart connector/потеря Hermes WS снимают
 право load. Manager scoped по локальному alias текущего single-owner connector;
 workspace authorization по-прежнему обязательна до включения второго пользователя.
 
@@ -174,3 +175,21 @@ jobs приватны по conversation, но approvals из других кан
 Публичная регистрация не включается автоматически. Пока изоляция и её приёмка
 не завершены, текущую single-owner сборку не представлять как готовую услугу
 для независимых пользователей.
+
+
+## Связанные будущие контракты (2026-10-13)
+
+P4.11 добавляет Scenario/Schedule/Run как workspace-owned ресурсы:
+[proposal](scenarios-and-schedules.ru.md). Scheduler service identity действует
+on behalf of пользователя, не как глобальный owner; актуальные права на connector/
+agent/dialogue проверяются при dispatch и approval. Manual и scheduled triggers
+не создают отдельной модели доступа. Новые права и revoke должны войти в P4.10.
+
+P4.12 выделяет versioned client API и user/device auth:
+[API/mobile proposal](client-api-and-mobile.ru.md). Telegram, Web/mobile и CLI
+используют один application layer, а admin/connector/provider credentials
+не становятся client tokens. P4.14 mobile CONDITIONAL, без выбора framework.
+
+P4.13 [native adapters](connector-harness-adapters.ru.md) наследуют scope и
+capability проверки; наличие resume/SDK не выдаёт доступ к чужому live chat.
+Эти направления запрошены владельцем, а детали MVP пока предложены для обсуждения.

@@ -1,6 +1,14 @@
 # ACP Gateway
 
-Development candidate 0.2.0rc1: [step-by-step self-install (Russian)](docs/setup/self-install-0.2.0rc1.ru.md). Published 0.1.0 does not include this workflow.
+Frozen installation candidate 0.2.0rc1: [step-by-step self-install (Russian)](docs/setup/self-install-0.2.0rc1.ru.md). Published 0.1.0 does not include this workflow.
+
+Current source development is 0.2.0rc2.dev0 (schema 8), with persistent Telegram
+delivery/status and update recovery; it does not replace the frozen installer.
+See [development evidence](docs/items/p3.3-reliability.ru.md) and
+[delivery behavior](docs/setup/telegram-recovery.md).
+Future proposals: [scenarios](docs/items/scenarios-and-schedules.ru.md),
+[client API/mobile](docs/items/client-api-and-mobile.ru.md), and
+[harness adapters](docs/items/connector-harness-adapters.ru.md).
 
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 ![Python 3.12+](https://img.shields.io/badge/python-3.12%2B-blue.svg)
