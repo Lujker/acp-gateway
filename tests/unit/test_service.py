@@ -141,6 +141,6 @@ def test_unit_escapes_paths_and_supports_frozen_executable(tmp_path, monkeypatch
 
 
 def test_non_linux_has_clear_error(manager, monkeypatch):
-    monkeypatch.setattr(service.sys, "platform", "win32")
+    monkeypatch.setattr(service.sys, "platform", "darwin")
     with pytest.raises(ValueError, match="Linux/WSL"):
         service.control("status")

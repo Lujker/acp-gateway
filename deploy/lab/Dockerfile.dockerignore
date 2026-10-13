@@ -1,0 +1,17 @@
+**
+!pyproject.toml
+!uv.lock
+!README.md
+!LICENSE
+!src/
+!src/**
+!tests/
+!tests/fakes/
+!tests/fakes/**
+!tests/fixtures/
+!tests/fixtures/**
+!scripts/
+!scripts/lab_node.py
+!scripts/lab_goose.py
+src/**/__pycache__/
+tests/**/__pycache__/

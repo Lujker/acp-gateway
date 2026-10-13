@@ -1597,6 +1597,1272 @@ FileNotFoundError. Обёртка через публичный launcher не п
 создаёт шаблон/секреты; Goose, Telegram, enrollment и автозапуск настраиваются
 отдельно. Native Windows/macOS службы остаются отдельным незакрытым пунктом.
 
+## 2026-10-11 — P3.6: мастер настройки и интерактивное управление
+
+Продолжена существовавшая незавершённая заготовка `cli/wizard.py` и интеграция
+в `cli/main.py`. В текущем исходном коде доступны `setup --interactive`,
+`config edit`, `start` и `menu`; запуск без аргументов в терминале открывает меню.
+`setup --non-interactive` сохраняет сценарий генерации шаблонов для автоматизации.
+
+Мастер выбирает local/server/connector, настраивает ACP-профили, Telegram,
+серверный ingress и исходящее подключение, экспортирует ключи новых компьютеров,
+может подключить MCP к локальному Hermes и включить systemd user service.
+Повторная настройка сохраняет ключи и дополнительные параметры профилей;
+доступны редактирование, добавление, удаление и замена профилей. Секреты скрыты,
+файлы и backup приватные; отмена до сохранения ничего не меняет. Проверены
+конкурентное редактирование и восстановление частично записанных файлов.
+
+Исправлен путь enrollment-файла при построении ConnectorLaunch. Проверяются
+занятые порты, принадлежность unit-файла и running jobs перед остановкой службы.
+При неудачном старте восстанавливаются настройки и unit; восстановление файлов
+выполняется и при ошибке cleanup службы. `start` не дублирует активную управляемую
+службу. Меню сохраняет выбранные config/env пути и предоставляет управление
+службами, enrollment/rotate/revoke, диалогами, approvals и проверкой обновлений.
+
+Проверки: полный suite **735 passed, 3 optional Hermes skipped (143.13 с)**;
+последующие проверки CLI/служб/streaming и дополнительные сценарии отката прошли.
+Ruff check/format и git diff --check прошли. Реальный PTY smoke мастера
+создал конфигурацию, приватные секреты и сохранённую роль во временном каталоге;
+подключения к модели и изменения пользовательских служб не выполнялись.
+Инструкция — `docs/setup/interactive.md`, README и P3.6 обновлены.
+
+Публикация не выполнялась: v0.1.0 ещё не содержит мастер. P3.6 остаётся PARTIAL;
+native Windows/macOS службы, автоматическое обновление и живая VPS/два компьютера/
+Telegram-приёмка сохраняют прежние границы. Проверка исходящего сервера в мастере
+пока подтверждает TCP-доступность; enrollment и TLS проверяются при старте
+коннектора.
+
+## 2026-10-11 — CLI целевых хостов, doctor и Docker-лаборатория
+
+По запросу владельца проработан путь server → enrollment → локальный исполнитель
+→ исходящий коннектор. `setup --role` позволяет предварительно выбрать роль;
+после подготовки локального Goose мастер может сразу сохранить внешнее
+подключение. `connect` редактирует его отдельно. `config edit --section` и
+`agents configure` сохраняют остальные настройки и ключи.
+
+Добавлены команды `agents install goose` (официальный shell/PowerShell installer,
+pin версии, dry-run, отдельный tools-каталог), `agents provider`, `agents serve`
+и Linux/WSL `agents service`. Listener получает отдельный ключ только через
+окружение дочернего процесса, unit не содержит ключей; учитываются чужая
+конфигурация и владение unit. Stop/status работают без загрузки сломанного YAML.
+Длительный listener удерживает runtime lease, updater проверяет службы Goose
+и удаляет собственные остановленные unit при uninstall.
+
+`doctor` выдаёт text/JSON и понятные способы исправления, проверяет конфигурацию,
+секреты, enrollment, каталоги, TLS-файлы и сохранённую интеграцию Hermes.
+Live-режим дополнительно проверяет owner API, ACP initialize, Telegram getMe
+и TCP/TLS диспетчера с CA или pin. Сессии/промпты/сообщения не создаются,
+постоянные TOFU pins не изменяются. Диагностическая регистрация коннектора
+не выполняется, чтобы не заменить живое подключение; auth/path проверяет start.
+
+`scripts/lab.py` предоставляет run/up/test/down и изолированные Compose-проекты:
+диспетчер и два компьютера, раздельные тома enrollment, без host ports и доступа
+к пользовательским конфигам. Настройка выполняется настоящим CLI через PTY;
+Goose CLI stand-in использует записанный ACP mock, а provider/serve проходят
+через команды Gateway. Проверены повторное редактирование без смены ключей,
+ошибочные ACP credentials и отсутствующий enrollment, JSON diagnostics,
+две независимые сессии, no-human deny, disconnect/reconnect и доступность соседа.
+Модель/реальные аккаунты не вызываются. Контейнеры ограничены CPU/RAM/pids.
+
+Первый Docker build обнаружил неработающий WSL credential helper
+`docker-credential-desktop.exe` (exec format error). Добавлен опциональный
+`--anonymous-docker` с временным DOCKER_CONFIG для публичных образов; постоянная
+конфигурация Docker не менялась. В первом suite секрет-сканер распознал тестовый
+литерал как ключ; тест теперь создаёт случайное значение.
+
+Итог: **759 passed, 3 optional Hermes skipped (158.80 с)**; после небольших
+уточнений валидации doctor/setup ещё **56 профильных проверок прошли**.
+Docker lab прошла, контейнеры/сеть/тома ключей удалены. Ruff и diff --check чистые.
+Инструкции: `docs/setup/host-cli.md`, `docs/setup/cli-lab.md`.
+Публикации, изменения пользовательских служб и установка Goose на текущий хост
+не выполнялись. Upstream installer/native Windows/macOS проверены кодом и
+mock-тестами; настоящий Goose, provider auth, native managers и живой VPS/WSS/
+Telegram остаются отдельными проверками, Docker mocks их не подменяют.
+
+## 2026-10-12 — P4.8.1: attach к установленному Hermes Desktop
+
+По запросу владельца начата реализация трека. Добавлены discovery rendezvous v1
+для `desktop-serve`/`serve`, authenticated identity/status и ограниченный RPC probe.
+`acpgw agents probe hermes` работает без Gateway config, не вызывает модель,
+не создаёт диалоги и показывает только безопасные метаданные. Проверяются
+loopback, fingerprint, PID/role/protocol; proxy/redirect отключены. POSIX файлы
+должны быть приватными; Windows ACL остаются отдельной работой.
+
+`scripts/spike_hermes.py` отдельно проверяет два клиента, создавая тестовый
+диалог только с `--sessions`; `--prompt` добавляет один фиксированный запрос.
+`--resume-session` подключает явно выбранный сохранённый тестовый диалог без
+чтения истории. Server requests не получают автоматический allow; таймаут
+не вызывает повторного prompt. Ограничены frames, pending RPC и event queue;
+ошибки протокола/переполнение закрывают соединение.
+
+На текущем нативном Windows Hermes Desktop 0.21.6 подтверждены обнаружение,
+create/activate и общий live/stored ID двух независимых клиентов. Оба получили
+поток и успешное завершение одного модельного запроса. После отключения первого
+второй ответил на ping. Сохранённый тестовый диалог затем восстановлен по тому же
+stored ID с новым live ID; второй клиент также подключился к нему. Поля
+`stored_session_id` и `session_key` нормализованы с отказом при конфликте.
+Диалоги оставлены владельцу для просмотра/удаления; Desktop не останавливался,
+upstream и его конфигурация не изменялись. Эти результаты подтверждают backend,
+визуальная приёмка вкладки Desktop ещё не выполнена.
+
+Ограничение, найденное в установленном исходнике: exclusive submit capability
+не запрещает queue/steer внутри того же backend. Проверка busy до prompt
+не атомарна; `session.interrupt` не гарантирует отмену только хода Gateway.
+Перед production-адаптером нужна проверяемая политика владения диалогом/ходом
+либо atomic guard upstream. Реальные approvals и их arbitration с Desktop,
+busy/cancel, смена port/token, Goose, второй Windows-ПК и VPS/Telegram остаются
+следующими проверками. `P4.8.1` отмечен PARTIAL, трек — IN PROGRESS.
+
+В первом полном suite обнаружены два сбоя: spike был изменён во время прогона,
+и scanner распознал статические тестовые credentials как assigned secret.
+Аргументы теста синхронизированы; credentials теперь генерируются случайно,
+scanner не ослаблен. После исправления **71 профильная проверка прошла**.
+Итоговый полный suite: **788 passed, 3 optional Hermes skipped (131.09 с)**.
+Ruff, форматирование изменённых Python-файлов и `git diff --check` чистые.
+Воспроизведение: `docs/setup/hermes-attach.md`; очищенное наблюдение:
+`docs/items/hermes-attach-spike-2026-10-12.json` (summary, не полный wire transcript).
+
+## 2026-10-12 — P4.8.1: busy/cancel/approvals и граница observation
+
+Продолжен трек: `scripts/spike_hermes_semantics.py` исполняет реальные helpers
+установленного Hermes 0.21.6 с синтетическим состоянием в памяти. Без сервера,
+модели и выполнения команд подтверждены queue/steer/redirect, legacy queue+
+interrupt, отмена следующего хода по session-scoped позднему cancel, first-response-
+wins для approvals, session-scoped withdraw и отказ ответам после timeout/cancel.
+Нормализованные frames, cancellation notifications и хеши исходников сохранены
+в `tests/fixtures/hermes/0.21.6/semantics.json`. Opt-in compatibility test сравнивает
+наблюдаемый контракт с fixture; это не живая приёмка инструмента/GUI.
+
+При проверке выявлено, что error/deny от второго клиента тоже завершает общее
+ожидание. RPC client теперь observer по умолчанию: блокирует create/resume/
+prompt/interrupt и не отвечает на общие server requests. Diagnostic доступ
+требуется явно, а prompt/interrupt и автоматический deny ограничены одним
+live ID/профилем. Перепривязка и дополнительные mutation fields запрещены.
+Второй peer spike всегда observer. Нативный Windows тест без модели подтвердил
+общие live/stored IDs и доступность второго клиента после отключения первого.
+Отдельный поздний observe по ID уже отключённого тестового диалога не прошёл;
+автоматический fallback на resume не выполнялся, корректная live-приёмка
+проведена при одновременно подключённых клиентах.
+
+Также найден auto-continue при cold resume после сбоя. Предыдущая инструкция
+«resume без model call» была слишком сильной: `omit_messages` запрещает передачу
+истории, но не выполнение recovery. Исправлены инструкция и CLI, теперь
+`--resume-session` требует `--allow-auto-continue`. Без acknowledgement discovery
+даже не запускается. Read-only probe cold resume не выполняет.
+
+На локальном HTTP/WS стенде проверены смена port/PID/token, отказ при частично
+обновлённой паре record/token и запрет HTTP/WS redirect. **77 профильных тестов
+и 1 installed-source compatibility test прошли**. Живой Desktop не перезапускался;
+исходники и конфигурация Hermes не менялись, новые model calls не выполнялись.
+Итоговая полная регрессия с включённым semantics test: **795 passed,
+3 optional Hermes MCP skipped (128.88 с)**. Ruff, форматирование и diff --check чистые.
+
+В `docs/items/hermes-shared-control.ru.md` записано решение: shared-write пока
+закрыт; необходимы атомарное владение ходом, отмена конкретного turn, settlement
+approvals и recovery без выполнения. Только Gateway mutex или busy-precheck
+не защищают от параллельного Desktop. Отдельный диалог не выбирается скрытно
+вместо запрошенного общего. Goose/discovery/setup/lifecycle можно развивать
+независимо; P4.8.1 остаётся PARTIAL.
+
+### 2026-10-12 — P4.8.2: выбран dedicated MVP, добавлен локальный драйвер
+
+Владелец явно выбрал отдельные диалоги диспетчера в уже запущенном Hermes;
+ограничения владения исследуются отдельно. Roadmap и решение shared-control
+обновлены: пользовательские диалоги не импортируются для записи, общий
+Desktop/Telegram write не является условием старта выбранного MVP.
+
+`adapters/hermes.py` создаёт диалоги с собственными непрозрачными handles,
+держит профиль/live/stored identity, фильтрует чужие события, ограничивает
+число диалогов и очередь. Busy или uncertain запрещают следующий prompt.
+Timeout не приводит к replay; queued/steered/redirected и обнаруженное
+постороннее вмешательство лишают диалог права записи. Потеря connection
+инвалидирует все handles. Cold resume, adoption, interrupt и административные
+RPC отсутствуют. Собственные approvals пока отклоняются; чужие игнорируются.
+Исправлено закрытие базового RPC при отмене reader до его первого запуска.
+
+Локальный реестр не создаёт lease в Hermes. Выделенные диалоги нужно оставлять
+за диспетчером; писать/steer/cancel из Desktop параллельно нельзя. Возможны
+необнаруживаемые гонки в уже работающем ходе. Закрытие драйвера только отключает
+клиент и не отменяет выполняющийся запрос.
+
+Нативный smoke `scripts/spike_hermes_dedicated.py` на Windows Hermes 0.21.6
+прошёл без модели: создал новый диалог, observer подтвердил live/stored IDs,
+после detach остался доступен ping. Токены, история, установленный исходник
+и конфигурация агента не изменялись. Очищенный результат записан в
+`docs/items/hermes-dedicated-spike-2026-10-12.json`.
+
+24 unit-теста dedicated policy и 61 профильный тест discovery/RPC/rotation/
+dedicated прошли. Полная регрессия с установленным semantics source:
+**821 passed, 3 optional Hermes MCP skipped (131.22 с)**. Ruff, форматирование
+и diff --check чистые. ACP/relay bridge, human permissions, политика cwd, persistence
+и setup остаются следующими задачами; драйвер ещё не включён в рабочий relay.
+
+### 2026-10-12 — P4.8.2: Hermes ACP bridge и включение в существующий релей
+
+Добавлен `adapters/hermes_acp.py`: ACP initialize/new/list/text prompt,
+поток текста/мыслей и tool events, итог без delta, без дублирования streamed final.
+Доступен локальный `backend: hermes`/`kind: hermes` с role/profile/lock_dir;
+статический порт, URL и агентский токен в конфигурации запрещены. `AgentClient`
+повторно обнаруживает и проверяет backend при новом соединении, computer
+connector переиспользует существующий релей. Goose ACP-путь сохранён.
+
+Driver opt-in передаёт собственные approvals человеку, допускает только
+once/deny и игнорирует чужие запросы. `request.cancel` отзывает запрос в bridge,
+через metadata update отменяет ожидающий human handler и удаляет карточку в ядре.
+Поздний ответ не отправляется upstream. Completion тоже отзывает незавершённые
+вопросы. Secret/sudo/неподдержанные запросы не получают автоматического allow.
+
+Capabilities явно сообщают отсутствие cancel, cold resume и settlement ACK.
+Ядро отказывает отмене до изменения job/approval state; оно не показывает
+локальное прекращение ожидания как подтверждённую отмену Hermes. При потере
+connection/epoch старые handles не восстанавливаются, prompt не повторяется;
+пользователь может явно создать новый диалог. Windows cwd поддержаны рядом
+с POSIX: точный allowlist, нормализация регистра/разделителей, запрет traversal,
+UNC/device/ADS. Лимит prompt из локальной policy передаётся коннектору.
+
+Граница гарантий: bridge передаёт вопросы, которые Hermes сам запросил;
+он не меняет профильную политику инструментов и не заставляет агент спрашивать
+перед каждым действием. Отправленное once не доказывает upstream settlement
+при конкурирующем ответе Desktop. Выделенные диалоги и approvals остаются
+зарезервированными за диспетчером, чтение из Desktop допустимо.
+
+Проверено: реальный ACP SDK → WS relay → адаптер → host HTTP/WS mock без
+моделей и инструментов. Streaming/final fallback, once/deny/default reject,
+изоляция событий/вопросов, отзыв approvals в ядре, запрет unsafe cancel,
+смена epoch без replay/adoption и новый диалог после обрыва. Профильная регрессия:
+**187 passed**. Полный suite с installed-source semantics:
+**858 passed, 3 optional Hermes MCP skipped (138.47 с)**. Ruff, форматирование
+и diff --check чистые. Новый bridge не проходил живую Windows/VPS/Telegram
+приёмку; предыдущая нативная проверка относилась к dedicated driver create/attach.
+
+Roadmap и `docs/setup/hermes-attach.md` обновлены, добавлены ручные local/VPS
+профили и пример запуска. Открыты нативные approvals/версионные capabilities,
+мастер обнаружения, persistence/recovery привязок и Windows lifecycle.
+
+### 2026-10-12 — P4.8.3: выбор существующего Hermes в setup и read-only doctor
+
+В `acpgw setup` / `agents configure` появился тип агента Hermes. Мастер
+обнаруживает desktop-serve/serve в выбранном локальном каталоге, показывает
+окружение, версию, доступные профили и число живых диалогов. Пользователь
+выбирает экземпляр/профиль и стабильный alias; несколько экземпляров добавляются
+отдельными профилями. Windows и WSL явно обозначены как разные окружения.
+Сохраняется способ discovery: каталог/роль/профиль, без token/port/PID.
+Нет проверенного экземпляра — сохранение offline-конфига требует явного
+выбора в CLI. Мастер сообщает ограничения dedicated conversations/cancel/restore.
+
+Повторный setup сохраняет ключи. Смена типа подключения очищает прежние
+transport fields; Goose session mode не переносится в Hermes. Коннектор
+принимает локальные Hermes profiles, серверный setup сохраняет только route
+и не пытается обнаружить agent на VPS. MCP-фасад внутри Hermes остаётся
+отдельным opt-in сценарием, подключение executor не изменяет Hermes config.
+
+`doctor --live` и проверка подключений используют observer probe, не создают
+диалоги, не отправляют prompt и не отвечают на вопросы Desktop. Статусы
+различают missing/auth-required/incompatible/offline/profile-missing.
+Doctor проверяет существование локального cwd; без --live нет сетевых запросов
+к агенту. Ошибки discovery не содержат token или исходного credential URL.
+
+**54 профильных теста прошли**, включая два настоящих HTTP/WS mock-backend,
+конфиг без токенов, отсутствие sessions/decisions, повторный setup, offline
+выбор и отказы auth/profile. Нативная Windows приёмка мастера, Goose discovery,
+busy выбранного диалога и persistent/recovery привязки остаются открытыми.
+Roadmap и инструкции interactive/Hermes attach обновлены.
+
+Полная регрессия после setup/doctor: **867 passed, 3 skipped**. Проверки
+установленного upstream semantics выполнены с HERMES_SEMANTICS_REPO; три
+пропуска относятся к отдельной opt-in actual-Hermes compatibility приёмке.
+
+### 2026-10-12 — P4.8.4: запрет параллельных connector процессов
+
+Foreground connector удерживает OS file lock `data_dir/connector.lock` на весь
+период работы, включая reconnect. Второй запуск с тем же каталогом данных
+отклоняется до обращения к dispatcher/agent и возвращает configuration exit 78.
+Блокировка отдельная от daemon/dispatcher; освобождается при штатном выходе,
+ошибке и Ctrl+C, ОС снимает её при аварии процесса. Оставшийся файл lock не
+мешает повторному запуску. Это общая защита для ручного запуска и будущего
+автозапуска, без управления процессом внешнего Hermes.
+
+**28 тестов connector CLI/systemd lifecycle прошли** после изменения, включая
+проверку с отдельным процессом и его аварийным завершением; Ruff check/format
+чистые. Проверено в Linux/WSL. Нативная Windows блокировка, Task Scheduler,
+ACL, stop/logs и reboot/logon приёмка остаются открытыми.
+
+### 2026-10-12 — P4.8.4: development Windows Task Scheduler adapter
+
+Добавлены `service --role connector install/enable/start/stop/restart/status/
+logs/disable/uninstall` для native Windows. Фиксированный PowerShell script
+получает параметры через JSON stdin и обращается к Scheduler COM. Task работает
+под current-user SID с InteractiveToken/least privilege, logon delay 10 секунд,
+IgnoreNew, без runtime limit и с тремя crash retries через минуту. Install
+оставляет task disabled; marker/principal/executable защищают чужие задачи,
+reinstall работающей task запрещён. Task definition не содержит secret contents.
+
+Read-only ACL preflight проверяет config/env/computer key, их непосредственные
+parent directories и log path. Разрешены user/SYSTEM/Administrators; неожиданные
+Allow entries и reparse points отклоняются, права не изменяются автоматически.
+Hermes rendezvous/token ACL ещё не включены. Windows logs читают ограниченный
+хвост rotating log с редактированием секретов. Setup и internal package
+maintenance требуют disable task до изменений; внешние uv tool операции
+контролировать невозможно. Immediate Scheduler stop пока заменяет graceful drain;
+неизвестный исход interrupted prompt не переигрывается автоматически.
+
+Добавлен opt-in native disposable task lifecycle test с уникальным именем,
+private temp files и закрытым loopback port, без обращения к Hermes/model.
+Тест по умолчанию пропущен. Попытка read-only native Scheduler probe из текущей
+среды получила Exec format error для Windows PowerShell.exe даже вне sandbox;
+изменений Windows задач не произошло. Нативная приёмка остаётся открытой.
+
+Профильная регрессия после исправления статических redaction test values:
+**109 passed**, Ruff check/format и diff check чистые. В предшествующем полном
+запуске **886 passed, 4 skipped**, единственный отказ был secret scanner на этих
+двух тестовых строках; заменены runtime-generated значениями, scanner перепроверен
+без ослабления правил. Runbook: `docs/setup/windows-connector.md`, roadmap обновлён.
+
+### 2026-10-12 — P4.8.4: нативная Windows приёмка Scheduler/ACL/Hermes
+
+**Статус:** PARTIAL — нативные автоматизируемые проверки прошли; остаются
+reboot/logon, физический sleep/wake и смена сети, Hermes rendezvous/token ACL,
+graceful drain и проверка устанавливаемой поставки. P4.8.5 не закрыта.
+
+Среда: Windows 10 build 19045, Windows PowerShell 5.1, пользователь vladz,
+uv-managed CPython 3.12.13 (`sys.platform == "win32"`), Hermes Desktop 0.21.6.
+Scheduler COM подключился под тем же пользователем. Использовано актуальное
+незакоммиченное рабочее дерево `/home/vzelenskiy/projects/acp-gateway` через
+`\\wsl.localhost\Ubuntu-22.04\home\vzelenskiy\projects\acp-gateway`.
+Отдельная native venv находится в Windows workspace `work/native-venv`;
+Linux `.venv` не использовалась. Production task и настройки Hermes не менялись.
+
+Найден и исправлен реальный отказ дочернего powershell.exe при наследовании
+PSModulePath с модулями PowerShell 7: autoload Microsoft.PowerShell.Security
+завершался конфликтом extended type data. Фиксированный дочерний script теперь
+ограничивает собственный PSModulePath каталогом `$PSHOME/Modules`, не меняя
+пользовательские настройки. Исправлен также native ACL helper теста:
+Set-Acl требовал SeSecurityPrivilege; запись DirectoryInfo/FileInfo.SetAccessControl
+проходит без повышения прав. В unit-тесте lock убрано POSIX-only предположение,
+что Windows обязана сохранять файл после release; повторный захват проверяется.
+
+Команды из native PowerShell (после `uv sync --frozen --group dev --python 3.12
+--managed-python` с отдельным UV_PROJECT_ENVIRONMENT):
+
+```powershell
+$env:ACPGW_TEST_WINDOWS_TASK = '1'
+# $python — Scripts/python.exe отдельной native venv
+& $python -m pytest -q --tb=short tests/integration/test_windows_connector_task.py tests/unit/test_windows_service.py tests/unit/test_connector_commands.py
+Remove-Item Env:\ACPGW_TEST_WINDOWS_TASK
+& $python -m pytest -q --tb=short tests/integration/test_hermes_acp.py tests/integration/test_hermes_probe.py tests/integration/test_hermes_relay.py tests/integration/test_hermes_rotation.py tests/integration/test_hermes_setup_live.py tests/unit/test_doctor.py tests/unit/test_hermes_dedicated.py
+& $python -m acp_gateway agents probe hermes --role desktop-serve --json
+& $python scripts/spike_hermes_dedicated.py --cwd C:\Users\vladz\Documents\Codex\2026-10-12\d-x20
+```
+
+**33 passed**: 8 native integration cases и 25 unit cases, без skipped.
+Уникальные disposable tasks прошли disabled install → enable/running → отказ
+reinstall running → restart → disable → logs → uninstall. Публичные ACL config,
+env, key, существующего log и parent directory отклонены до регистрации task.
+Управление другой installation и unmanaged task отклонено; проверена настоящая
+COM task, а не только mock. Работающая scheduled task удерживает data_dir lock,
+foreground duplicate возвращает 78. Setup не создаёт каталог при enabled task,
+package-maintenance preflight требует disable; после disable preflight проходит.
+Queued-state refusal отдельно покрыт unit case, принудительно queued COM task
+не создавалась. Полное обновление/удаление установленного пакета не выполнялось.
+
+**72 passed**: Hermes ACP/relay/discovery/rotation/setup/doctor/dedicated regression
+на Windows с HTTP/WS mocks, без моделей. Linux/WSL regression этих изменений:
+**25 passed, 8 skipped** (все 8 — намеренные native-only cases). Ruff check/format
+и git diff --check чистые.
+
+Настоящий Hermes observer probe вернул ready/0.21.6; создан один новый отдельный
+диалог диспетчера без inference, observer подтвердил совпадение live/stored ID
+и ответ ping после detach. Повторный observer probe после остановок disposable
+connector tasks снова ready на том же backend. Пользовательские диалоги не
+захватывались, prompt/approvals/cancel/resume не выполнялись. Диагностический
+диалог оставлен по правилам spike; идентификаторы, токены и история в журнал
+не записаны. После всех тестов Scheduler COM показал **0 ACP Gateway Test-* tasks**.
+
+Closed loopback endpoint проверяет живучесть процесса при недоступном dispatcher;
+реальный обрыв сети, sleep/wake и reboot/logon этим не подтверждены. Эти операции
+прервали бы текущий пользовательский сеанс и требуют отдельного контролируемого
+этапа. Graceful drain и ACL rendezvous Hermes остаются разработкой, а native
+approvals и VPS/Telegram/второй Windows ПК — отдельной приёмкой.
+
+### 2026-10-13 — P4.8.4: Windows результаты приняты, Hermes discovery ACL preflight
+
+Проверены записи host-agent о native Scheduler/ACL/locks (33 passed), Windows
+Hermes regression (72 passed), live observer и dedicated create без inference.
+Исправления PSModulePath, native ACL helper и платформенной lock assertion
+сохранены; предыдущая приёмка не объявляется проверкой reboot/logon, сети,
+approvals или VPS/двух ПК. Следующий открытый пункт реализован в коде:
+Windows ACL discovery record/token и rendezvous directory.
+
+Новый read-only `windows_acl.py` использует консервативную ACL policy
+native-tested service preflight, не меняя service helper. Проверка проходит
+до чтения любого record/token содержимого: owner user/SYSTEM/Administrators,
+file Allow entries только этим identities, отсутствие чужих directory
+write/delete/ACL-changing rights, reparse points и null DACL. PowerShell 5.1
+запускается с собственным PSModulePath, получает только paths через JSON stdin,
+bounded timeout 10 секунд; errors не возвращают input-dependent сообщения.
+Невозможность проверки останавливает discovery с auth-required. Missing files
+по-прежнему missing; проверка не копирует токены и не меняет Hermes конфиг/ACL.
+Async observer probe и AgentClient transport discovery выполняют preflight
+в worker thread, чтобы PowerShell не блокировал event loop других соединений.
+
+Добавлены unit cases: batch/JSON boundary, отказ без утечки input, timeout и
+недоступный helper, ACL до чтения bytes, missing и responsiveness event loop.
+Добавлены четыре opt-in native cases в disposable Windows suite: private
+endpoint разрешён; public record/token и writable directory отклонены до reads.
+Эти новые native cases ещё не запущены; предыдущие Windows результаты сохранены
+как отдельное свидетельство, а handoff содержит команду следующей приёмки
+и повторного live observer probe без автоматического изменения реальных ACL.
+
+**Полная регрессия: 897 passed, 15 skipped**; 12 skips относятся к opt-in
+Windows Scheduler cases (8 предыдущих + 4 новых), 3 — actual-Hermes compatibility.
+Upstream semantics запускались с установленным HERMES_SEMANTICS_REPO.
+Ruff check/format и diff check чистые. Graceful drain, native приёмка нового
+ACL preflight, reboot/logon/sleep/network и поставка остаются открытыми.
+
+### 2026-10-13 — P4.8.4: graceful connector stop и проверяемая preview-поставка
+
+Connector под OS lock публикует runtime record с новым instance ID и control ID
+managed task; watcher принимает только совпадающий запрос локальной остановки.
+Старый stop request не влияет на следующий запуск. Scheduler metadata и скрытый
+launch option связывают control ID с task, чтобы её остановка не затронула
+foreground connector с тем же data_dir. Control files не содержат credentials;
+доступ на запись ограничивается ACL каталога, проверенного при install.
+
+Stop/disable/restart/uninstall теперь ждут cooperative exit до 20 секунд.
+Connector отменяет relay loop, дожидается закрытия streams и Hermes attachments,
+удаляет runtime record и выходит 0. Таймаут — ошибка, без неявного kill.
+`--force` явно выбирает Scheduler.Stop; legacy tasks нужно один раз остановить
+force и переустановить. Task helper возвращает stopMode для проверяемого результата.
+Repeated SIGTERM не отменяет cleanup повторно. Нет Hermes interrupt/resume,
+решения чужих permissions или replay незавершённого prompt.
+
+**98 профильных tests passed**, включая настоящий CLI процесс → WS dispatcher →
+Hermes mock: idle, работающий prompt и pending approval. Во всех трёх случаях
+exit 0, lock освобождён, dispatcher registration удалена, backend остаётся
+доступен, decisions/interrupt/resume отсутствуют. Native suite обновлён:
+graceful mode assertions, explicit force и stale-instance fencing; его новый
+Windows прогон ещё требуется. Предыдущие Windows результаты относятся к старому
+immediate stop и не закрывают новую приёмку.
+
+Preview wheel/sdist собраны из dirty working tree. Изолированная установка wheel
+с зафиксированными runtime/dev dependencies, CLI version/help/setup/config и
+проверка imports из site-packages прошли. Полная регрессия этой первой wheel
+сборки: **910 passed, 16 skipped**, как и исходники graceful-stop этапа.
+Обновлённая после Goose сборка находится в `dist/p4.8-preview`, с lock requirements,
+SHA256SUMS/PREVIEW.json; ничего не опубликовано и production установка не менялась.
+Windows handoff дополнен проверкой именно wheel без editable uv run.
+
+### 2026-10-13 — P4.8.6: Goose explicit-endpoint observer probe
+
+Добавлен `agents probe goose --url ... --secret-env NAME [--tls-fingerprint ...]`.
+Принимается только numeric loopback без URL credentials/query/fragment;
+http(s) переводится в ACP WebSocket. Key берётся из env и идёт в X-Secret-Key.
+TLS требует ожидаемый pin до отправки key, без TOFU-файлов, proxy и redirects.
+Отправляется только ACP initialize с выключенными FS/terminal capabilities;
+чужие requests/questions игнорируются без decision/error. Нет sessions/modes/
+prompt/cancel/adoption. Проверяются protocol 1 и Goose identity, capabilities
+отмечаются только advertised. Frames ограничены 64 KiB, loop — 64 сообщения,
+есть timeout; backend echoes credentials редактируются.
+
+Контракт recorded Goose 1.53.0 проверен через настоящий ACP SDK mock; отдельные
+WS/TLS cases покрывают pin/auth отказ, чужие permissions, oversized reply,
+timeout, неверную identity/protocol, запрет недоверенных targets и CLI env secrets.
+Профильный набор Goose/Hermes probe/CLI/secrets: **75 passed** до последнего
+добавленного redaction case. Полная регрессия финальных исходников:
+**926 passed, 16 skipped**, Ruff check/format и diff check чистые.
+
+Без URL возвращается manual-endpoint-required, не «Goose отсутствует».
+Просмотрены official upstream main Desktop launcher/lease registry: адрес/key
+хранятся в memory leases. Это не доказывает rendezvous контракт всех версий;
+автодетект Desktop и безопасный rediscovery не реализованы через scraping.
+Runbook с ссылками на upstream: `docs/setup/goose-attach.md`.
+В текущем Linux окружении Goose CLI отсутствует; live Goose/native matrix,
+Windows ACL/drain/package приёмка, physical reboot/sleep/network и VPS/два
+Windows Hermes/Telegram остаются отдельными незакрытыми этапами.
+
+Финальный preview wheel с Goose probe повторно установлен в отдельное окружение
+с locked runtime/dev dependencies. Imports подтверждены из site-packages.
+**Полная пакетная регрессия: 926 passed, 16 skipped**, совпадает с working tree;
+16 skips — 13 opt-in Windows и 3 actual-Hermes compatibility. Preview manifest
+фиксирует оба результата, dirty source и отсутствие публикации.
+
+### 2026-10-13 — P4.8.3: persistent bindings и единая Windows-приёмка
+
+Dedicated dialogue сохраняет профиль, runtime/stored ID, handle и restore=disabled
+атомарно с Gateway-сессией в существующем SQLite channel_state; схема остаётся v5.
+Metadata валидируются и не могут содержать token/неизвестные поля/зарегистрированные
+secrets. История и выбранный диалог остаются после рестарта. `/sessions` показывает
+attached/busy/uncertain/restore-unavailable; для старого/uncertain Hermes handle
+отказ происходит до job/RPC. Продолжение возможно только явным `/new`, без replay.
+Проверены настоящий ACP relay metadata, restart SQLite/core, изоляция agent/
+conversation, busy и неизвестный исход, отсутствие reconnect/RPC при отказе.
+
+Добавлен `scripts/accept_windows_track.py`: проверенные SHA256 wheel/locks,
+новое native Windows venv, imports из site-packages, observer Desktop до/после,
+live setup selector без сохранения, 13 обязательных Scheduler cases и полный
+профильный mock-набор. Отчёт JSON/JUnit/логи сохраняются в новом каталоге.
+Наличие Windows skips не может дать успешный native результат.
+
+После отключения sandbox появился WSLInterop; PowerShell 5.1 и Windows Python
+доступны из WSL. Первый единый прогон обнаружил ошибку классификации OWNER RIGHTS
+SID S-1-3-4: CPython создаёт mode 0700 каталоги с этой записью, как и установленный
+Hermes. Она разрешена только после проверки trusted owner объекта; доступ Everyone
+по-прежнему отклоняется. Никакие ACL настоящего Hermes не менялись. Подавлен
+служебный progress PowerShell и безопасно обрабатывается локализованный stderr.
+Native positive case использует настоящий mkdir(mode=0700) с наследованием DACL.
+
+Повторная полная регрессия исправленных исходников и изолированно установленного
+wheel: **937 passed, 17 skipped** в каждом окружении. 17 skips: 13 Windows opt-in,
+3 actual-Hermes compatibility и 1 installed-source semantics opt-in; ранее
+последний выполнялся при установленном HERMES_SEMANTICS_REPO (938/16).
+Новый WSS-first runbook VPS/два Windows Hermes/Telegram:
+`docs/setup/vps-hermes-acceptance.ru.md`. Развёртывание не выполнялось.
+
+Единый native прогон завершён: **221 passed, 3 skipped** за 100.85 s на
+Windows 10 build 19045 / CPython 3.12.13 / PowerShell 5.1. Все 13 обязательных
+Scheduler cases выполнены; skips только POSIX ownership/permissions. Desktop
+0.21.6 ready до/после на том же endpoint, live selector выбрал default без
+сохранения. Его ACL/настройки и рабочая задача не изменялись, модель не вызывалась.
+В ходе приёмки также исправлены тесты: mock shutil.which скрывал PowerShell,
+а symlink должен отклоняться Windows ACL до POSIX regular-file проверки.
+Linux focused regression после исправления fixtures: **21 passed**.
+Отчёт и JUnit: `%TEMP%\acpgw-windows-acceptance-_9t5i9w9`, копия JSON в preview.
+Проверенный wheel: SHA256 `3f2f39d15599c1a8bb0c4ca349855bd05dcd039edb36cda0ba7aa23a8c54f70b`.
+Физический lifecycle, полный package update, реальные approvals, VPS/два ПК/
+Telegram и live Goose/платформенная матрица остаются открытыми.
+
+### 2026-10-13 — Уточнение целевой поставки P4.8 и разделение приёмки
+
+По замечанию владельца P4.8 ограничен Linux VPS dispatcher + Telegram + два
+native Windows connectors к работающим Hermes Desktop. Goose и расширение
+платформенной матрицы перенесены в отдельный P4.9 и не блокируют этот MVP.
+Основные способы поставки — глобальный uv tool или Git-копия с лёгкими скриптами;
+Docker остаётся дополнительным. Все реальные установки и проверки собраны
+в отдельный P4.8.5, с сценариями и ответственностью агент/пользователь.
+
+Сверены текущие исходники: CLI setup/enrollment/service/update/rollback уже есть.
+Обнаруженные delivery gaps: Windows checkout installer/launchers, завершённый
+Windows setup со saved connection и постоянными private data/log paths, общий
+CLI lifecycle обновления с восстановлением состояния службы, VPS uv/systemd
+runbook вместо обязательного Docker, новая версионированная поставка. Текущий
+updater требует остановки, в Windows также disable task, и не возвращает службы
+в прежнее состояние автоматически. Editable uv run не является uv tool install.
+Полный установленный uv tool update не считать покрытым успешной wheel-регрессией.
+
+Roadmap переписан вокруг этих доработок; подробный план:
+`docs/items/p48-delivery-plan.ru.md`. История предыдущих spike/tests сохранена
+в этом журнале. В данном изменении только план и документация, без установки,
+публикации, изменения служб или новой реализации updater.
+
+### 2026-10-13 — Финальный релиз позже; разные виды Hermes reconnect
+
+По замечанию владельца финальная актуальная поставка перенесена после
+функциональных доработок CLI/setup/update, непосредственно перед пакетной
+приёмкой. Временные wheels для разработки остаются допустимыми, публикация
+не выполнялась.
+
+По исходникам уточнено: local Hermes transport сейчас создаётся внутри remote
+relay stream и закрывается при его завершении. Поэтому обычная потеря VPS WSS
+теряет локальные handles даже при продолжающем работать Hermes. Это ограничение
+нашей текущей архитектуры, а не доказательство невозможности продолжать чат
+через Hermes. Рекомендован session manager в живом connector с независимым
+lifetime attachment; новая remote epoch должна явно перепривязываться к trusted
+локальной session, не принимать старые RPC и не повторять prompt.
+
+Idle VPS reconnect, in-flight drop, потеря Hermes WS и cold restart Hermes
+разделены в плане. Сохранение idle чата при живых connector/Hermes — реалистичная
+локальная доработка. Гарантия при неизвестном исходе/потере всех локальных
+состояний или cold resume требует отдельного контракта и проверки; текущие
+запреты не сняты, код восстановления не реализован этим изменением.
+
+### 2026-10-13 — Постоянный активный чат, независимые каналы и будущие аккаунты
+
+Владелец подтвердил обязательный постоянный выбор активного диалога: он меняется
+только явными командами, не reconnect/offline/restart. Hermes — основной агент,
+Telegram — текущий ключевой adapter общего ядра, будущий Web UI не должен менять
+предметную модель. Сохранение живого чата через VPS reconnect переведено из
+рекомендации в обязательную доработку P4.8. Logical dialogue должен быть отделён
+от transient Hermes/relay IDs; неопределённый исход блокирует запись, но не
+переключает пользователя в новый чат. Текущие active_session/agent pointers в
+SQLite уже дают часть основы; backend continuity пока не реализована.
+
+Обсуждается общий dispatcher для независимых пользователей. Зафиксированы
+варианты отдельного deployment, личных workspaces в одном процессе и командных
+пространств. Рекомендован invite-only personal workspace, окончательный выбор
+ещё обсуждается. Предложен P4.10; контракты actor/ownership/channel-neutral
+dialogue закладываются в P4.8 до session manager, сквозная изоляция нужна до
+подключения второго независимого пользователя.
+
+Проверено по исходникам: computer registry/agents/owner API сейчас общие,
+Telegram conversations частично изолированы, approvals других каналов могут
+рассылаться всем разрешённым chats. Одна allowlist не является accounts model.
+Полный архитектурный документ с принятыми требованиями, предложениями и
+отдельной матрицей агент/пользователь: `docs/items/dispatcher-accounts-and-dialogues.ru.md`.
+Это изменение плана/документации, не миграция БД или реализация multi-user режима.
+
+### 2026-10-13 — Решения приняты; первый слой постоянного выбора реализован
+
+Владелец подтвердил весь предложенный подход. P4.10 переведён в PLANNED:
+один dispatcher/bot, invite-only личные аккаунты/workspaces, self-service
+connector onboarding; командный доступ и billing — последующие расширения.
+P4.8 включает постоянные Hermes-диалоги и основу channel-neutral/ownership
+контрактов; финальная поставка остаётся после функциональных доработок.
+
+В core добавлены submit_selected (без implicit new) и switch_dialogue по
+постоянному SQLite row ID с conversation ownership check; Telegram использует
+оба. При отсутствии выбора пользователь получает /new или /switch guidance,
+backend не вызывается и job не создаётся. Legacy programmatic submit оставлен
+совместимым до миграции остальных callers. Ошибка /new ALIAS не меняет route.
+Store.set_active теперь сам проверяет принадлежность записи. SQLite revision
+выбора атомарно обновляется с pointer без новой SQL migration; поздний async
+create не затирает более новый выбор, включая ABA A → B → A. Созданный чат
+сохраняется неактивным, пользователю показывается его ID для явного /switch.
+
+Первый профильный прогон: 69 passed. Полная промежуточная регрессия выявила один
+старый multinode Telegram сценарий, ожидавший implicit new; он переведён на /new.
+Проверяются отсутствие RPC/jobs при missing selection, restart persistence,
+foreign ID denial, ABA, сохранность предыдущего route при неудачном создании.
+Общий Hermes attachment lifetime и полноценная accounts isolation ещё не реализованы.
+
+### 2026-10-13 — Saved connection для службы коннектора
+
+Общий parser setup.json вынесен в setup_state.py. ConnectorLaunch.from_saved
+используется foreground start и service connector install без launch options.
+Проверяется роль, ограничение размера state, absolute key path, URL/ID/profile
+policy и TLS pin. При наличии любых explicit launch options нужен полный набор;
+saved credential/pin другого сервера не подмешивается. Ошибки не печатают значения
+из повреждённых state. Пути/секреты читаются из выбранной конфигурации, установка
+службы не запускает повторный setup. Native task creation не выполнялась в этом
+изменении; Linux/Windows service adapters получают одинаковый validated launch.
+
+Набор saved launch/wizard/service/menu: 41 passed после исправления тестового
+config fixture. Добавлены 13 cases saved recipe, explicit override/partial refusal,
+неверная роль/URL/pin/key path/extra fields/size и строгая integer version.
+Windows consolidated runner дополнен Telegram и saved-launch tests для будущего
+пакетного прогона. Новая preview/release сборка пока не создавалась; прежние
+221 native tests относятся к предыдущему wheel, не к этим изменениям.
+
+Финальная полная регрессия текущих исходников после обоих изменений:
+**957 passed, 17 skipped** за 138.20 s. Ruff check для src/tests/scripts и
+format check изменённых файлов чистые; git diff check без ошибок. 17 skips —
+13 opt-in native Scheduler и 4 installed-Hermes compatibility. Новые изменения
+не выдаются за прошедшие прежнюю native wheel-приёмку; Windows профиль расширен
+для следующего единого прогона. Финальный релиз по решению владельца отложен
+до завершения функциональных доработок, preview wheel не пересобирался.
+
+### 2026-10-13 — Hermes session manager: idle VPS reconnect без нового чата
+
+Добавлен adapters/hermes_sessions.py. Connector держит один локальный Hermes
+ACP engine на configured alias независимо от remote relay epoch/stream.
+Закрытие remote lease отключает только его frontend; завершение connector
+закрывает managers/driver attachments без stop/delete/interrupt внешнего Hermes.
+Новые session bindings получают restore=connector-live; прямой local adapter
+и прежние disabled rows сохраняют старую границу доступа.
+
+Managed stream объявляет loadSession + connectorLiveResume, но coldResume/cancel
+остаются false. Session/load локально разрешён только для созданного этим manager
+idle handle, правильного cwd и без другого live owner. Live/stored IDs Desktop
+не импортируются, session.activate/resume не вызываются. Core восстанавливает
+provenance из SQLite; AgentClient требует явную capability и совпадение binding
+перед prompt. Active row ID и выбранный агент при reconnect не меняются.
+
+При remote drop с pending turn диалог остаётся quarantined даже после позднего
+completion; автоматического prompt/permission/result replay нет. Старые request
+IDs изолированы внутренними UUID, stale approval responses не проходят в engine.
+Лимиты: 32 retained conversations (driver), 32 leases/requests, 128 frames и
+1 MiB в очереди lease, 256 KiB/frame. Overflow отзывает один remote stream,
+retained engine не закрывает. Архивирование/retention и in-flight result journal
+с reconciliation остаются открытыми; restart connector/потеря Hermes WS не дают
+права импортировать старый чат. Manager scoped по локальному alias single-owner
+connector, полноценная workspace/user isolation P4.10 ещё не включена.
+
+Проверены настоящий ACP SDK, новый stream, restart core/SQLite и реальный CLI
+connector subprocess + реальный WS reconnect к dispatcher против FakeHermes:
+тот же handle/runtime/stored identity, один session.create/client.capabilities,
+нет Hermes resume/activate/interrupt. Негативные cases: чужие IDs/manager,
+другой live owner, provenance mismatch, потеря Hermes attachment, pending
+prompt/approval drop, stale decision и capacity/byte overflow. Отдельно проверено
+graceful stop после reconnect: exit 0, lock released, внешний backend отвечает.
+Это не live model/Windows/VPS/Telegram приёмка; runner расширен новым набором.
+
+Профильный этап: 33 passed до последнего identity/byte guard; 13 passed в новом
+manager/graceful наборе до byte guard. Полный набор до последнего byte guard:
+967 passed / 17 skipped. Итог последней проверки записывается ниже.
+
+Последний профильный manager/graceful/client-safety набор после byte guard:
+**19 passed**. Финальная полная регрессия текущих исходников:
+**967 passed, 17 skipped** за 146.77 s. Ruff check/format и diff check чистые.
+17 skips — 13 native opt-in и 4 installed-Hermes compatibility. Native live
+manager/model/VPS приёмка не заявляется выполненной. Прежний preview wheel
+остаётся историческим; финальная новая сборка отложена до окончания функций.
+
+### 2026-10-13 — P4.8 checkout scripts и основной native VPS runbook
+
+Добавлены install/run/update scripts для sh и PowerShell с общим stdlib
+checkout.py. Git-копия служит источником пакета для uv tool, launcher проверяет
+manager и обращается к uv tool bin вместо случайного acpgw в PATH. Зависимости
+экспортируются из frozen uv.lock; Git не изменяется, fallback на registry нет.
+Первый install запускает setup, повторный — guarded update без setup. Явные
+setup arguments при существующей установке отклоняются с указанием отдельного
+configure пути. Run передаёт CLI args без shell и сохраняет cwd пользователя.
+Windows update ждёт фактический внешний helper, сохраняет temporary constraints
+до завершения и возвращает его exit code; queued не выдаётся за success.
+
+Добавлены 9 tests: fresh/repeated lifecycle, чужой manager, missing update,
+failure propagation, Windows worker lifetime и настоящий shell против fake uv
+из checkout с пробелами/метасимволами. Native runner включает helper tests;
+это не заявление о выполнении native uv installation этих изменений.
+Профильный набор: 9 passed. Полный source suite: **976 passed / 17 skipped**
+за 149.02 s; Ruff check/format, shell syntax и diff check прошли.
+
+Отдельно выполнен настоящий isolated Linux uv tool lifecycle из текущего
+checkout: install с non-interactive setup, run/version/config check, enrollment,
+update, повторный install, повторная проверка registry/config и uninstall.
+Config/env/computer key проверены SHA256 до/после, enrollment registry сохранился;
+entry point удалён, данные остались. Evidence:
+`/tmp/acpgw-checkout-acceptance-h44y68mp/report.json` и `operations.log`.
+Рабочие службы, Telegram, внешний Hermes и установленный пользователю пакет
+не изменялись. Эта проверка не покрывает update enabled/running service.
+
+Подготовлен docs/setup/vps-native-hermes.ru.md: основной uv/Git VPS сценарий,
+server/Telegram, два Hermes route, WSS proxy/native TLS, persistent paths,
+systemd user/lingering, enrollment, Windows saved launch и отдельная приёмка.
+Docker runbook помечен дополнительным, старый preview — историческим.
+Delivery plan и roadmap актуализированы. Автоматическое восстановление служб
+при update, Windows wizard paths/ACL/autostart, session journal/retention и
+живые приёмочные сценарии остаются открытыми. Новый wheel не собирался,
+публикация и развёртывание не выполнялись.
+
+### 2026-10-13 — Windows wizard: persistent paths и private persistence
+
+Interactive connector setup теперь задаёт absolute data/log defaults рядом с
+новым config, сохраняет explicit custom paths и прежний implicit platform
+data_dir при повторной настройке старого config. Относительные/невалидные paths
+отклоняются. После Save подготавливает собственные private directories;
+существующие ACL не исправляет и внешний Hermes не меняет.
+
+Windows snapshot проверяет ACL config/env/state до чтения. Credential picker
+проверяет key и его parent до чтения; pre-save дополнительно проверяет key/log.
+Atomic writer создаёт private parent и проверяет inherited ACL временного файла
+до записи secret bytes. Backup directories проходят те же проверки. Owned
+config/data/log directories требуют приватности чтения, чтобы будущие файлы
+не наследовали публичный Read. Существующий непригодный каталог отклоняется.
+
+Профильный Linux набор paths/ACL/wizard до последнего compatibility guard:
+31 passed. В нативной Windows текущие исходники + существующая Windows dependency
+environment: **20 passed** (paths/ACL). Отдельный native disposable smoke прошёл
+private nested mkdir, atomic write/read и отказ чтения после добавления Everyone
+Read к синтетическому файлу. Второй native smoke прошёл fresh/repeat wizard save,
+data/log directories и backups, неизменность config/env. Использован фиктивный
+Goose transport profile без подключения; Hermes, Telegram и tasks не затронуты.
+Скрипты воспроизведения остались в WSL /tmp/acpgw-native-setup-paths.py,
+/tmp/acpgw-native-setup-tests.py и /tmp/acpgw-native-wizard-paths.py; native
+temporary files удалены. Это source acceptance, не проверка нового wheel.
+
+Full source suite до compatibility guard: 984 passed / 17 skipped, 143.84 s.
+Guard сохраняет platform data_dir старого config и даёт ValueError вместо
+traceback для некорректных типов paths. Финальная source регрессия:
+**988 passed / 17 skipped** за 142.83 s. Ruff и diff
+check прошли. Windows runbook, основной VPS runbook, delivery plan и roadmap
+актуализированы. Регистрация/enabling task из мастера с rollback определения,
+автоматический service update lifecycle и session journal/retention остаются
+открытыми. Новая сборка/публикация не выполнялись.
+
+### 2026-10-13 — Windows task install/enable из мастера и rollback
+
+Connector wizard предлагает установку и запуск logon task перед Save.
+SetupTask делает read-only snapshot только disabled/idle owned task с теми же
+config/env paths. Отмена оставляет конфигурацию и задачи без изменений.
+Apply использует общий service preflight (persisted secrets/key/paths), затем
+guarded Task Scheduler install и enable с новым control ID. Успех scheduling
+не объявляется подключением к VPS; мастер предлагает проверить computers status.
+Decline сохраняет ручной service install/enable путь; старое disabled определение
+не обновляется автоматически. Enabled/queued/running task по-прежнему нужно
+отключить перед редактированием.
+
+На install/start failure rollback сверяет generation, штатно останавливает
+только task этого setup, восстанавливает прежний disabled XML либо удаляет новый
+task и затем возвращает config/env/state. Не применяет force, не трогает Hermes
+или его approvals. Изменившийся task/file и отказ graceful stop блокируют
+автоматическое восстановление: новые settings/backup оставляются для диагностики,
+ошибка явно сообщает incomplete rollback. Перед восстановлением файлов проверяет
+их содержимое против сохранённого плана, чтобы не затереть стороннее изменение.
+
+Добавлены 9 wizard transaction unit cases: success, cancel, fresh/repeat
+install/enable failure, snapshot refusal, failed recovery и concurrent file edit.
+Шесть новых native Scheduler cases: fresh/existing task apply+restore,
+concurrent replacement, другой config, fresh/existing wizard rollback после
+настоящего task.Run. New-cases native subset: **6 passed**, 70.47 s.
+Полный native source Scheduler + wizard профиль: **28 passed**, 107.13 s,
+все **19 Scheduler cases** прошли, test tasks удалены fixtures. Native source
+импортировался из текущего src; Windows dependency environment и scheduled child
+использовали существующий native venv. Это не новый installed-wheel отчёт.
+JUnit: `C:\Users\vladz\AppData\Local\Temp\acpgw-native-wizard-task-full-results.xml`.
+Скрипт: `/tmp/acpgw-native-wizard-task-full.py`. Внешние Hermes/model/Telegram
+не использовались; тесты подключаются только к закрытому loopback endpoint.
+
+Полная source регрессия: **1000 passed / 23 skipped**, 144.12 s; 23 skips:
+19 opt-in native + 4 installed-Hermes compatibility. Ruff check/format и diff
+check прошли. Consolidated acceptance runner включает wizard tests и требует
+минимум 19 Scheduler cases; неполный прежний профиль не засчитывается.
+Roadmap, delivery plan и runbooks актуализированы. Следующие разработки:
+штатный service update lifecycle, оставшиеся CLI/status contracts и session
+journal/retention; финальная поставка и отдельная живая P4.8.5 остаются впереди.
+
+### 2026-10-13 — Dispatcher admission reservation перед service update
+
+Перед автоматическим stop выявлена граница: HTTP idle check сам по себе
+не запрещает следующему Telegram/CLI запросу стартовать между check и stop.
+Реализован первый обязательный слой managed update — maintenance reservation
+на общем GatewayCore event loop. Prepare допускается только без running jobs,
+pending approvals и in-flight session creation. Closing admission и idle check
+синхронны; queued new/submit повторяют check после conversation lock. Creation
+counter освобождается при completion/error/cancellation. Reservation не отменяет
+работу, не решает approval и не меняет active logical dialogue.
+
+Owner API: GET /maintenance, POST /maintenance/prepare, POST /maintenance/resume;
+owner/loopback security действует на все маршруты. Неподходящий/stale token и
+busy/reserved state дают 409; status/health показывают counters без token.
+CLI maintenance status/prepare/resume сохраняет opaque token в private
+maintenance.json выбранного data_dir, не печатает его и не overwrites existing
+reservation. Save failure после prepare пытается освободить только свой reserve;
+resume failure оставляет token для retry. Явный owner resume --force доступен
+для lost response/token/stale file; это сброс admission, не force kill.
+Reservation process-local, restart открывает новый процесс; update пока не
+использует gate и по-прежнему требует stopped processes/service preflight.
+
+Тесты: core races создания/queued requests, pending human approval, running turn,
+CLI token privacy/persistence failure/retry/recovery, owner auth и API status.
+Профиль: **39 passed** на Linux; тот же current-source профиль в native Windows:
+**39 passed**, 15.93 s. Windows ACL проверялись на private temporary files;
+Scheduler/Hermes/model/Telegram не использовались. JUnit:
+`C:\Users\vladz\AppData\Local\Temp\acpgw-native-maintenance-results.xml`;
+скрипт `/tmp/acpgw-native-maintenance-tests.py`.
+
+Настоящий изолированный Linux source CLI + loopback daemon smoke прошёл
+status/prepare/duplicate refusal/resume/owner recovery с private token и без его
+вывода. Evidence: `/tmp/acpgw-maintenance-cli-s95vczvg/report.json` и daemon.log.
+Демон завершён штатно; рабочие службы и package installation не менялись.
+Полная source регрессия: **1017 passed / 23 skipped**, 144.50 s; Ruff check/format
+и diff check прошли. Native profile добавлен в consolidated runner следующего
+wheel; прежняя installed-wheel приёмка не обновлялась.
+
+Документация: docs/setup/maintenance.md, distribution, roadmap и delivery plan;
+сценарий приёмки добавлен отдельно в P4.8.5. Далее требуется связать reservation
+с updater/worker и service state snapshot/restore. У connector нет готового
+контракта quiescence для неизвестного внешнего turn: dispatcher idle не доказывает
+idle Hermes после disconnect. Эта проверка нужна перед автоматическим stop
+connector. Полный автоматический service update не объявляется завершённым.
+
+### 2026-10-13 — Hermes connector activity и local maintenance reservation
+
+Добавлены maintenance --role connector status/prepare/resume без dispatcher
+owner credential. Приватный local IPC с instance/request IDs, expiry и
+сериализацией CLI callers. Status сверяет process lock, runtime instance и
+свежий heartbeat; stale/missing/mismatched record даёт unknown, свободный lock
+даёт stopped. Idle snapshot сам по себе не является разрешением stop.
+Prepare на event loop проверяет managers вместе и закрывает admission:
+новые streams и new/load/prompt в старых streams отклоняются до внешнего Hermes.
+Resume возвращает те же idle attachments/dialogues. Reservation token хранится
+в connector-maintenance.json, не печатается и не попадает в status.
+
+Hermes manager считает pending RPC/approvals, running/uncertain sessions и
+initialization. Потеря attachment с owned sessions/requests фиксирует sticky
+uncertainty до завершения manager lifetime; очистка maps и explicit new engine
+не создают ложное idle proof. Quarantine после pending drop продолжает блокировать
+prepare даже после позднего результата. Не-Hermes profiles обозначаются
+unsupported и блокируют prepare. Явный resume --force сбрасывает reservation,
+но не снимает uncertainty. Старые ручные service stop semantics сохранены.
+
+Activity/IPC watcher интегрирован в настоящий connector lifecycle; graceful
+shutdown удаляет heartbeat перед освобождением process lock. Общий stop record
+остался совместимым по размеру/формату. Новый watcher не отвечает на approvals,
+не отправляет prompts и не останавливает внешний Hermes.
+
+Проверки: Linux manager/IPC/graceful/commands subset **38 passed**. Native
+current-source manager/IPC/graceful профиль: **26 passed**, 45.16 s; current
+manager/IPC выполнялся из src, Windows subprocess использовал существующий
+native venv. Это не новая installed-wheel CLI приёмка. JUnit:
+`C:\Users\vladz\AppData\Local\Temp\acpgw-native-connector-maintenance-results.xml`;
+скрипт `/tmp/acpgw-native-connector-maintenance-tests.py`.
+Linux настоящий connector CLI + WS + fake Hermes: status/prepare/resume,
+отказ busy prepare, отказ prompt при reserve, тот же session после resume,
+owner recovery и graceful exit 0. Evidence:
+`/tmp/acpgw-connector-maintenance-cli-qy5ocgeh/report.json`. Реальный Hermes,
+Telegram, VPS, рабочие Scheduler tasks и package update не использовались.
+
+Полная source регрессия: **1030 passed / 23 skipped**, 145.64 s; Ruff check/format
+и diff check прошли. Runner дополнен IPC tests, документы/roadmap/приёмочная
+матрица актуализированы. Теперь имеются независимые reservations dispatcher и
+Hermes connector; общий updater coordinator с service enabled/running snapshot,
+disable/stop, verified update/rollback и восстановлением состояния ещё открыт.
+Session journal/reconciliation/retention, CLI audit, финальная поставка и живая
+P4.8.5 остаются отдельными незавершёнными блоками.
+
+### 2026-10-13 — Linux service update coordinator и source-cache refresh
+
+Добавлен opt-in update --with-services (и --service-role gateway/connector).
+Работает только для Linux/systemd и одной selected owned unit с теми же
+installation/config/env. Saved role выбирает connector либо gateway; явный role
+разрешён. Windows пока отказывает до изменений; plain update сохраняет прежнюю
+ручную эксплуатацию. Checkout scripts передают новые флаги без повторного setup.
+
+Stdlib coordinator копируется вне uv tool environment и запускается base Python.
+Read-only source probe проверяет unit ownership, interpreter/config/env prefix,
+стабильные active/enabled states и MainPID. Если service running, резервирует
+admission; затем disable/stop, проверка stopped/PID 0 и existing guarded updater.
+После update либо его package/SQL rollback восстанавливает исходные enabled/
+running combinations и проверяет запуск ранее running service. Unit definition
+не переписывается: изменение definition/PID блокирует автоматические действия.
+Busy reservation оставляет службу/пакет без изменений. Stop failure пытается
+resume того же процесса; force kill не применяется. Service-start failure после
+verified package не вызывает второй автоматический rollback поверх новых jobs.
+
+Отдельный coordinator lock сериализует cycle с normal internal mutations;
+унаследованный descriptor допускает только собственный inner updater. Lock
+живёт вне заменяемого окружения, через exec/handoff. Inner package result
+не засчитывается как успех общего цикла: update --status предпочитает pending
+service result, после восстановления сообщает окончательный result. Failure
+оставляет private coordinator plan и recovery files. Внешние uv/systemctl
+операции этот lock не соблюдают. Другие active services/foreground processes
+по-прежнему блокируют замену пакета существующими preflight/lease.
+
+Во время real smoke обнаружен uv source-cache defect: первая установка checkout
+с неизменной version 0.1.0 взяла старый cached build (CLI без новых команд).
+Кейс не засчитан; fake daemon остановлен. Fresh checkout install и explicit
+source internal update теперь используют --refresh-package acp-gateway;
+locked dependencies остаются прежними. Включён regression assertion на refresh.
+Это исправление важно и для Git-копии с текущими исходниками без version bump.
+
+Профиль после исправления: **42 passed**. Full regression до cache fix:
+1044/23; после fix **1044 passed / 23 skipped**, 141.08 s. Ruff check/format и
+diff check прошли. Native Windows coordinator не заявляется реализованным.
+
+Real isolated uv tool + real dispatcher + fake systemctl smoke прошёл managed
+source update, invalid-wheel install failure/inner rollback, daemon restart и
+восстановление enabled/running. Config/env, computer key и registry сохранены.
+Evidence `/tmp/acpgw-managed-update-x40o6_fp/report.json`, operations.log,
+daemon.log и private recovery records; final fake state enabled=false/pid=0.
+Script `/tmp/acpgw-smoke-managed-update.py`. Первая stale-cache попытка:
+`/tmp/acpgw-managed-update-utjt5rsg`, также stopped/disabled после cleanup.
+Настоящие systemd units/user services хоста, Telegram и Hermes не затронуты.
+Изолированные tool/config/recovery directories сохранены для диагностики.
+Это не настоящий systemd acceptance, не новый опубликованный release и не
+Windows package/service update. Runbooks/roadmap/delivery plan актуализированы.
+
+Остаток: Windows Task Scheduler coordinator, настоящий systemd/uv lifecycle
+acceptance, session journal/reconciliation/retention, CLI audit и финальная
+поставка/живой P4.8.5. P4.8.4 остаётся IN PROGRESS.
+
+## 2026-10-13 — P4.8 Windows Task Scheduler update coordinator
+
+Реализован source `update --with-services` для Windows connector task. Внешний
+stdlib coordinator переживает замену окружения: сохраняет enabled/running,
+нормализованное определение задачи, control ID и process instance, резервирует
+idle connector, делает graceful disable, ждёт завершения package helper и
+восстанавливает прежнее состояние после update или package rollback. Все четыре
+сочетания enabled/running сохраняются отдельно, включая disabled-but-running.
+Несовпадение определения/instance, busy или чужая задача запрещают изменения.
+Force kill, replay и автоматический повторный rollback после нового запуска
+не добавлены. Config/env/data должны совпадать с owned task.
+
+Private marker, coordinator lock и случайный proof допускают собственный inner
+updater и блокируют параллельную maintenance. Stale proof без удерживаемого lock
+отклоняется. Нормальный Windows CLI возвращает queued и durable result path;
+checkout update.ps1 ждёт полный внешний цикл. Inner queued не считается успехом.
+Private plan и recovery files сохраняются при ошибке. Coordinator ждёт выхода
+исходного процесса, прежде чем заменять файлы пакета. Проверка установленным
+интерпретатором завершается до mutation; внешний helper использует копии stdlib
+кода и Scheduler script вне заменяемого окружения.
+
+Первый нативный прогон выявил WinError 206: EncodedCommand превысил Windows
+command-line limit. Task при этом не создавался. Исправлено сжатым gzip/base64
+bootstrap; динамические параметры по-прежнему идут JSON через stdin. Regression
+проверяет восстановление исходного script и длину команды. Повторный native
+контракт всех четырёх состояний: **4 passed**, 28.60 s.
+
+Полная source регрессия: **1055 passed / 27 skipped**, 155.83 s; skips —
+23 Windows opt-in и 4 installed-Hermes compatibility. Focused профиль:
+**58 passed**. Native Windows source профиль: **49 passed**, 140.46 s, включая
+все **23 Scheduler cases**, Windows coordinator unit cases и service tests.
+JUnit: `C:\Users\vladz\AppData\Local\Temp\acpgw-native-windows-update-full.xml`.
+Script `/tmp/acpgw-native-windows-update-full.py`. Временные tasks удалены fixtures.
+Consolidated acceptance runner теперь требует все 23 Scheduler cases.
+
+Повторён настоящий isolated Linux uv tool + dispatcher + fake systemctl smoke:
+update и invalid-wheel rollback прошли, daemon/enabled/running восстановлены,
+env/key/enrollment registry сохранены. Evidence:
+`/tmp/acpgw-managed-update-2lhpyyqn/report.json`, operations.log, daemon.log;
+cleanup завершён enabled=false/pid=0. Настоящий systemd хоста не затронут.
+
+Native Windows профиль использует текущие исходники для manager/контракта,
+но scheduled child запускается из прежнего native venv. Это не полный цикл
+обновления свежего установленного uv-пакета: он остаётся отдельным P4.8.5.
+Новый release не опубликован. Production task, реальные Hermes model/tools,
+Telegram и настройки пользователя не изменялись. Runbooks, roadmap и delivery
+plan актуализированы. P4.8.4 остаётся IN PROGRESS: session in-flight journal /
+reconciliation / retention, CLI audit; затем итоговая поставка и отдельная
+пакетная/живая приёмка Linux VPS и двух Windows connectors.
+
+## 2026-10-13 — P4.8 управление провайдером и моделью до релиза
+
+Владелец согласовал включение управления провайдером/моделью в текущий трэк,
+обязательно до финальной сборки и пользовательского тестирования. Добавлен
+`docs/items/hermes-model-control.ru.md`; delivery plan содержит отдельный пункт
+перед финальной поставкой, roadmap отмечает IN PROGRESS. Установки и проверки
+по-прежнему отдельный P4.8.5 с разделением агент/пользователь.
+
+Зафиксированы show/list/set для текущего чата, отдельный default новых диалогов
+диспетчера в owner/workspace/connector/profile scope, общий core/API для CLI и
+Telegram. Credentials остаются на хосте. Нельзя скрытно менять chat, общий Desktop
+profile, replay mutation или показывать желаемую модель как подтверждённую.
+Busy/maintenance/uncertain и stale selection блокируют операцию; upstream
+confirmation требует явного решения с привязкой к точной операции.
+
+Проверены исходники установленного Windows Hermes 0.21.6: `model.options`,
+`config.set key=model` с live session ID, parser `--session`, setter и switch
+request. Прямой импорт resolver из Linux упёрся в отсутствующий ruamel dependency;
+зависимости Hermes и его installation не менялись. Вместо импорта provider/config
+modules добавлен stdlib compatibility lab `scripts/spike_hermes_models.py`:
+выбранные реальные определения извлекаются через AST, импорты ограничены,
+resolver/apply/persistence подменены синтетическими hooks.
+
+Установлено: idle handler вызывает switch; busy сохраняет pending и deferred;
+compute-host делает это даже idle. Confirmation не ставит switch в pending.
+Sessionless model set отвергается 4001. Явный --session блокирует глобальную
+persistence даже рядом с --global. Это реальные parser/handler branches,
+не выполнение настоящего model switch, catalogue или проверки credentials.
+Fixture `tests/fixtures/hermes/0.21.6/models.json` содержит hashes трёх источников.
+
+Opt-in integration: **1 passed**, 0.14 s с HERMES_MODELS_REPO. Тот же stdlib lab
+исполнен native Windows Python; report
+`C:\Users\vladz\AppData\Local\Temp\acpgw-model-contract.json` совпал с Linux fixture,
+включая hashes. При сравнении исправлена только платформенная запись ключей
+hash paths: as_posix вместо Windows backslashes. Ruff check и format прошли.
+Полный production suite в этой итерации не повторялся: runtime-код диспетчера /
+connector не менялся; последний полный результат 1055/27 остаётся историческим.
+Новый opt-in test без HERMES_MODELS_REPO пропускается.
+
+Следующий шаг: расширить contract/readback/pending tests и узкий adapter API,
+затем session manager/relay/core, persistent defaults и CLI/Telegram. Observer
+configuration mutation не получил. Финальный релиз остаётся после этих функций,
+session journal/reconciliation/retention и CLI audit. Live Hermes config, чаты,
+модели, инструменты и пользовательские службы в этой итерации не изменялись.
+
+## 2026-10-13 — P4.8 первый Hermes model driver layer
+
+Добавлены `adapters/hermes_models.py` и внутренние driver операции model_options /
+set_model. Доступ только к собственным live handles: точные profile/session IDs,
+key=model и сформированная строка --provider ... --session. Observer allowlist
+не расширена; arbitrary config/flags не доступны. Identifier validation исключает
+пробелы, controls, начальный дефис и injection. Каталог проецируется только в
+provider/model IDs; endpoints, keys и прочие поля не передаются дальше.
+
+Одновременная model operation даёт configuring и блокирует prompt/вторую операцию.
+Busy/uncertain/foreign отклоняются. Confirmation привязано к handle/target,
+одноразовое, пять минут; prompt/session.info/смена observed pair его инвалидируют.
+Timeout/cancel/invalid acknowledgement/RPC error переводят чат в uncertain без
+retry. Method-not-found сохраняет обычный чат, так как handler не выполнялся.
+
+Acknowledgement accepted отделено от observation. И immediate, и deferred
+selection остаются pending до свежего catalogue с совпадающей парой; deferred
+дополнительно ждёт завершения следующего собственного хода. Pending разрешает
+следующий prompt, но запрещает новый set и package maintenance. Manager idle
+check учитывает configuring и unresolved model activity. Identity чата сохраняется,
+resume/activate/replay не добавлены. Canonical/alias mismatch не снимает pending
+по догадке; дальнейший reconciliation остаётся открытым.
+
+Source inspection выявил: Hermes session.info может показывать pending pick
+вместо реально активной модели. Поэтому это событие не подтверждает switch.
+model.options строится по agent fields, а при отсутствии agent может возвращать
+profile default; readback публикуется как observation_source=model.options,
+без заявления applied/реального provider ответа. Этот контракт требует дальнейшей
+live/compute-host проверки. Runtime/API/CLI/Telegram controls пока не экспонированы.
+
+Focused driver/managed-stream/maintenance suite: **72 passed**, 2.79 s до
+финального добавления состояния configuring. Native Windows source driver +
+managed-stream wire профиль после него: **61 passed**, 15.02 s, включая две
+реальные loopback WS проверки immediate/deferred на fake Hermes. JUnit:
+`C:\Users\vladz\AppData\Local\Temp\acpgw-native-model-adapter.xml`;
+launcher `/tmp/acpgw-native-model-adapter.py`. Проверены same chat identity,
+maintenance refusal/resume, pending/readback, injection, stale/one-use confirmation,
+unknown outcome, unsupported method и неизменный observer access.
+Настоящий Hermes/provider/model/tools, пользовательские tasks и настройки не
+затрагивались. Model-selection handlers fake backend синтетические.
+
+Полная регрессия после configuring: **1079 passed / 28 skipped**, 152.79 s;
+23 native opt-in + 5 installed-Hermes compatibility skips. Ruff check/format:
+214 files, clean; diff check прошёл с прежними CRLF notices. Полный suite
+не пересекался с изменениями source/tests во время исполнения.
+
+Требования и текущий scope актуализированы в model-control/delivery plan/roadmap.
+Следующий слой: managed-stream owner/maintenance/detach guards, transport и relay,
+core/API, persistent scoped defaults/observed state и Telegram/CLI. Сборка релиза
+по-прежнему после завершения model functionality и прочих доработок P4.8.
+
+## 2026-10-13 — P4.8 model control через managed stream, relay, core и owner API
+
+Добавлен общий узкий ACP extension contract `agents/model_control.py`:
+_acpgw/model_options и _acpgw/model_set, capability metadata modelControl=1.
+Это Gateway extension, не стандартный raw Hermes config endpoint. Policy
+проверяет attached session, exact fields, identifier/token shapes и concurrency;
+keys/endpoints/raw flags не принимает. Dispatcher client повторно валидирует и
+проецирует ответы. Observer allowlist не расширена.
+
+Hermes ACP bridge и session manager передают show/list/set. Manager проверяет
+stream ownership, maintenance и pending operations, учитывает configuring /
+unresolved model activity. Drop во время set блокирует handle даже при позднем
+ack; read-only drop не делает его permanently uncertain. Detach инвалидирует
+confirmation, поздний confirmation закрытому stream тоже не получает authority.
+AgentClient проверяет capability/known binding, сериализует model operations с
+prompt, сохраняет model unknown outcome отдельно от prompt cancellation и не
+снимает его reconnect/load. Нет retry mutation, adoption/cold resume/нового чата.
+Явный отказ до исполнения и method-not-found не отнимают обычный доступ к чату.
+
+Core предоставляет общие model_options/set_model с conversation ownership,
+активным row ID, expected selection revision, busy job и maintenance guards.
+Admission callback повторно проверяет revision после connection/load preflight,
+непосредственно перед отправкой. Confirmation связана также с conversation,
+row ID/provider/model/revision и не переживает switch away/back или prompt.
+Если выбор изменился после отправки, ответ указывает исходный dialogue_id,
+selection_revision и selection_changed, не перенаправляя результат в новый чат.
+Maintenance status/prepare учитывают model_operations.
+
+Owner API: GET /sessions добавляет active_revision; GET /sessions/{id}/models;
+POST /sessions/{id}/model с обязательной expected_revision, provider/model и
+optional confirmation_token. Только owner credential и owned active dialogue;
+actor/workspace/key/endpoint поля не принимаются. Добавлен SelectionChanged,
+отображаемый в HTTP 409 (общий GatewayError давал 400 в первом API тесте).
+CLI/Telegram команды и persistent defaults/model journal пока не добавлены.
+
+Focused transport/policy/driver/core/API/maintenance профиль: **195 passed**,
+7.82 s в Linux и **195 passed**, 42.60 s в native Windows на текущих исходниках.
+Включены настоящие loopback WS relay и host RPC с fake Hermes, ASGI owner API,
+scope/auth/revision/stale confirmation, cancellation/read-only recovery и
+mutation quarantine. Native evidence:
+`C:\Users\vladz\AppData\Local\Temp\acpgw-native-model-relay-api.xml`;
+launcher `/tmp/acpgw-native-model-relay-api.py` с source import и без bytecode writes.
+Consolidated Windows acceptance selection дополнена protocol/policy unit tests.
+Это source profile, не новый установленный wheel и не настоящий provider switch.
+Real Hermes, production tasks, Telegram и secrets пользователя не изменялись.
+
+Полная source regression после всех code edits: **1113 passed / 28 skipped**,
+161.97 s; skips — 23 native Scheduler и 5 installed-Hermes compatibility.
+Ruff check/format прошли (216 files), diff check с прежними CRLF notices.
+Во время полной регрессии source/tests не редактировались.
+
+Model-control spec, delivery plan и roadmap актуализированы. Дальше: scoped
+persistent defaults/observed/pending state, unknown-outcome reconciliation,
+CLI/Telegram controls и оставшиеся P4.8 session journal/retention/CLI audit;
+финальная поставка и отдельная установка/живая приёмка остаются после функций.
+
+## 2026-10-13 — P4.8 checkpoint для возвращения после перерыва
+
+По просьбе владельца сохранена отдельная точка продолжения:
+[docs/items/p48-resume.ru.md](docs/items/p48-resume.ru.md). Документ содержит
+целевую схему и принятые решения, актуальное состояние source/API, ограничения
+Hermes/restore/readback/confirmation, точную оставшуюся очередь и карту кода.
+Первый следующий этап: persistent model state/defaults, затем CLI/Telegram
+поверх общего core/API с target/revision/route guards и reconciliation.
+Далее session journal/retention, CLI audit, финальная поставка и отдельный P4.8.5.
+
+Добавлены ссылки из roadmap, delivery plan и model-control spec. Зафиксированы
+1113/28 source и 195 native/focused результаты, граница fake/live/installed-wheel,
+команды повторной проверки и temp evidence paths с предупреждением об их
+непостоянстве. Отдельно отмечено, что код в рабочем дереве, commit/tag/release
+этим checkpoint не создаются; старый preview не равен текущим исходникам.
+
+Сценарии установки и приёмки по-прежнему отдельно от функциональной очереди,
+с разделением действий агента и пользователя. На этом шаге изменены только
+документы; runtime/config/services не менялись, тесты программы не повторялись.
+Проверены локальные ссылки checkpoint и git diff --check.
+
+## 2026-10-13 — P4.8 durable model state после возврата к разработке
+
+Продолжена сохранённая очередь P4.8 с checkpoint. Найденный пробел: model unknown
+и pending существовали в памяти, поэтому dispatcher restart мог потерять fence.
+Миграция 0006 и storage/models.py теперь сохраняют последнее состояние каждой
+owned session: requested, observed, revision, intent/pending/unknown и outcome.
+Intent записывается после preflight до отправки; незавершённый intent при старте
+становится unknown. Ранее потерянные in-memory intents миграция не восстанавливает.
+
+Принято консервативное reconciliation: совпавший readback снимает только pending,
+а deferred также требует завершённого собственного хода. Unknown не снимается
+каталогом и не допускает prompts/повторного set; unresolved states блокируют
+maintenance. Это latest-state checkpoint, не история всех событий. Безопасный
+явный unknown reconciliation, scoped defaults и bounded session journal остаются
+в очереди. Confirmation authority/token/message и raw errors не сохраняются.
+GET /sessions/{id}/model-state читает evidence без сети с owner/conversation guard.
+
+Добавлены 12 cases: durable intent до ответа хоста, cancel/unknown, restart
+pending/intent, отсутствие mutation replay, preflight refusal, method-not-found,
+deferred own-turn/readback, confirmation без persistence и offline owner API.
+Первый полный прогон выявил три старых ожидания schema 5; обновлены на 6,
+migration/enrollment/cursor/daemon профиль прошёл 39 cases. Финальный полный
+прогон: **1125 passed / 28 skipped**, 159.85 s; focused state/storage/live API:
+**62 passed**, 5.32 s. Ruff check/format: 219 files, clean; diff check и локальные
+ссылки checkpoint/spec/delivery/roadmap проверены. Source/tests во время полного
+финального прогона не редактировались.
+
+Работа и проверки выполнены в WSL. Обычный sandbox launcher Codex ещё выдаёт
+setup refresh error; WSL команды выполнялись через разрешённый внешний запуск.
+Real Hermes/provider/config/services и Telegram не затрагивались. Native Windows
+и installed-package результаты прежних записей исторические, новую migration/state
+на Windows в этой итерации не проверяли. Commit/tag/release не создавались.
+P4.8 остаётся IN PROGRESS; ближайший этап — scoped defaults, затем CLI/Telegram
+и явное unknown reconciliation. Полный контракт и ограничения — в
+[model-control spec](docs/items/hermes-model-control.ru.md).
+
+## 2026-10-13 — P4.8 функциональная очередь доведена до acceptance candidate
+
+Владелец попросил добить кодовый трек перед реальной установкой. Подтверждены
+наличие VPS адресов IP:port/domain-path, Telegram bot и установленного native
+Hermes на текущем Windows; значения/credentials ещё не передавались и живой
+маршрут этой итерацией не устанавливался. Первый live сценарий — этот хост;
+второй connector сохраняется в матрице изоляции.
+
+Реализованы scoped defaults общего owner/workspace/route/computer/alias и
+фактического Hermes profile. Default не вызывает RPC при настройке, не меняет
+Desktop profile/старые чаты. Его применение к новому чату явно session-scoped;
+dialogue и required-default gate атомарны, failed/confirmation default не даёт
+prompt на неожиданной модели. CLI/Telegram model show/list/state/set/default/
+reconcile используют общий core/API; mutation требует ID/revision, route guard
+проверяется после preflight. Каталоги Telegram ограничены по размеру.
+
+Intent и operation ID теперь атомарны. _acpgw/model_recover читает ровно один
+сохранённый terminal ACK того же live manager/binding/operation; known model-loss
+fence снимается только при idle driver. После него всё ещё нужна observation.
+Никакой setter replay/перенос confirmation/cold resume/prompt-loss authority.
+Unknown upstream failure/missing outcome остаются fenced. Canonical model берётся
+только из проверенного ACK, original requested сохраняется. Known refusal API
+исправлен с общего HTTP 503 на 409.
+
+Добавлен bounded connector journal: 128 events/handle, 512 chars/answer chunk,
+отдельные terminal prompt/model outcomes и sequence gaps; prompts/tool args/
+approval tokens/raw host errors не хранятся. Late prompt result записывается
+для диагностики без replay/unblock. Explicit connector-sessions list/journal/
+retire использует private instance-fenced IPC. Retire требует detached idle,
+отсутствие pending model/permissions/requests; забывает только local attachment,
+не upstream chat. Автоматического eviction нет. Большой Unicode IPC response
+проверен, лимит response поднят отдельно от небольшого request/status.
+
+Полный WSL source suite: **1152 passed / 28 skipped**, 183.75 s; +27 cases к
+1125/28 предыдущего checkpoint. Skips: 23 Scheduler opt-in и 5 installed-Hermes
+compatibility. Native Windows source профиль: **287 passed / 2 skipped**,
+90.77 s, skips POSIX permissions. Первый native launcher не имел main guard и
+рекурсивно запускал pytest в spawn children; исправлен только temp launcher,
+повтор прошёл. JUnit: /tmp/acpgw-p48-final-source.xml и
+C:/Users/vladz/AppData/Local/Temp/acpgw-native-p48-final.xml.
+Ruff check/format: 220 files, clean. Все 272 non-ignored files прошли secrets
+scanner; ни config/env/keys, ни пользовательские services не изменялись.
+
+Версия исходников — 0.2.0rc1, uv.lock обновлён offline. Windows acceptance runner
+дополнен model state/CLI cases. Подготовлен docs/setup/p48-acceptance.md под
+IP/domain-path, бот, CLI обеих ролей, Hermes/connector per-user logon и второй PC.
+Кодовая часть model control помечена READY как кодовая основа; весь P4.8 остаётся
+IN PROGRESS до P4.8.5. Следующий шаг — clean Git ref, wheel/sdist/bundle/checksums
+и installed-wheel проверки; затем отдельная живая установка/приёмка.
+
 ## Незакрытые вопросы
 
 - **Автотесты TLS/SSE** — наблюдавшиеся причины и исправления тестового стенда

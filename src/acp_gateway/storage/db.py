@@ -134,6 +134,12 @@ class Store:
 
         return ComputerRegistry(self._conn)
 
+    @cached_property
+    def models(self):
+        from acp_gateway.storage.models import ModelStateStore
+
+        return ModelStateStore(self._conn)
+
     def close(self) -> None:
         self._conn.close()
 
@@ -193,9 +199,20 @@ class Store:
     # ---------------------------------------------------------------- sessions
 
     def add_session(
-        self, conversation: Conversation, acp_session_id: str, cwd: str, *, activate: bool = True
+        self,
+        conversation: Conversation,
+        acp_session_id: str,
+        cwd: str,
+        *,
+        activate: bool = True,
+        binding=None,
+        expected_active_revision: int | None = None,
+        model_default_required: dict | None = None,
     ) -> SessionRecord:
         now = _ts(utcnow())
+        from acp_gateway.agents.bindings import session_binding
+
+        binding = session_binding(binding)
         with self._transaction():
             cursor = self._conn.execute(
                 "INSERT INTO sessions (channel, conversation_key, agent, acp_session_id, cwd,"
@@ -211,7 +228,16 @@ class Store:
                 ),
             )
             session_id = cursor.lastrowid
-            if activate:
+            if model_default_required is not None:
+                self.set_channel_state(
+                    "model_default_required", str(session_id), model_default_required
+                )
+            if binding is not None:
+                self.set_channel_state("agent_session_binding", str(session_id), binding)
+            if activate and (
+                expected_active_revision is None
+                or self.active_revision(conversation) == expected_active_revision
+            ):
                 self._set_active(conversation, session_id)
         return self._require(self.session(session_id))
 
@@ -253,6 +279,16 @@ class Store:
     def set_active(self, conversation: Conversation, session_id: int) -> None:
         with self._transaction():
             self._set_active(conversation, session_id)
+
+    def active_revision(self, conversation: Conversation) -> int:
+        """Durable selection generation; explicit re-selection counts as intent."""
+        if self.schema_version < 3:
+            return 0  # Legacy schema construction used by migration tooling.
+        key = json.dumps(self._key(conversation), separators=(",", ":"))
+        value = self.channel_state("active_selection_revision", key, 0)
+        if type(value) is not int or value < 0:
+            raise ValueError("invalid active dialogue selection revision")
+        return value
 
     def touch_session(self, session_id: int) -> None:
         self._conn.execute(
@@ -389,12 +425,24 @@ class Store:
         return self._conn
 
     def _set_active(self, conversation: Conversation, session_id: int | None) -> None:
+        if session_id is not None:
+            row = self._conn.execute(
+                "SELECT 1 FROM sessions WHERE id = ? AND channel = ? "
+                "AND conversation_key = ? AND agent = ?",
+                (session_id, *self._key(conversation)),
+            ).fetchone()
+            if row is None:
+                raise ValueError("this conversation does not own that dialogue")
+        revision = self.active_revision(conversation)
         self._conn.execute(
             "INSERT INTO conversations (channel, conversation_key, agent, active_session_id)"
             " VALUES (?, ?, ?, ?) ON CONFLICT (channel, conversation_key, agent)"
             " DO UPDATE SET active_session_id = excluded.active_session_id",
             (*self._key(conversation), session_id),
         )
+        if self.schema_version >= 3:
+            key = json.dumps(self._key(conversation), separators=(",", ":"))
+            self.set_channel_state("active_selection_revision", key, revision + 1)
 
     @staticmethod
     def _require[R](record: R | None) -> R:
@@ -406,8 +454,7 @@ class Store:
     def _key(conversation: Conversation) -> tuple[str, str, str]:
         return (conversation.channel, conversation.key, conversation.agent)
 
-    @staticmethod
-    def _session(row: sqlite3.Row) -> SessionRecord:
+    def _session(self, row: sqlite3.Row) -> SessionRecord:
         return SessionRecord(
             id=row["id"],
             conversation=Conversation(row["channel"], row["conversation_key"], row["agent"]),
@@ -416,6 +463,9 @@ class Store:
             title=row["title"],
             created_at=datetime.fromisoformat(row["created_at"]),
             last_used_at=datetime.fromisoformat(row["last_used_at"]),
+            binding=self.channel_state("agent_session_binding", str(row["id"]))
+            if self.schema_version >= 3
+            else None,
         )
 
     @staticmethod

@@ -95,6 +95,8 @@ def test_update_uses_named_requirement_and_holds_lease(uv_tool, monkeypatch):
             "--python",
             "3.12",
             "acp-gateway @ https://example.com/acp_gateway-0.2.0-py3-none-any.whl",
+            "--refresh-package",
+            "acp-gateway",
         ]
     ]
 

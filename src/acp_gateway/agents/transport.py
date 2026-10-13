@@ -91,13 +91,14 @@ class PinnedWebSocketTransport:
         headers: dict[str, str],
         pin: TlsPin | None,
         open_timeout: float = 15,
+        max_message_bytes: int = MAX_MESSAGE_BYTES,
     ) -> PinnedWebSocketTransport:
         try:
             connection = await _NoRedirectConnect(
                 url,
                 additional_headers=headers,
                 ssl=pin.context if pin else None,
-                max_size=MAX_MESSAGE_BYTES,
+                max_size=max_message_bytes,
                 open_timeout=open_timeout,
                 # The secret and the TLS pin are for a direct connection to the
                 # configured endpoint; environment proxies must not see them.

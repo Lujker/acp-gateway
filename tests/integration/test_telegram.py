@@ -189,7 +189,8 @@ async def test_random_update_id_after_inactive_week_and_disconnected_approver(te
 async def test_restart_preserves_chat_session_and_suppresses_replayed_command(telegram, tmp_path):
     core, channel, session, _ = telegram
     await feed(channel, 1, "/start")
-    await feed(channel, 2, "say pong")
+    await feed(channel, 2, "/new")
+    await feed(channel, 3, "say pong")
     await eventually(lambda: any(m.text == "pong" for m in session.sent))
     profile = core.agent("work").profile
     await core.close()
@@ -206,9 +207,9 @@ async def test_restart_preserves_chat_session_and_suppresses_replayed_command(te
     try:
         await reopened.start()
         await eventually(lambda: fresh_channel.connected)
-        await feed(fresh_channel, 2, "say pong")
-        assert not fresh_session.sent
         await feed(fresh_channel, 3, "say pong")
+        assert not fresh_session.sent
+        await feed(fresh_channel, 4, "say pong")
         await eventually(lambda: any(m.text == "pong" for m in fresh_session.sent))
         conv = Conversation("telegram", str(OWNER), "work")
         assert len(reopened.sessions(conv)) == 1
@@ -251,17 +252,18 @@ async def test_chat_approval_stays_private_to_its_owner(telegram):
     core, channel, session, _ = telegram
     await feed(channel, 1, "/start", user=OWNER)
     await feed(channel, 2, "/start", user=OTHER)
-    await feed(channel, 3, "run exactly: echo hi .", user=OTHER)
+    await feed(channel, 3, "/new", user=OTHER)
+    await feed(channel, 4, "run exactly: echo hi .", user=OTHER)
     await eventually(lambda: bool(channel._buttons))
     assert {chat for chat, _ in channel._buttons} == {OTHER}
     assert not any(m.reply_markup and m.chat.id == OWNER for m in session.sent)
-    await feed(channel, 4, "/approvals", user=OWNER)
+    await feed(channel, 5, "/approvals", user=OWNER)
     assert session.sent[-1].text == "No pending approvals."
     button_message = next(m for m in session.sent if m.reply_markup and m.chat.id == OTHER)
     assert "From: this chat" in button_message.text
     await click(
         channel,
-        5,
+        6,
         button_message,
         button_message.reply_markup.inline_keyboard[0][0].callback_data,
         user=OTHER,
@@ -359,3 +361,30 @@ async def test_agent_command_lists_available_routes_without_selection(telegram):
     await feed(channel, 1, "/agent")
     assert "work: work" in session.sent[-1].text
     assert "Select with /agent ALIAS" in session.sent[-1].text
+
+
+async def test_message_without_selected_dialogue_requires_explicit_new(telegram):
+    core, channel, session, server = telegram
+    await feed(channel, 1, "say pong")
+    assert "No active dialogue" in session.sent[-1].text
+    assert "/new" in session.sent[-1].text
+    assert server.log == []
+    assert core.sessions(Conversation("telegram", str(OWNER), "work")) == []
+
+
+async def test_failed_new_route_keeps_previous_route_and_active_dialogue(telegram, monkeypatch):
+    from acp_gateway.agents import AgentUnavailable
+
+    core, channel, session, _ = telegram
+    await feed(channel, 1, "/new work")
+    conversation = Conversation("telegram", str(OWNER), "work")
+    selected = core.active_session(conversation)
+
+    async def failed(*args):
+        raise AgentUnavailable("new target offline")
+
+    monkeypatch.setattr(core, "new_session", failed)
+    await feed(channel, 2, "/new other")
+    assert "offline" in session.sent[-1].text
+    assert core.store.channel_state(channel.namespace, f"agent:{OWNER}") == "work"
+    assert core.active_session(conversation).id == selected.id

@@ -1,4 +1,4 @@
-"""Linux/systemd user-service control, independent of the daemon's HTTP API."""
+"""User-service control, independent of the daemon's HTTP API."""
 
 import os
 import shutil
@@ -18,6 +18,7 @@ UNIT = "acp-gateway.service"
 MARKER = "# Managed by acpgw service install.\n"
 CONNECTOR_UNIT = "acp-gateway-connector.service"
 CONNECTOR_MARKER = "# Managed by acpgw service --role connector install.\n"
+GOOSE_MARKER = "# Managed by acpgw agents service.\n"
 
 
 def _unit(role):
@@ -112,10 +113,14 @@ def _owned(path: Path, role="gateway") -> None:
         raise ValueError(f"refusing to replace an unmanaged unit: {path}")
 
 
-def install(config: AppConfig, *, launch: ConnectorLaunch | None = None) -> int:
+def install(config: AppConfig, *, launch: ConnectorLaunch | None = None, windows_setup=None) -> int:
     role = "connector" if launch is not None else "gateway"
-    if sys.platform != "linux":
+    if sys.platform not in {"linux", "win32"}:
         raise ValueError("service install currently supports Linux/WSL with systemd only")
+    if sys.platform == "win32" and launch is None:
+        raise ValueError("Windows service install currently requires --role connector")
+    if windows_setup is not None and (sys.platform != "win32" or launch is None):
+        raise ValueError("Windows setup transaction requires a native connector")
     if config.config_path is None:
         raise ValueError("a persistent config file is required; run acpgw setup first")
     if config.env_file is None:
@@ -143,6 +148,12 @@ def install(config: AppConfig, *, launch: ConnectorLaunch | None = None) -> int:
     missing = config.missing_agent_secrets()
     if missing:
         raise ValueError("missing agent secrets: " + ", ".join(missing))
+    if sys.platform == "win32":
+        from acp_gateway.windows_service import install as install_windows
+
+        if windows_setup is not None:
+            return install_windows(config, launch, setup=windows_setup)
+        return install_windows(config, launch)
     # Resolve before writing: start must work outside the current shell/repository.
     content = render_unit(config.config_path, config.env_file, launch=launch)
     path = unit_path(role)
@@ -169,7 +180,13 @@ def install(config: AppConfig, *, launch: ConnectorLaunch | None = None) -> int:
     return 0
 
 
-def control(action: str, *, role="gateway") -> int:
+def control(action: str, *, role="gateway", force=False) -> int:
+    if sys.platform == "win32":
+        from acp_gateway.windows_service import control as control_windows
+
+        return control_windows(action, role=role, force=force)
+    if force:
+        raise ValueError("--force is supported only for Windows connector task stop operations")
     if sys.platform != "linux":
         raise ValueError("service control currently supports Linux/WSL with systemd only")
     unit = _unit(role)

@@ -34,6 +34,36 @@ async def api(tmp_path):
         yield client, core, cli
 
 
+async def test_maintenance_requires_owner_and_keeps_token_out_of_status(api):
+    client, core, _ = api
+    unauthorized = await client.post(
+        "/maintenance/prepare", headers={"Authorization": "Bearer mcp"}
+    )
+    assert unauthorized.status_code == 401
+    assert not core.maintenance_status()["reserved"]
+    prepared = await client.post("/maintenance/prepare")
+    assert prepared.status_code == 200
+    token = prepared.json()["token"]
+    assert (await client.post("/maintenance/prepare")).status_code == 409
+    for route in ("/maintenance", "/health"):
+        response = await client.get(route)
+        assert token not in response.text
+        state = response.json() if route == "/maintenance" else response.json()["maintenance"]
+        assert state["reserved"]
+    assert (await client.post("/maintenance/resume", json={"token": "0" * 32})).status_code == 409
+    assert (await client.post("/maintenance/resume", json={"token": token})).status_code == 200
+    assert not core.maintenance_status()["reserved"]
+    assert (await client.post("/maintenance/resume", json={"token": token})).status_code == 409
+
+
+async def test_owner_can_recover_lost_maintenance_token(api):
+    client, core, _ = api
+    await client.post("/maintenance/prepare")
+    assert (await client.post("/maintenance/resume", json={"force": "yes"})).status_code == 422
+    assert core.maintenance_status()["reserved"]
+    assert (await client.post("/maintenance/resume", json={"force": True})).status_code == 200
+
+
 @pytest.mark.parametrize("auth", ["", "Bearer wrong", "Bearer mcp-credential", OWNER])
 async def test_owner_authentication_precedes_routes(api, auth):
     client, _, _ = api
@@ -183,7 +213,7 @@ def test_daemon_requires_separate_owner_credential(tmp_path):
 def test_second_daemon_is_blocked_and_lock_released(tmp_path):
     cfg = config(tmp_path, {"ACPGW_API_TOKEN": OWNER})
     with configured_app(cfg) as app:
-        assert app.state.core.store.schema_version == 5
+        assert app.state.core.store.schema_version == 6
         with pytest.raises(ValueError, match="another gateway daemon"), configured_app(cfg):
             pytest.fail("second daemon acquired the lock")
     with configured_app(cfg):

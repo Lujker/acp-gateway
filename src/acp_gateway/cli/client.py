@@ -178,8 +178,54 @@ def run(config: AppConfig, args) -> int:
         conv = {"agent": getattr(args, "agent", None), "thread": getattr(args, "thread", "default")}
         if command == "status":
             show_json(request(client, "GET", "/health"))
+        elif command == "maintenance":
+            from acp_gateway.cli.maintenance_mode import run as maintenance_mode
+
+            maintenance_mode(client, config, args)
         elif command == "computers":
             show_json(request(client, "GET", "/computers"))
+        elif command == "model":
+            params = {k: v for k, v in conv.items() if v is not None}
+            action = args.model_command
+            if action == "default":
+                if args.default_command == "set":
+                    result = request(
+                        client,
+                        "PUT",
+                        "/model-default",
+                        json=conv | {"provider": args.provider, "model": args.model},
+                    )
+                else:
+                    result = request(
+                        client,
+                        "DELETE" if args.default_command == "clear" else "GET",
+                        "/model-default",
+                        params=params,
+                    )
+            elif action == "reconcile":
+                result = request(
+                    client,
+                    "POST",
+                    f"/sessions/{args.session}/model-reconcile",
+                    json=conv | {"expected_revision": args.revision},
+                )
+            elif action == "set":
+                result = request(
+                    client,
+                    "POST",
+                    f"/sessions/{args.session}/model",
+                    json=conv
+                    | {
+                        "provider": args.provider,
+                        "model": args.model,
+                        "expected_revision": args.revision,
+                        "confirmation_token": args.confirmation_token,
+                    },
+                )
+            else:
+                suffix = "model-state" if action == "state" else "models"
+                result = request(client, "GET", f"/sessions/{args.session}/{suffix}", params=params)
+            show_json(result)
         elif command == "sessions":
             show_json(
                 request(

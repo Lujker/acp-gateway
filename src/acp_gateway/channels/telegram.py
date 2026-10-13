@@ -23,11 +23,16 @@ from acp_gateway.log import get_logger, redact_text, redact_value, register_secr
 from acp_gateway.storage import Conversation
 
 HELP = (
-    "Send a message to your agent.\n"
+    "Select an agent and create or select a dialogue before sending messages.\n"
     "/start, /help — help\n/agent — list agents\n/agent ALIAS — select agent\n"
     "/new [ALIAS] — new session\n/sessions — list sessions\n"
     "/switch ID — activate a session\n/status — connections and jobs\n"
     "/result JOB_ID — saved result\n/stop — cancel this chat's jobs\n"
+    "/model, /models — observed model and catalogue\n"
+    "/model state — saved evidence without reconnect\n"
+    "/model reconcile ID REVISION — inspect retained outcome, no retry\n"
+    "/model set PROVIDER MODEL ID REVISION [TOKEN] — select/confirm\n"
+    "/model default [PROVIDER MODEL | clear] — new-dialogue default\n"
     "/approvals — pending approval buttons\n"
     "Approvals offer allow once/reject once; permanent approval is unavailable."
 )
@@ -258,9 +263,15 @@ class TelegramChannel(Channel):
         if command in {"/start", "/help"}:
             await self._send(chat, HELP)
             return
-        if command in {"/agent", "/new"} and argument:
+        if command == "/agent" and argument:
             self.core.agent(argument)
             self.core.store.set_channel_state(self.namespace, f"agent:{chat}", argument)
+            route_revision = self.core.store.channel_state(
+                self.namespace, f"route_revision:{chat}", 0
+            )
+            self.core.store.set_channel_state(
+                self.namespace, f"route_revision:{chat}", route_revision + 1
+            )
         if command == "/agent":
             if argument:
                 await self._send(chat, f"Agent: {self._conversation(chat).agent}")
@@ -297,24 +308,106 @@ class TelegramChannel(Channel):
             if not pending:
                 await self._send(chat, "No pending approvals.")
             return
-        conv = self._conversation(chat)
-        if command == "/new":
+        conv = (
+            Conversation(self.name, str(chat), argument)
+            if command == "/new" and argument
+            else self._conversation(chat)
+        )
+        if command in {"/model", "/models"}:
+            route_revision = self.core.store.channel_state(
+                self.namespace, f"route_revision:{chat}", 0
+            )
+
+            def route_guard():
+                if (
+                    self._conversation(chat) != conv
+                    or self.core.store.channel_state(self.namespace, f"route_revision:{chat}", 0)
+                    != route_revision
+                ):
+                    raise GatewayError(
+                        "Agent route changed; refresh model settings before retrying."
+                    )
+
+            parts = argument.split()
+            if parts and parts[0] == "default":
+                if len(parts) == 1:
+                    result = self.core.model_default(conv)
+                elif parts[1:] == ["clear"]:
+                    result = self.core.clear_model_default(conv)
+                elif len(parts) == 3:
+                    result = self.core.set_model_default(conv, provider=parts[1], model=parts[2])
+                else:
+                    raise GatewayError("Use /model default [PROVIDER MODEL | clear].")
+            else:
+                active = self.core.active_session(conv)
+                if active is None:
+                    raise GatewayError("No active dialogue; use /new or /switch ID.")
+                revision = self.core.store.active_revision(conv)
+                if not parts and command in {"/model", "/models"}:
+                    result = await self.core.model_options(
+                        conv,
+                        dialogue_id=active.id,
+                        expected_revision=revision,
+                        admission=route_guard,
+                    )
+                elif (
+                    len(parts) == 3
+                    and parts[0] == "reconcile"
+                    and all(p.isascii() and p.isdecimal() for p in parts[1:])
+                ):
+                    result = await self.core.reconcile_model(
+                        conv,
+                        dialogue_id=int(parts[1]),
+                        expected_revision=int(parts[2]),
+                        admission=route_guard,
+                    )
+                elif parts == ["state"]:
+                    result = self.core.model_state(conv, active.id)
+                elif (
+                    len(parts) in {5, 6}
+                    and parts[0] == "set"
+                    and all(p.isascii() and p.isdecimal() for p in parts[3:5])
+                ):
+                    result = await self.core.set_model(
+                        conv,
+                        provider=parts[1],
+                        model=parts[2],
+                        dialogue_id=int(parts[3]),
+                        expected_revision=int(parts[4]),
+                        confirmation_token=parts[5] if len(parts) == 6 else None,
+                        admission=route_guard,
+                    )
+                else:
+                    raise GatewayError("Use /model set PROVIDER MODEL ID REVISION [TOKEN].")
+            if command == "/model":
+                result = {k: v for k, v in result.items() if k != "providers"}
+            encoded = json.dumps({"agent": conv.agent, **result}, ensure_ascii=False)
+            if len(encoded) > 10000:
+                encoded = (
+                    encoded[:10000] + "\nCatalogue truncated; use CLI model list for the full list."
+                )
+            await self._send(chat, encoded)
+        elif command == "/new":
             session = await self.core.new_session(conv)
+            # A failed creation must not silently change the selected route.
+            self.core.store.set_channel_state(self.namespace, f"agent:{chat}", conv.agent)
             await self._send(chat, f"New session: {session.id}")
         elif command == "/sessions":
             active = self.core.active_session(conv)
             lines = [
                 f"{s.id}{' *' if active and s.id == active.id else ''}: {s.title or s.cwd}"
+                + (
+                    f" [{s.availability}]"
+                    if s.binding or s.availability == "restore-unavailable"
+                    else ""
+                )
                 for s in self.core.sessions(conv)
             ]
             await self._send(chat, "\n".join(lines) or "No sessions; use /new.")
         elif command == "/switch":
-            if not argument.isdigit():
+            if not argument.isascii() or not argument.isdecimal():
                 raise GatewayError("Use /switch SESSION_ID.")
-            session = self.core.store.session(int(argument))
-            if session is None or session.conversation != conv:
-                raise GatewayError("This chat does not own that session.")
-            self.core.switch_session(conv, session.acp_session_id)
+            session = self.core.switch_dialogue(conv, int(argument))
             await self._send(chat, f"Active session: {session.id}")
         elif command == "/result":
             job = self.core.job(argument)
@@ -330,7 +423,7 @@ class TelegramChannel(Channel):
         elif command.startswith("/"):
             await self._send(chat, "Unknown command. Use /help.")
         else:
-            job = await self.core.submit(conv, text)
+            job = await self.core.submit_selected(conv, text)
             await self._send(chat, f"Working: {job.id}\nUse /stop to cancel.")
 
     def _approval_chats(self, approval):

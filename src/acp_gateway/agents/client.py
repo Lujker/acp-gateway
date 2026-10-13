@@ -39,6 +39,7 @@ from acp_gateway.agents.errors import (
     AgentError,
     AgentUnavailable,
     AuthenticationFailed,
+    ModelRefused,
     ModeNotAvailable,
     PromptFailed,
     SessionBusy,
@@ -47,6 +48,14 @@ from acp_gateway.agents.errors import (
     TransportDisconnected,
 )
 from acp_gateway.agents.events import AgentEvent, MessageChunk, TurnFinished, normalize
+from acp_gateway.agents.model_control import (
+    MODEL_OPTIONS,
+    MODEL_RECOVER,
+    MODEL_REFUSED,
+    MODEL_SET,
+    model_params,
+    model_result,
+)
 from acp_gateway.agents.tls import TlsPin, pin_certificate
 from acp_gateway.agents.transport import (
     AgentTransport,
@@ -207,12 +216,16 @@ class AgentClient:
         self._connect_lock = asyncio.Lock()
         self._attached: set[str] = set()  # sessions usable on the current connection
         self._uncertain: set[str] = set()  # cancellation not confirmed on this connection
+        self._bindings: dict[str, dict] = {}
         self._session_cwds: dict[str, str] = {}
         self._loading: set[str] = set()  # sessions whose history replay is suppressed
         self._turns: dict[str, asyncio.Queue[AgentEvent | _TurnDone]] = {}
         self._permission_tasks: defaultdict[str, set[asyncio.Task[str | None]]] = defaultdict(set)
+        self._permission_tools: dict[tuple[str, str], asyncio.Task] = {}
         self._watchers: set[asyncio.Task[None]] = set()
         self._requests = 0  # requests in flight outside prompt turns
+        self._model_operations: set[str] = set()
+        self._model_uncertain: set[str] = set()
 
         self.agent_info: dict[str, Any] | None = None
         self.agent_capabilities: Any = None
@@ -297,7 +310,13 @@ class AgentClient:
         watcher.add_done_callback(self._watchers.discard)
         self._log.info(
             "agent connected",
-            endpoint=self.profile.acp_endpoint if self._transport_factory is None else "injected",
+            endpoint=(
+                "local-hermes"
+                if self.profile.backend == "hermes"
+                else self.profile.acp_endpoint
+                if self._transport_factory is None
+                else "injected"
+            ),
             agent_info=self.agent_info,
             tls=pin.source if pin else ("transport-managed" if self._transport_factory else "none"),
         )
@@ -306,6 +325,30 @@ class AgentClient:
         """Open one stream; injected factories own authentication and endpoint policy."""
         if self._transport_factory is not None:
             return await self._transport_factory(), None
+        if self.profile.backend == "hermes":
+            from acp_gateway.adapters.hermes import HermesDedicatedClient
+            from acp_gateway.adapters.hermes_acp import HermesAcpTransport
+            from acp_gateway.connectors.policy import LocalAgentPolicy
+            from acp_gateway.discovery.hermes import (
+                HermesDiscoveryError,
+                default_lock_dir,
+                read_endpoint,
+            )
+
+            settings = self.profile.hermes
+            policy = LocalAgentPolicy.from_profile(self.profile)
+            try:
+                endpoint = await asyncio.to_thread(
+                    read_endpoint, settings.lock_dir or default_lock_dir(), settings.role
+                )
+                driver = await HermesDedicatedClient.connect(
+                    endpoint, profile=settings.profile, timeout=self._open_timeout, approvals=True
+                )
+            except (HermesDiscoveryError, OSError):
+                raise AgentUnavailable(
+                    "local Hermes discovery or verified connection failed"
+                ) from None
+            return HermesAcpTransport(driver, policy), None
         endpoint = self.profile.acp_endpoint
         parts = urlsplit(endpoint)
         pin = None
@@ -390,14 +433,61 @@ class AgentClient:
         cwd = cwd or self.profile.default_cwd
         response = await self._call(self._conn.new_session(cwd=cwd, mcp_servers=[]))
         session_id = response.session_id
+        from acp_gateway.agents.bindings import session_binding
+
+        try:
+            metadata = (getattr(response, "field_meta", None) or {}).get("acp-gateway") or {}
+            binding = session_binding(metadata.get("sessionBinding"))
+        except (ValueError, AttributeError):
+            raise AgentError("invalid agent session binding; no automatic retry") from None
+        if binding is not None:
+            self._bindings[session_id] = binding
         await self._apply_mode(session_id, response.modes)
         self._attached.add(session_id)
         self._session_cwds[session_id] = cwd
         self._log.info("session created", session_id=session_id)
         return session_id
 
+    def session_binding(self, session_id: str) -> dict | None:
+        binding = self._bindings.get(session_id)
+        return dict(binding) if binding is not None else None
+
+    def remember_session_binding(self, session_id: str, binding) -> None:
+        """Restore provenance only; the connector must still authorize live load."""
+        from acp_gateway.agents.bindings import session_binding
+
+        validated = session_binding(binding)
+        if validated is not None:
+            existing = self._bindings.get(session_id)
+            if existing is not None and existing != validated:
+                raise SessionNotFound("Hermes dialogue binding changed")
+            self._bindings[session_id] = validated
+
+    def session_availability(self, session_id: str) -> str:
+        connected = self._transport is not None and not self._transport.closed.is_set()
+        if (
+            session_id in self._model_uncertain
+            or session_id in self._uncertain
+            or (session_id in self._turns and not connected)
+        ):
+            return "uncertain"
+        if session_id in self._turns or session_id in self._model_operations:
+            return "busy"
+        if connected and session_id in self._attached:
+            return "attached"
+        if self._bindings.get(session_id, {}).get("restore") == "connector-live":
+            return "restore-required"
+        if (
+            self.profile.kind == "hermes"
+            or self._bindings.get(session_id, {}).get("restore") == "disabled"
+        ):
+            return "restore-unavailable"
+        return "restore-required"
+
     async def load_session(self, session_id: str, cwd: str | None = None) -> None:
         """Attach an existing session to this connection; its history replay is dropped."""
+        if session_id in self._model_uncertain:
+            raise SessionBusy("Model selection outcome is unknown; no automatic retry")
         await self.ensure_connected()
         if session_id in self._uncertain:
             await self._release_quarantine(session_id)
@@ -410,16 +500,31 @@ class AgentClient:
         caps = self.agent_capabilities
         if not (caps and caps.load_session):
             raise SessionNotFound(f"{self.profile.display_name} cannot restore sessions")
+        binding = self._bindings.get(session_id)
+        if binding and binding.get("restore") == "connector-live":
+            metadata = getattr(caps, "field_meta", None) or {}
+            if (metadata.get("acp-gateway") or {}).get("connectorLiveResume") is not True:
+                raise SessionNotFound("Connector cannot restore this live Hermes dialogue")
         self._loading.add(session_id)
         try:
             response = await self._call(
                 self._conn.load_session(cwd=cwd, session_id=session_id, mcp_servers=[]),
-                not_found=f"session {session_id} not found",
+                not_found=(
+                    "The live Hermes dialogue is unavailable, busy or uncertain. "
+                    "Your selected dialogue is unchanged; use /new only to create a different one."
+                    if binding and binding.get("restore") == "connector-live"
+                    else f"session {session_id} not found"
+                ),
             )
             # Replayed updates were scheduled before the response; let them drain.
             await asyncio.sleep(0)
         finally:
             self._loading.discard(session_id)
+        if binding and binding.get("restore") == "connector-live":
+            metadata = getattr(response, "field_meta", None) or {}
+            actual = (metadata.get("acp-gateway") or {}).get("sessionBinding")
+            if actual != binding:
+                raise SessionNotFound("Connector Hermes dialogue identity did not match")
         await self._apply_mode(session_id, response.modes if response else None)
         self._attached.add(session_id)
         self._session_cwds[session_id] = cwd
@@ -429,6 +534,122 @@ class AgentClient:
         await self.ensure_connected()
         response = await self._call(self._conn.list_sessions(cwd=cwd))
         return [s.model_dump(by_alias=True, exclude_none=True) for s in response.sessions]
+
+    @property
+    def supports_model_control(self) -> bool:
+        caps = self.agent_capabilities
+        meta = getattr(caps, "field_meta", None)
+        flags = meta.get("acp-gateway") if isinstance(meta, dict) else None
+        return (
+            isinstance(flags, dict)
+            and type(flags.get("modelControl")) is int
+            and flags["modelControl"] == 1
+        )
+
+    async def model_options(
+        self, session_id: str, *, admission: Callable[[], None] | None = None
+    ) -> dict:
+        return await self._model_request(
+            MODEL_OPTIONS, {"sessionId": session_id}, admission=admission
+        )
+
+    async def set_model(
+        self,
+        session_id: str,
+        *,
+        provider: str,
+        model: str,
+        confirmation_token: str | None = None,
+        operation_id: str | None = None,
+        admission: Callable[[], None] | None = None,
+    ) -> dict:
+        params = {"sessionId": session_id, "provider": provider, "model": model}
+        if confirmation_token is not None:
+            params["confirmationToken"] = confirmation_token
+        if operation_id is not None:
+            params["operationId"] = operation_id
+        return await self._model_request(MODEL_SET, params, admission=admission)
+
+    async def recover_model(self, session_id: str, operation_id: str, *, admission=None) -> dict:
+        """Read one exact retained model outcome; never resend the setter."""
+        if session_id in self._turns or session_id in self._model_operations:
+            raise SessionBusy("Dialogue already has an active operation")
+        binding = self._bindings.get(session_id)
+        try:
+            params = model_params(
+                MODEL_RECOVER,
+                {"sessionId": session_id, "operationId": operation_id, "binding": binding},
+            )
+        except ValueError:
+            return {"status": "unavailable"}
+        self._model_operations.add(session_id)
+        try:
+            await self.ensure_connected()
+            meta = getattr(self.agent_capabilities, "field_meta", None) or {}
+            if (meta.get("acp-gateway") or {}).get("modelRecovery") != 1:
+                return {"status": "unavailable"}
+            if admission is not None:
+                admission()
+            result = model_result(
+                MODEL_RECOVER,
+                await self._call(self._conn.ext_method(MODEL_RECOVER[1:], params)),
+            )
+            if result["status"] in {"accepted", "deferred", "not_applied"}:
+                self._model_uncertain.discard(session_id)
+                self._attached.discard(session_id)
+            return result
+        finally:
+            self._model_operations.discard(session_id)
+
+    async def _model_request(
+        self, method: str, params: dict, *, admission: Callable[[], None] | None = None
+    ) -> dict:
+        try:
+            params = model_params(method, params)
+        except ValueError:
+            raise AgentError("Invalid model operation parameters") from None
+        sid = params["sessionId"]
+        if sid not in self._attached and sid not in self._bindings:
+            raise SessionNotFound("Model control requires a known dispatcher dialogue")
+        if sid in self._model_uncertain:
+            raise SessionBusy("Model selection outcome is unknown; no automatic retry")
+        if (
+            sid in self._turns
+            or sid in self._model_operations
+            or sid in self._uncertain
+            or sid in self._loading
+        ):
+            raise SessionBusy("Dialogue is busy or uncertain")
+        self._model_operations.add(sid)
+        started = False
+        transport = None
+        try:
+            await self.ensure_connected()
+            if not self.supports_model_control:
+                raise AgentError("Model control is unavailable for this agent")
+            if sid not in self._attached:
+                await self.load_session(sid)
+            transport = self._transport
+            if admission is not None:
+                admission()
+            started = True
+            response = await self._call(self._conn.ext_method(method[1:], params))
+            return model_result(method, response)
+        except BaseException as exc:
+            cause = exc.__cause__
+            refused = isinstance(cause, RequestError) and cause.code in {MODEL_REFUSED, -32601}
+            if started and not refused:
+                if method == MODEL_SET:
+                    self._model_uncertain.add(sid)
+                    self._attached.discard(sid)
+                await self._abandon(transport)
+            if refused:
+                raise ModelRefused(str(exc)) from cause
+            if isinstance(exc, ValueError):
+                raise AgentError("Invalid model operation response") from None
+            raise
+        finally:
+            self._model_operations.discard(sid)
 
     async def _apply_mode(self, session_id: str, modes: SessionModeState | None) -> None:
         mode = self.profile.session_mode
@@ -451,6 +672,14 @@ class AgentClient:
 
         Closing the iterator before the end cancels the turn on the agent.
         """
+        if session_id in self._model_operations or session_id in self._model_uncertain:
+            raise SessionBusy("Model operation is pending or its outcome is unknown")
+        binding = self._bindings.get(session_id, {})
+        if binding.get("restore") == "disabled" and self.session_availability(session_id) in {
+            "uncertain",
+            "restore-unavailable",
+        }:
+            raise SessionNotFound("Hermes dialogue cannot safely be restored; create a new session")
         await self.ensure_connected()
         if session_id in self._uncertain and session_id not in self._turns:
             await self._release_quarantine(session_id)
@@ -458,6 +687,8 @@ class AgentClient:
             raise SessionBusy(f"session {session_id} is busy or its cancellation is unconfirmed")
         if session_id not in self._attached:
             await self.load_session(session_id, cwd)
+        if session_id in self._model_operations or session_id in self._model_uncertain:
+            raise SessionBusy("Model operation is pending or its outcome is unknown")
         if session_id in self._turns:
             raise SessionBusy(f"session {session_id} is busy")
 
@@ -505,6 +736,12 @@ class AgentClient:
                     self._uncertain.add(session_id)
                     self._attached.discard(session_id)
                     request.cancel()
+                elif (
+                    not finished and self._bindings.get(session_id, {}).get("restore") == "disabled"
+                ):
+                    # A failed Hermes result does not prove upstream work stopped.
+                    self._uncertain.add(session_id)
+                    self._attached.discard(session_id)
                 else:
                     self._uncertain.discard(session_id)
                 with contextlib.suppress(BaseException):
@@ -524,8 +761,17 @@ class AgentClient:
             raise PromptFailed("the turn ended without a result")
         return AgentReply(session_id, "".join(parts), finished.stop_reason, finished.usage)
 
+    @property
+    def supports_cancel(self) -> bool:
+        caps = self.agent_capabilities
+        meta = caps.field_meta if caps else None
+        flags = meta.get("acp-gateway") if isinstance(meta, dict) else None
+        return not (isinstance(flags, dict) and flags.get("cancel") is False)
+
     async def cancel(self, session_id: str) -> None:
         """Cancel the running turn; pending permission requests are answered "cancelled"."""
+        if not self.supports_cancel:
+            raise AgentError("safe turn cancellation is unavailable for this agent")
         if self.connected:
             with contextlib.suppress(ConnectionError):
                 await self._conn.cancel(session_id=session_id)
@@ -537,6 +783,12 @@ class AgentClient:
 
     def _on_update(self, session_id: str, update: Any) -> None:
         # Must not await before enqueueing: notification order is task creation order.
+        meta = getattr(update, "field_meta", None)
+        flags = meta.get("acp-gateway") if isinstance(meta, dict) else None
+        if isinstance(flags, dict) and flags.get("permissionWithdrawn") is True:
+            key = (session_id, getattr(update, "tool_call_id", ""))
+            if task := self._permission_tools.get(key):
+                task.cancel()
         if session_id in self._loading:
             return
         queue = self._turns.get(session_id)
@@ -558,6 +810,8 @@ class AgentClient:
         )
         self._log.info("permission requested", session_id=session_id, title=request.title)
         task = asyncio.ensure_future(self._permission_handler(request))
+        tool_key = (session_id, request.tool_call_id)
+        self._permission_tools[tool_key] = task
         self._permission_tasks[session_id].add(task)
         try:
             option_id = await task
@@ -575,6 +829,8 @@ class AgentClient:
                 else None
             )
         finally:
+            if self._permission_tools.get(tool_key) is task:
+                del self._permission_tools[tool_key]
             tasks = self._permission_tasks.get(session_id)
             if tasks is not None:
                 tasks.discard(task)

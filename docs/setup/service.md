@@ -19,7 +19,11 @@ The installer constrains dependencies to the checked-in `uv.lock` and uses
 [uv's isolated tool environment](https://docs.astral.sh/uv/guides/tools/)
 and creates a private initial configuration through `acpgw setup`. You can
 run `acpgw` from any directory. To update a checkout installation, pull the
-changes, stop the installed services/foreground processes and rerun the script. Existing configuration and tokens are kept.
+changes, stop the installed services/foreground processes and run
+`sh scripts/update.sh`. Updates preserve configuration and tokens without
+reopening setup. See [checkout scripts](distribution.md#checkout-scripts-linuxwsl-and-windows)
+for native Windows and lightweight launchers. The primary VPS/Hermes route is
+documented in the [native Linux runbook](vps-native-hermes.ru.md).
 If the executable/interpreter path changes, rerun `service install` and
 `service restart` to update the installed unit.
 
@@ -48,6 +52,10 @@ Add your agent profile to the config and its secret to `.env`, following
 Then run `acpgw config check` and `acpgw serve` to check the foreground daemon.
 
 ## Linux and WSL service
+
+The development native Windows connector task has a separate
+[runbook and acceptance checklist](windows-connector.md). The commands below
+describe systemd.
 
 The service is a systemd **user** unit; no root-owned gateway process or
 system-wide service is installed. With systemd and a working user manager:
@@ -100,6 +108,13 @@ systemctl --user status acp-gateway.service
 ```
 
 ## Separate computer connector service
+
+When setup/connect has saved a connector role, `service --role connector install`
+can use the saved connection without additional launch arguments. It reads
+`setup.json` beside the selected configuration; foreground `start` uses the same
+validated recipe. Explicit arguments require the complete connection options
+and are never silently combined with saved credentials. Use the same global
+`--config`/`--env-file` paths for both operations.
 
 On the computer, prepare a persistent config containing direct network agent
 profiles, an environment file with their required secrets, and the private
@@ -233,4 +248,5 @@ After a real Windows reboot, sign in and verify `acpgw service status` and
 enable and shutdown behavior. The unit syntax and CLI paths are tested;
 the PowerShell task and user-service lifecycles passed on Windows/WSL.
 The actual reboot scenario still requires validation.
-Native Windows service control is planned with `P3.2`/`P3.5`.
+Native Windows connector task control is implemented in development under
+`P4.8.4`; native acceptance remains open. See [Windows connector](windows-connector.md).

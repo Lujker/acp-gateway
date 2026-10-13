@@ -1,0 +1,54 @@
+services:
+  dispatcher:
+    image: ${ACPGW_LAB_IMAGE:-acpgw:cli-lab}
+    environment:
+      LAB_ROLE: server
+    volumes:
+      - home-key:/exports/home
+      - work-key:/exports/work
+    networks: [lab]
+    init: true
+    mem_limit: 512m
+    cpus: 1.0
+    pids_limit: 128
+    healthcheck:
+      test: [CMD, acpgw, --config, /lab/config/config.yaml, --env-file, /lab/config/.env, status]
+      interval: 2s
+      timeout: 5s
+      retries: 30
+  home:
+    image: ${ACPGW_LAB_IMAGE:-acpgw:cli-lab}
+    environment:
+      LAB_ROLE: connector
+      LAB_COMPUTER: home
+    volumes:
+      - home-key:/keys:ro
+    depends_on:
+      dispatcher:
+        condition: service_healthy
+    networks: [lab]
+    init: true
+    mem_limit: 512m
+    cpus: 1.0
+    pids_limit: 128
+  work:
+    image: ${ACPGW_LAB_IMAGE:-acpgw:cli-lab}
+    environment:
+      LAB_ROLE: connector
+      LAB_COMPUTER: work
+    volumes:
+      - work-key:/keys:ro
+    depends_on:
+      dispatcher:
+        condition: service_healthy
+    networks: [lab]
+    init: true
+    mem_limit: 512m
+    cpus: 1.0
+    pids_limit: 128
+networks:
+  lab:
+    internal: true
+volumes:
+  home-key: {}
+  work-key: {}

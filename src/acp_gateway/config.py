@@ -92,11 +92,25 @@ class ConnectorSettings(_Section):
         return self
 
 
+class HermesAttachSettings(_Section):
+    lock_dir: Path | None = None
+    role: Literal["desktop-serve", "serve"] = "desktop-serve"
+    profile: str = Field(default="default", min_length=1, max_length=128)
+
+    @field_validator("lock_dir")
+    @classmethod
+    def _absolute_lock_dir(cls, value: Path | None) -> Path | None:
+        if value is not None and not value.is_absolute():
+            raise ValueError("Hermes lock_dir must be absolute in the agent host OS")
+        return value
+
+
 class AgentProfile(_Section):
     alias: str = Field(pattern=r"^[a-z][a-z0-9_]{0,31}$")
     title: str | None = None
-    kind: Literal["goose", "generic"] = "generic"
-    backend: Literal["remote", "connector"] = "remote"
+    kind: Literal["goose", "generic", "hermes"] = "generic"
+    backend: Literal["remote", "connector", "hermes"] = "remote"
+    hermes: HermesAttachSettings | None = None
     computer_id: str | None = Field(default=None, pattern=r"^[a-z][a-z0-9_-]{0,63}$")
     url: str = ""
     secret_env: str | None = None
@@ -156,6 +170,25 @@ class AgentProfile(_Section):
 
     @model_validator(mode="after")
     def _check_transport(self) -> AgentProfile:
+        if self.backend == "hermes":
+            if self.kind != "hermes":
+                raise ValueError("backend: hermes requires kind: hermes")
+            if (
+                self.computer_id
+                or self.url
+                or self.secret_env
+                or self.tls_fingerprint
+                or self.allow_insecure_transport
+                or self.session_mode
+            ):
+                raise ValueError("Hermes attach uses local discovery and dedicated conversations")
+            if self.hermes is None:
+                self.hermes = HermesAttachSettings()
+            return self
+        if self.hermes is not None:
+            raise ValueError("hermes settings require backend: hermes")
+        if self.kind == "hermes" and self.backend == "remote":
+            raise ValueError("Hermes JSON-RPC requires backend: hermes, not a remote ACP URL")
         if self.backend == "connector":
             if self.computer_id is None:
                 raise ValueError("connector agent requires computer_id")

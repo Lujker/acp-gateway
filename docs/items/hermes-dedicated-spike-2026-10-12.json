@@ -1,0 +1,15 @@
+{
+  "date": "2026-10-12",
+  "platform": "Windows native",
+  "command": "scripts/spike_hermes_dedicated.py --cwd <native-existing-directory>",
+  "mode": "dedicated-dispatcher",
+  "version": "0.21.6",
+  "runtime_id": "ea5e4cc7",
+  "stored_id": "20261012_165617_4ab2d4",
+  "same_live_and_stored_identity": true,
+  "inference": "not_requested",
+  "cancel_supported": false,
+  "cold_resume_supported": false,
+  "observer_pong_after_detach": true,
+  "scope": "Live create/observer-activate/detach only. No model, approvals, recovery or relay acceptance."
+}

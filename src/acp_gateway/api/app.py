@@ -15,6 +15,7 @@ from pydantic import SecretStr
 
 from acp_gateway import __version__
 from acp_gateway.agents import AgentError, AuthenticationFailed, SessionBusy
+from acp_gateway.agents.errors import ModelRefused
 from acp_gateway.channels.cli import CliChannel
 from acp_gateway.core import (
     ApprovalNotFound,
@@ -23,7 +24,9 @@ from acp_gateway.core import (
     JobFinished,
     JobNotFound,
     JobProgress,
+    MaintenanceBlocked,
     PolicyDenied,
+    SelectionChanged,
     UnknownAgent,
     UnknownSession,
     for_approver,
@@ -32,7 +35,16 @@ from acp_gateway.core.bus import Subscription
 from acp_gateway.log import get_logger, redact_value
 from acp_gateway.storage import Conversation, JobStatus
 
-from .schemas import ApprovalDecision, ConversationRequest, NewSessionRequest, PromptRequest
+from .schemas import (
+    ApprovalDecision,
+    ConversationRequest,
+    MaintenanceResume,
+    ModelDefaultRequest,
+    ModelReconcileRequest,
+    ModelSelectionRequest,
+    NewSessionRequest,
+    PromptRequest,
+)
 from .security import OwnerAccess, body_limit
 
 Wait = Annotated[float, Query(ge=0, le=300, allow_inf_nan=False)]
@@ -80,7 +92,7 @@ def create_app(
     async def known_error(request, exc):
         if isinstance(exc, (UnknownAgent, UnknownSession, JobNotFound, ApprovalNotFound)):
             status = 404
-        elif isinstance(exc, SessionBusy):
+        elif isinstance(exc, (SessionBusy, ModelRefused, MaintenanceBlocked, SelectionChanged)):
             status = 409
         elif isinstance(exc, (PolicyDenied, AuthenticationFailed)):
             status = 403
@@ -177,6 +189,20 @@ def create_app(
             )
         return {"computers": computers, "routes": routes}
 
+    @app.get("/maintenance")
+    async def maintenance_status():
+        return core.maintenance_status()
+
+    @app.post("/maintenance/prepare")
+    async def maintenance_prepare():
+        token = core.prepare_maintenance()
+        return {"token": token, "maintenance": core.maintenance_status()}
+
+    @app.post("/maintenance/resume")
+    async def maintenance_resume(body: MaintenanceResume):
+        core.resume_maintenance(body.token, force=body.force)
+        return core.maintenance_status()
+
     @app.get("/computers")
     async def computers():
         return computer_diagnostics()
@@ -186,6 +212,7 @@ def create_app(
         dispatcher = getattr(app.state, "dispatcher", None)
         computers = dispatcher.status() if dispatcher is not None else []
         return {
+            "maintenance": core.maintenance_status(),
             "gateway": {"version": __version__, "status": "running"},
             "database": {"schema_version": core.store.schema_version},
             "agents": [
@@ -257,6 +284,7 @@ def create_app(
         return {
             "sessions": jsonable_encoder(core.sessions(conv)),
             "active_session_id": active.id if active else None,
+            "active_revision": core.store.active_revision(conv),
         }
 
     @app.post("/sessions", status_code=201)
@@ -269,6 +297,58 @@ def create_app(
     async def activate(session_id: int, body: ConversationRequest):
         conv, session = owned_session(session_id, body.agent, body.thread)
         return jsonable_encoder(core.switch_session(conv, session.acp_session_id))
+
+    @app.get("/model-default")
+    async def model_default(agent: str | None = None, thread: str = "default"):
+        return core.model_default(conversation(agent, thread))
+
+    @app.put("/model-default")
+    async def model_default_set(body: ModelDefaultRequest):
+        return core.set_model_default(
+            conversation(body.agent, body.thread), provider=body.provider, model=body.model
+        )
+
+    @app.delete("/model-default")
+    async def model_default_clear(agent: str | None = None, thread: str = "default"):
+        return core.clear_model_default(conversation(agent, thread))
+
+    @app.get("/sessions/{session_id}/model-state")
+    async def session_model_state(
+        session_id: int, agent: str | None = None, thread: str = "default"
+    ):
+        conv, _ = owned_session(session_id, agent, thread)
+        return core.model_state(conv, session_id)
+
+    @app.get("/sessions/{session_id}/models")
+    async def session_models(
+        session_id: int,
+        agent: str | None = None,
+        thread: str = "default",
+        expected_revision: Annotated[int | None, Query(ge=0)] = None,
+    ):
+        conv, _ = owned_session(session_id, agent, thread)
+        return await core.model_options(
+            conv, dialogue_id=session_id, expected_revision=expected_revision
+        )
+
+    @app.post("/sessions/{session_id}/model-reconcile")
+    async def session_model_reconcile(session_id: int, body: ModelReconcileRequest):
+        conv, _ = owned_session(session_id, body.agent, body.thread)
+        return await core.reconcile_model(
+            conv, dialogue_id=session_id, expected_revision=body.expected_revision
+        )
+
+    @app.post("/sessions/{session_id}/model")
+    async def session_model_set(session_id: int, body: ModelSelectionRequest):
+        conv, _ = owned_session(session_id, body.agent, body.thread)
+        return await core.set_model(
+            conv,
+            dialogue_id=session_id,
+            expected_revision=body.expected_revision,
+            provider=body.provider,
+            model=body.model,
+            confirmation_token=body.confirmation_token,
+        )
 
     async def prompt(body: PromptRequest, session_id: int | None = None):
         conv = conversation(body.agent, body.thread)

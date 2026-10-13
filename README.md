@@ -101,6 +101,18 @@ and restore it on installation/health-check failure. Native Windows queues
 internal maintenance after the CLI exits; its PowerShell installer waits for
 the verified result. See the installation guide before rolling back a database.
 
+The development version adds `acpgw menu`, interactive `setup`, `config edit`
+and `start` for the saved local/server/connector role. The menu manages services,
+computers, conversations and human approvals. See the
+[interactive CLI guide](docs/setup/interactive.md); these additions are not yet
+included in the published v0.1.0 package.
+
+Target-host setup now includes `doctor`, selective settings editing,
+`agents install/provider/serve/service` for Goose and `connect` for an outgoing
+dispatcher connection. Follow the [host CLI guide](docs/setup/host-cli.md).
+The [Docker CLI laboratory](docs/setup/cli-lab.md) tests a dispatcher and two
+executor computers through the real CLI, using recorded ACP mocks without model calls.
+
 For the separate Git/development path, you need [uv](https://docs.astral.sh/uv/) and git; uv installs Python 3.12
 itself. Linux/WSL is the primary platform. Native Windows x86_64, macOS Intel/ARM64
 and Linux ARM64 have wheel lifecycle and binary CLI checks; native Windows/macOS
@@ -222,6 +234,11 @@ support sessions, explicit threads, asynchronous jobs and cancellation.
 Actions still require a human in `acpgw approvals watch`.
 Configuration, tool arguments and compatibility checks:
 [`docs/setup/hermes.md`](docs/setup/hermes.md).
+
+Existing Hermes Desktop as an executor is being developed in P4.8. The initial
+`acpgw agents probe hermes` command checks its local backend without a model call;
+see [discovery and attach spike](docs/setup/hermes-attach.md) for verified behavior
+and remaining adapter work.
 
 ### 6. Manage autostart on Linux/WSL
 

@@ -1,0 +1,67 @@
+{
+  "kind": "installed_upstream_ast_handlers_with_synthetic_hooks",
+  "source_sha256": {
+    "hermes_cli/model_switch.py": "2d406bfe5726a5c5fcc7a30c48123226d76e304644aa9686a01a1f241514c330",
+    "tui_gateway/methods_config_set.py": "82d5776f2b376112a257bafef642cd6fefdbe4c46d874a52afed27d7c3f2bcf3",
+    "tui_gateway/model_switch.py": "264a2296a1c125169845df552b4baf22bc9355e6cb9c7f9bfa5139be7ed1a8e5"
+  },
+  "results": {
+    "idle": {
+      "response": {
+        "result": {
+          "key": "model",
+          "value": "model-b",
+          "warning": "",
+          "confirm_required": false,
+          "confirm_message": "",
+          "scope": "session"
+        }
+      },
+      "applied": true,
+      "pending": false
+    },
+    "busy": {
+      "response": {
+        "result": {
+          "key": "model",
+          "value": "model-b",
+          "warning": "",
+          "confirm_required": false,
+          "confirm_message": "",
+          "scope": "session",
+          "deferred": true
+        }
+      },
+      "applied": false,
+      "pending": true
+    },
+    "compute_host_idle": {
+      "response": {
+        "result": {
+          "key": "model",
+          "value": "model-b",
+          "warning": "",
+          "confirm_required": false,
+          "confirm_message": "",
+          "scope": "session",
+          "deferred": true
+        }
+      },
+      "applied": false,
+      "pending": true
+    },
+    "confirmation": {
+      "required": true,
+      "pending": false
+    },
+    "sessionless": {
+      "error": {
+        "code": 4001
+      }
+    },
+    "session_scope_prevents_global_persistence": true
+  },
+  "live_desktop_test": false,
+  "provider_resolution_tested": false,
+  "model_or_tools_called": false
+}

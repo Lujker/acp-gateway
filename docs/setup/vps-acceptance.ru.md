@@ -2,6 +2,10 @@
 
 [English version](vps-acceptance.md)
 
+Для текущего P4.8 использовать [VPS → два Windows Hermes → Telegram](vps-hermes-acceptance.ru.md).
+Ниже сохранён предыдущий сценарий Goose/Linux; его ожидание session/load
+после рестарта к Hermes не применяется.
+
 Инструкция для первого рабочего развёртывания: **Gateway** работает на VPS
 в Docker; на каждом компьютере с Linux/WSL работает исходящий **коннектор**,
 а Goose запускается локально на обоих компьютерах. Сначала проверяем соединение

@@ -24,7 +24,7 @@ def test_upgrade_from_schema4_preserves_enrollment_and_new_diagnostics(tmp_path)
     old.close()
     upgraded = Store.open(path)
     try:
-        assert upgraded.schema_version == 5
+        assert upgraded.schema_version == 6
         assert upgraded.computers.authenticate("work", token)
         status = upgraded.computers.connection_status()[0]
         assert status["connected_at"] is None and status["agents"] == []
