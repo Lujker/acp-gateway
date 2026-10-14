@@ -17,7 +17,7 @@ export PATH="$(uv tool dir --bin):$PATH"
 acpgw version --json
 ```
 
-Ожидается version `0.2.0rc5`, manager `uv`, source `registry`.
+Ожидается version `0.2.0rc7`, manager `uv`, source `registry`.
 Python и зависимости предоставляет uv. Существующую установку обновляем по
 разделу ниже; повторная установка не означает повторную настройку.
 
