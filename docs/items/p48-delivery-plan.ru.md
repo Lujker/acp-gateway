@@ -706,3 +706,38 @@ wheel в отдельном native Windows environment: Scheduler/service/ACL/wi
 54 passed за 190.57s, включая запуск без консоли и graceful disable.
 Evidence: dist/rc4-verification/windowless-native-final.log и .xml; сборка находится
 в dist/windowless-preview и не заменяет опубликованные артефакты.
+
+
+### 2026-10-14 — Telegram PONG и понятные команды/статус
+
+Владелец подтвердил в 15:27: job cfbd548e43c4 completed, ответ PONG, агент в
+Telegram status connected. Это первый настоящий путь Telegram → VPS → Windows
+connector → Hermes → модель → доставка результата. Evidence — сообщение владельца;
+мы сами prompt не отправляли. Approvals/второй ПК/lifecycle остаются открытыми.
+
+По просьбе владельца для следующего релиза добавлена автоматическая регистрация
+13 команд через setMyCommands (private chats; default English и ru descriptions),
+кнопка MenuButtonCommands. Отдельная фоновая задача повторяет регистрацию при
+ошибке; polling/delivery не блокируются и auth allowlist не меняется. При запуске
+не отправляются сообщения. Документация API сверена через Context7 aiogram:
+https://github.com/aiogram/aiogram/blob/dev-3.x/docs/api/methods/set_my_commands.rst.
+
+Общая read-only диагностика маршрутов вынесена из API для использования Telegram.
+Краткий /status различает PC online/offline/access disabled, ready, ещё не проверенный
+ACP client и отсутствие объявления агента. Запрос статуса не вызывает connect/prompt.
+CLI без attached approver убран из сводки; stateless MCP обозначается serving.
+JSON diagnostics contract /computers сохранён. Текущий опубликованный rc4/VPS этим
+кодом не обновлялись: изменения предназначены для следующего релиза.
+
+Проверен Startup/Hermes_Gateway.vbs: запускает отдельный hermes_cli gateway run,
+а Desktop shortcut запускает GUI и serve. Для ACP-Dispatcher gateway run не нужен;
+он может обслуживать отдельные messaging integrations. Владелец уточнил, что пользуется ботом самого Hermes. Автозапуск Gateway оставлен:
+GUI запускает serve, отдельный messaging gateway run уже работает независимо.
+Desktop имеет явное управление restart Gateway; ярлык GUI не является заменой
+существующей записи Startup. Процесс/настройки Hermes не изменялись.
+
+
+Проверки: Telegram/menu/delivery/multinode 53 passed; owner API и connector process
+26 passed. Новые случаи проверяют регистрацию EN/RU menu без сообщений, retry/cancel,
+PC offline/access disabled/unadvertised/not initialized/ready и relay failure;
+локальный /status не делает ACP initialize. Ruff и git diff --check прошли.

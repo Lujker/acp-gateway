@@ -105,7 +105,9 @@ def configured_app(config: AppConfig):
                     telegram_token.get_secret_value().encode(), other.get_secret_value().encode()
                 ):
                     raise ValueError("Telegram and other credentials must be different")
-            core.add_channel(TelegramChannel(config.settings.telegram, telegram_token))
+            core.add_channel(
+                TelegramChannel(config.settings.telegram, telegram_token, dispatcher=dispatcher)
+            )
         mcp = McpChannel(core, mcp_token) if mcp_token is not None else None
         if mcp is not None:
             core.add_channel(mcp)

@@ -388,3 +388,114 @@ async def test_failed_new_route_keeps_previous_route_and_active_dialogue(telegra
     assert "offline" in session.sent[-1].text
     assert core.store.channel_state(channel.namespace, f"agent:{OWNER}") == "work"
     assert core.active_session(conversation).id == selected.id
+
+
+async def test_command_menu_is_registered_at_start_without_sending_messages(telegram):
+    from aiogram.methods import SetChatMenuButton, SetMyCommands
+
+    from acp_gateway.channels.telegram import COMMANDS
+
+    _, _, session, _ = telegram
+    await eventually(lambda: any(isinstance(c, SetChatMenuButton) for c in session.calls))
+    menus = [c for c in session.calls if isinstance(c, SetMyCommands)]
+    assert {c.language_code for c in menus} == {"", "ru"}
+    for menu in menus:
+        assert menu.scope.type == "all_private_chats"
+        assert [c.command for c in menu.commands] == [row[0] for row in COMMANDS]
+    assert (
+        next(c for c in session.calls if isinstance(c, SetChatMenuButton)).menu_button.type
+        == "commands"
+    )
+    assert not session.sent
+
+
+async def test_menu_failure_retries_and_cancellation_is_not_swallowed(monkeypatch):
+    from unittest.mock import AsyncMock
+
+    from acp_gateway.channels import telegram as module
+
+    session = FakeSession()
+    channel = TelegramChannel(TelegramSettings(), SecretStr(TOKEN), bot=Bot(TOKEN, session=session))
+    register = AsyncMock(side_effect=[RuntimeError("offline"), None])
+    pause = AsyncMock(side_effect=[None, asyncio.CancelledError()])
+    monkeypatch.setattr(channel, "_register_commands", register)
+    monkeypatch.setattr(module.asyncio, "sleep", pause)
+    try:
+        with pytest.raises(asyncio.CancelledError):
+            await channel._menus()
+        assert register.await_count == 2
+        assert [call.args[0] for call in pause.await_args_list] == [60, 3600]
+        assert not session.sent
+    finally:
+        await channel.bot.session.close()
+
+
+@pytest.mark.parametrize(
+    "online,enabled,advertised,ready,failure,expected",
+    [
+        (True, True, True, False, None, "not checked yet; PC online"),
+        (True, True, True, True, None, "ready"),
+        (False, True, True, True, None, "PC offline"),
+        (False, False, True, False, None, "PC access disabled"),
+        (True, True, False, False, None, "agent not announced by PC"),
+        (
+            True,
+            True,
+            True,
+            False,
+            {"code": "open_failed"},
+            "connection needs checking (open_failed)",
+        ),
+    ],
+)
+async def test_status_distinguishes_pc_link_from_lazy_acp(
+    online, enabled, advertised, ready, failure, expected
+):
+    from types import SimpleNamespace
+
+    session = FakeSession()
+    profile = SimpleNamespace(backend="connector", computer_id="home", alias="hermes")
+    client = SimpleNamespace(profile=profile, connected=ready)
+    relay = SimpleNamespace(
+        route_status=lambda alias: {
+            "epoch": "test",
+            "active_streams": 0,
+            "capacity_available": True,
+            "last_stream_error": failure,
+        }
+    )
+    dispatcher = SimpleNamespace(
+        status=lambda: [
+            {
+                "computer_id": "home",
+                "enabled": enabled,
+                "connected": online,
+                "advertised_agents": ["hermes"] if advertised else [],
+            }
+        ],
+        active={"home": SimpleNamespace(relay=relay)},
+    )
+    channel = TelegramChannel(
+        TelegramSettings(), SecretStr(TOKEN), bot=Bot(TOKEN, session=session), dispatcher=dispatcher
+    )
+    channel.core = SimpleNamespace(
+        agents={"home/hermes": client},
+        channels={"cli": SimpleNamespace(connected=False), "mcp": SimpleNamespace(connected=True)},
+        running_jobs=lambda: [],
+    )
+    try:
+        await channel._command(OWNER, "/status")
+        text = session.sent[-1].text
+        assert f"home/hermes: {expected}" in text
+        assert "cli" not in text and "unavailable" not in text and "disconnected" not in text
+        assert "MCP: serving" in text
+        assert len(text.splitlines()) == 4
+    finally:
+        await channel.bot.session.close()
+
+
+async def test_local_status_does_not_connect_to_agent(telegram):
+    _, channel, session, server = telegram
+    await feed(channel, 1, "/status")
+    assert "work: not initialized" in session.sent[-1].text
+    assert not server.log
