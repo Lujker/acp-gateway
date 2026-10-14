@@ -153,3 +153,12 @@ Production uv tool, scheduled task и живые Hermes conversations не ме�
 Ruff/format/diff checks пройдены. Новое поведение названий находится на стороне
 коннектора: для него нужно обновить оба ПК; `/mode` находится в dispatcher и
 совместим с rc5/rc6 connectors. Старые заголовки не мигрируются автоматически.
+
+
+Финальная проверка rc7 после усиления route/actor binding: **1309 passed / 31
+expected skips**, 201.22s (`source-final.xml/.log`); установленный финальный wheel
+на Windows: **165 passed**, 36.27s (`windows-final.xml/.log`). Изолированный
+registry rc5 → wheel rc7 upgrade выполнен в обеих ОС: конфиг/env/setup/key,
+enrollment registry и SQLite sentinel сохранены; Linux PTY setup и запуск пустого
+dispatcher прошли. Проверка `--stable` на file install ожидаемо отказала без
+изменений; registry no-op проверяется отдельно после публикации.
