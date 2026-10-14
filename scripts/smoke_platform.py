@@ -28,7 +28,9 @@ def smoke(wheel: Path, binary: Path | None = None):
     uv = shutil.which("uv")
     if uv is None:
         raise RuntimeError("uv is required")
-    with tempfile.TemporaryDirectory(prefix="acpgw-native-") as temporary:
+    with tempfile.TemporaryDirectory(
+        prefix="acpgw-native-", ignore_cleanup_errors=os.name == "nt"
+    ) as temporary:
         root = Path(temporary)
         environment = {
             key: value

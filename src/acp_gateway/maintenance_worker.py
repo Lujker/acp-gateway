@@ -14,6 +14,7 @@ import shutil
 import sqlite3
 import subprocess
 import sys
+import uuid
 from pathlib import Path
 
 
@@ -117,9 +118,17 @@ def restore(plan: dict, backup: Path) -> None:
     if recovered.exists():
         raise ValueError("recovery staging directory already exists; inspect it before retrying")
     shutil.copytree(backup / "environment", recovered, symlinks=True)
+    # Windows may pin a dependency DLL through a hardlink in another uv
+    # environment. Never partially delete the live prefix before restoring it.
+    retired = prefix.with_name(f".{prefix.name}-retired-{uuid.uuid4().hex}")
     if prefix.exists():
-        shutil.rmtree(prefix)
-    recovered.replace(prefix)
+        prefix.replace(retired)
+    try:
+        recovered.replace(prefix)
+    except BaseException:
+        if retired.exists():
+            retired.replace(prefix)
+        raise
     entry = Path(plan["entry"])
     entry.unlink(missing_ok=True)
     saved = backup / "entry"
@@ -151,6 +160,15 @@ def restore(plan: dict, backup: Path) -> None:
             # A failed new release may have created a database during health.
             # Restore the original absence as well as existing file contents.
             database.unlink(missing_ok=True)
+
+    if retired.exists():
+        try:
+            shutil.rmtree(retired)
+        except OSError:
+            # The restored prefix is complete and independent. Busy DLLs in
+            # this retired directory must not turn successful recovery into
+            # a partially installed program or destroy its snapshot.
+            print(f"Retired environment cleanup deferred: {retired}", flush=True)
 
 
 def health(plan: dict) -> None:

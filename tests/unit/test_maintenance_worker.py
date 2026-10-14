@@ -221,3 +221,69 @@ def test_recovery_snapshot_preserves_delivery_cursor_and_selection(plan, tmp_pat
         assert store.job("delivered-prefix").answer == "saved answer"
     finally:
         store.close()
+
+
+def test_restore_keeps_complete_prefix_when_retired_cleanup_is_busy(plan, tmp_path, monkeypatch):
+    worker.snapshot(plan, tmp_path / "backup")
+    prefix = Path(plan["prefix"])
+    (prefix / "version").write_text("new")
+    remove = worker.shutil.rmtree
+
+    def busy_retired(path, *args, **kwargs):
+        if "-retired-" in Path(path).name:
+            raise PermissionError("dependency mapped in another Python environment")
+        return remove(path, *args, **kwargs)
+
+    monkeypatch.setattr(worker.shutil, "rmtree", busy_retired)
+    worker.restore(plan, tmp_path / "backup")
+    assert (prefix / "version").read_text() == "old"
+    assert Path(plan["entry"]).read_text() == "old-entry"
+    assert (tmp_path / "backup/environment/version").read_text() == "old"
+    assert len(list(prefix.parent.glob(".acp-gateway-retired-*"))) == 1
+
+
+def test_restore_promotion_failure_keeps_original_environment(plan, tmp_path, monkeypatch):
+    worker.snapshot(plan, tmp_path / "backup")
+    prefix = Path(plan["prefix"])
+    (prefix / "version").write_text("new")
+    replace = Path.replace
+
+    def fail_promotion(path, target):
+        if path.name.endswith(".acpgw-recovery"):
+            raise OSError("injected promotion failure")
+        return replace(path, target)
+
+    monkeypatch.setattr(Path, "replace", fail_promotion)
+    with pytest.raises(OSError, match="promotion failure"):
+        worker.restore(plan, tmp_path / "backup")
+    assert (prefix / "version").read_text() == "new"
+    assert Path(plan["entry"]).read_text() == "old-entry"
+    assert (tmp_path / "backup/environment/version").read_text() == "old"
+
+
+@pytest.mark.skipif(os.name != "nt", reason="native Windows mapped DLL deletion semantics")
+def test_restore_with_dependency_held_by_another_environment(plan, tmp_path):
+    import ctypes
+
+    import yaml
+
+    prefix = Path(plan["prefix"])
+    dependency = prefix / "dependency.pyd"
+    worker.shutil.copy2(Path(yaml.__file__).parent / "_yaml.cp312-win_amd64.pyd", dependency)
+    other = tmp_path / "other-environment.pyd"
+    os.link(dependency, other)
+    worker.snapshot(plan, tmp_path / "backup")
+    (prefix / "version").write_text("new")
+    held = ctypes.WinDLL(str(other))
+    kernel = ctypes.WinDLL("kernel32", use_last_error=True)
+    kernel.FreeLibrary.argtypes = [ctypes.c_void_p]
+    kernel.FreeLibrary.restype = ctypes.c_int
+    try:
+        worker.restore(plan, tmp_path / "backup")
+        assert (prefix / "version").read_text() == "old"
+        assert (prefix / "dependency.pyd").read_bytes() == other.read_bytes()
+        retired = list(prefix.parent.glob(".acp-gateway-retired-*"))
+        assert len(retired) == 1
+    finally:
+        assert kernel.FreeLibrary(held._handle)
+    worker.shutil.rmtree(retired[0])
