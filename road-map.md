@@ -1,7 +1,7 @@
 # Дорожная карта ACP Gateway
 
 > Статус: единый действующий план ACP Gateway.
-> Последняя сверка: 2026-10-13 — frozen rc1 и development P2.3/P3.3/P3.6;
+> Последняя сверка: 2026-10-14 — опубликован rc3 с независимым setup/TUI;
 > новые предложения P4.11–P4.14. VPS/Telegram + два Windows/Hermes connectors,
 > поставка uv/Git, CLI/update (`P4.8`); Goose и платформенное расширение — `P4.9`.
 > VPS-диспетчер с собственным WebSocket-коннектором
@@ -813,10 +813,10 @@ Spikes возможны после базы P4.8; общий пользоват�
 Зафиксированы source/API и durable model state, оставшаяся очередь, ограничения Hermes,
 доказательства проверок и отдельный этап установки/приёмки.
 
-**Следующий этап:** разделение setup/TUI проверено; выпуск rc3 IN PROGRESS, затем обновление rc2 владельцем и P4.8.5.
+**Следующий этап:** владелец обновляет установленный rc2 до опубликованного rc3 и проходит независимый setup; P4.8.5 PARTIAL.
 GitHub prerelease и PyPI опубликованы 2026-10-14; SHA256 wheel/sdist сверены,
-свежая uv/PyPI установка в Linux и Windows дала version 0.2.0rc2 / source registry.
-Пакетные Linux/Windows update/rollback и 23 native Scheduler cases проверены;
+свежая uv/PyPI установка в Linux и Windows дала version 0.2.0rc3 / source registry; registry rc2→rc3 upgrade сохранил настройки/ключи/БД.
+Пакетные Linux/Windows update/rollback и 24 native Scheduler cases проверены;
 [подробности выпуска](docs/items/p48-delivery-plan.ru.md).
 Владелец устанавливает сам по [инструкции uv/PyPI](docs/setup/self-install-pypi.ru.md):
 один Ubuntu 22.04.5 dispatcher по IP:порту, Telegram bot, текущий Windows/Hermes,
@@ -825,7 +825,7 @@ GitHub prerelease и PyPI опубликованы 2026-10-14; SHA256 wheel/sdis
 Goose/platform combinations — P4.9, cold/shared write recovery вне Windows MVP.
 Перечень ниже — незакрытые смежные задачи, не prerequisites всего трека.
 
-1. **P4.8.5 — живая установка и приёмка 0.2.0rc2.** Выпуск опубликован; Ubuntu 22.04.5 по IP:порту,
+1. **P4.8.5 — живая установка и приёмка 0.2.0rc3.** Сначала uv update с rc2; Ubuntu 22.04.5 по IP:порту,
    бот, текущий Windows/Hermes+connector/автозапуск/CLI, затем второй PC;
    [порядок проверок](docs/setup/p48-acceptance.md).
 2. **P3.4/P3.5 — установка, настройка и контроль службы.** Основа Linux/WSL
@@ -835,7 +835,7 @@ Goose/platform combinations — P4.9, cold/shared write recovery вне Windows 
    Task Scheduler lifecycles уже подтверждены на текущем хосте.
 4. **P2.3/P3.3 — живая приёмка Telegram.** Команды/подтверждения реализованы;
    persistent delivery и status edits включены в опубликованный 0.2.0rc2,
-   [журнал](docs/items/p3.3-reliability.ru.md). Кандидат установки — 0.2.0rc2.
+   [журнал](docs/items/p3.3-reliability.ru.md). Кандидат установки — 0.2.0rc3.
 5. **P4.1 — VPS-диспетчер и собственный WebSocket-коннектор.** Основа для `P4.8`:
    один владелец, ACP-релей. Enrollment и WS/WSS-регистрация
    готовы; инъекция транспорта в AgentClient реализована и проверена на mock ACP
