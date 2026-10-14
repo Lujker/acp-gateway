@@ -813,7 +813,7 @@ Spikes возможны после базы P4.8; общий пользоват�
 Зафиксированы source/API и durable model state, оставшаяся очередь, ограничения Hermes,
 доказательства проверок и отдельный этап установки/приёмки.
 
-**Следующий этап:** IN PROGRESS — разделение setup/TUI и выпуск rc3; затем обновление rc2 владельцем и P4.8.5.
+**Следующий этап:** разделение setup/TUI проверено; выпуск rc3 IN PROGRESS, затем обновление rc2 владельцем и P4.8.5.
 GitHub prerelease и PyPI опубликованы 2026-10-14; SHA256 wheel/sdist сверены,
 свежая uv/PyPI установка в Linux и Windows дала version 0.2.0rc2 / source registry.
 Пакетные Linux/Windows update/rollback и 23 native Scheduler cases проверены;

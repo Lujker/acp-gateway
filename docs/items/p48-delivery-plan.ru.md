@@ -467,3 +467,30 @@ cancel/no writes, сохранение ключей, выдача enrollment д�
 role guard, idle/stop/start и rollback при restart failure. Ruff и lock clean.
 Пакетные Windows/uv-update проверки впереди. User guide упрощён до одной команды
 установки; обновление pinned rc2 выполняется заменой requirement, не обычным upgrade.
+
+Финальная пакетная приёмка rc3 перед публикацией:
+
+- Linux wheel/bundle/Git lifecycle, active guard, update/rollback, сохранение
+  Telegram result/enrollment/key прошли; native Windows package/SQL-health
+  recovery/rollback/uninstall прошёл.
+- Реальный uv переход с опубликованного rc2 на rc3 wheel в Linux и Windows
+  сохранил config/env/setup.json/key, enrollment registry и SQL sentinel.
+  Linux PTY: меню exit не пишет, independent base не спрашивает agents/Telegram,
+  agent-free dispatcher успешно запустился и ответил owner API.
+- Первый Windows расширенный профиль: 101 passed, 4 failed. Два POSIX systemd
+  теста теперь явно skipped в Windows; data_dir тестов wizard изолирован в tmp,
+  исправив старый local→connector тест, ранее обращавшийся к platform data.
+- Найдена реальная race Stop-Connector: activity record исчезает между Test-Path
+  и ACL/read при штатном выходе. Исправлено bounded retry при missing record,
+  без force-stop и без ослабления проверки существующего файла. ACL record теперь
+  проверяется как file. Детерминированная native regression доставляет настоящий
+  instance-fenced stop в этом окне; старый missing-path сценарий проходит.
+- Focused Windows rerun: 3 passed; полный Scheduler + wizard rerun: 37 passed,
+  2 expected POSIX-only skipped (331.73 s), все 24 native cases прошли,
+  оставшихся ACP Gateway Test-* задач нет.
+- Финальный полный Linux source: 1219 passed, 29 expected skipped (217.87 s).
+  Ruff/format/lock/diff clean; 6 Bash и 3 PowerShell блока инструкции parsed.
+
+.env после настройки может нормализовать quotes/порядок строк; проверены значения
+секретов, а при самом uv upgrade — byte-identical сохранение всех private files.
+Живая установка/обновление на VPS владельца и реальные model/approvals ещё впереди.
