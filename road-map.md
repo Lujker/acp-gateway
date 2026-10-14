@@ -700,12 +700,13 @@ known model-loss reconciliation не повторяет mutation, prompt-loss о
 #### P4.8.5 — Отдельный этап установки и приёмки
 
 **Статус:** PARTIAL — VPS rc4 service active/enabled, Windows rc4/Hermes ready;
-настоящий `home` foreground connector подключился к VPS после исправления TTY/colorama.
+настоящий `home` connector работает фоном через Task Scheduler, `home/hermes` ready.
+Исправлены TTY/colorama и окно консоли; GUI автозапуск Hermes настроен.
 Опубликован rc4: автоматический каталог connector agents, роли setup и диагностика,
 настоящий uv upgrade rc3→rc4 проверен Linux/Windows без потери YAML/env/key/БД.
 Все 24 native Scheduler cases прошли; текущие source/package evidence и выпуск —
 [журнал поставки](docs/items/p48-delivery-plan.ru.md).
-Остаются целевые services, второй PC, реальные model/approvals, reboot/logon/sleep/network.
+Остаются второй PC, реальные model/approvals, reboot/logon/sleep/network и обновление службы.
 Владелец выполняет живую установку сам по [uv/PyPI инструкции](docs/setup/self-install-pypi.ru.md).
 
 #### P4.8.6 — Перенесено в P4.9
@@ -811,8 +812,9 @@ Spikes возможны после базы P4.8; общий пользоват�
 Зафиксированы source/API и durable model state, оставшаяся очередь, ограничения Hermes,
 доказательства проверок и отдельный этап установки/приёмки.
 
-**Следующий этап:** Windows connector service install/enable, проверка `home/hermes`
-на VPS и Telegram, затем реальные model/approval и второй ПК; P4.8.5 PARTIAL.
+**Следующий этап:** первый реальный запрос через Telegram, затем model/approval
+и второй ПК; P4.8.5 PARTIAL. Windows задача работает без консоли; VPS ACP probe
+подтвердил `home/hermes` ready. GUI автозапуск Hermes настроен, вход/reboot ещё не проверен.
 TTY/colorama дефект rc4 устранён локально; runtime dependency/fallback/regрессия добавлены для следующего релиза.
 GitHub prerelease/PyPI 0.2.0rc4 опубликованы 2026-10-14; SHA256 wheel/sdist сверены.
 Финальный Linux source 1233/30; native setup/discovery 80/26, последние protocol/catalog 36,
@@ -828,7 +830,8 @@ Installed wheel Linux/Windows update/failed-health/rollback/uninstall и Linux b
 Перечень ниже — незакрытые смежные задачи, не prerequisites всего трека.
 
 1. **P4.8.5 — живая установка и приёмка 0.2.0rc4.** VPS уже работает; текущий Windows connector
-   проверен вручную. Далее его автозапуск, бот/CLI и реальные model/approval, затем второй PC;
+   работает фоном; Hermes Desktop открыт, GUI автозапуск настроен. Далее Telegram
+   model/approval, вход/reboot и второй PC;
    [порядок проверок](docs/setup/p48-acceptance.md).
 2. **P3.4/P3.5 — установка, настройка и контроль службы.** Основа Linux/WSL
    и самостоятельная Linux-сборка подтверждены чистым контейнерным CI;

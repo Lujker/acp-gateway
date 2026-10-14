@@ -38,6 +38,14 @@ def run(config, args):
             max_bytes=settings.max_bytes,
             backup_count=settings.backup_count,
         )
+        if sys.platform == "win32":
+            import ctypes
+            from ctypes import wintypes
+
+            get_console = ctypes.WinDLL("kernel32").GetConsoleWindow
+            get_console.argtypes = []
+            get_console.restype = wintypes.HWND
+            get_logger(__name__).info("connector runtime", console_attached=bool(get_console()))
         clients = {
             p.alias: AgentClient(
                 p,

@@ -302,3 +302,17 @@ def test_colorama_is_a_windows_runtime_dependency():
     requirement = next(Requirement(value) for value in dependencies if value.startswith("colorama"))
     assert requirement.marker.evaluate({"sys_platform": "win32"})
     assert not requirement.marker.evaluate({"sys_platform": "linux"})
+
+
+def test_windowless_logging_without_stderr_keeps_private_json_file(tmp_path, monkeypatch):
+    from types import SimpleNamespace
+
+    from acp_gateway import log as module
+
+    monkeypatch.setattr(module, "sys", SimpleNamespace(platform="win32", stderr=None))
+    path = tmp_path / "windowless.log"
+    configure_logging(file=path, extra_secrets=[SECRET])
+    get_logger("windowless").info("background ready", secret=SECRET)
+    record = json.loads(path.read_text())
+    assert record["event"] == "background ready"
+    assert SECRET not in path.read_text()

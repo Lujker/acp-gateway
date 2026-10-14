@@ -478,3 +478,46 @@ def test_native_graceful_stop_tolerates_record_removed_during_acl_check(
     assert marker.exists() and not runtime.exists()
     status = windows_service._request("status")
     assert not status["enabled"] and status["state"] != 4
+
+
+def test_native_task_runs_windowless_and_remains_cli_managed(disposable_connector):
+    import xml.etree.ElementTree as ET
+    from pathlib import Path
+
+    config, launch, _ = disposable_connector
+    service.install(config, launch=launch)
+    snapshot = windows_service.SetupTask(config).snapshot
+    # Only the task just created by this disposable fixture is parsed.
+    xml = ET.fromstring(snapshot["xml"])  # noqa: S314
+    ns = {"t": "http://schemas.microsoft.com/windows/2004/02/mit/task"}
+    command = xml.find("t:Actions/t:Exec/t:Command", ns).text
+    assert Path(command).name.lower() == "pythonw.exe"
+    windows_service._request("enable")
+    runtime = config.settings.resolved_data_dir() / "connector-control.json"
+    deadline = time.monotonic() + 20
+    while not runtime.exists():
+        assert time.monotonic() < deadline, "windowless connector did not start"
+        time.sleep(0.1)
+    pid = json.loads(runtime.read_text())["pid"]
+    script = (
+        f"$p=Get-Process -Id {int(pid)} -ErrorAction Stop; "
+        "@{name=$p.ProcessName; window=[Int64]$p.MainWindowHandle} | ConvertTo-Json -Compress"
+    )
+    from acp_gateway.powershell import encoded_script
+
+    probe = subprocess.run(
+        ["powershell.exe", "-NoProfile", "-EncodedCommand", encoded_script(script)],
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    process = json.loads(probe.stdout)
+    # uv may delegate its GUI launcher to a process named python.exe.
+    assert process["name"] in {"python", "pythonw"} and process["window"] == 0
+    records = [json.loads(line) for line in config.settings.logging.file.read_text().splitlines()]
+    assert any(
+        row.get("event") == "connector runtime" and row.get("console_attached") is False
+        for row in records
+    )
+    assert windows_service._request("disable")["stopMode"] == "graceful"
+    assert not runtime.exists()

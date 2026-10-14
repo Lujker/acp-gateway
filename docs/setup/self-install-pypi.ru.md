@@ -124,7 +124,10 @@ loginctl show-user "$USER" -p Linger
 powershell -ExecutionPolicy ByPass -c "irm https://astral.sh/uv/install.ps1 | iex"
 ```
 
-В новом окне:
+В новом окне проверить `uv --version`. Для фонового Windows запуска нужен
+uv не ниже 0.12.4; при старой версии сначала `uv self update`. В старом uv
+виртуальный `pythonw.exe` мог открывать консоль; исправление описано в
+[официальном changelog](https://github.com/astral-sh/uv/blob/main/changelogs/0.12.x.md).
 
 ```powershell
 uv tool install --python 3.12 --managed-python --with 'colorama>=0.4.6' 'acp-gateway==0.2.0rc4'
@@ -140,7 +143,16 @@ $Cfg = Join-Path $env:LOCALAPPDATA 'acpgw-connector'
 `colorama`, поэтому она включена в команду выше через `--with`. В исходниках
 зависимость уже добавлена для следующих релизов; повторять настройку не требуется.
 
-Hermes должен быть открыт, provider/model настроены; probe ожидает `ready`.
+Hermes Desktop должен быть открыт как приложение, provider/model настроены;
+probe ожидает `ready`. Автозапуск Desktop настраивается отдельно: ярлык
+`Hermes Desktop.lnk` в пользовательской папке `shell:startup` должен запускать
+GUI `Hermes.exe`. Запуск `hermes gateway run` не открывает Desktop. Коннектор
+запускается после входа этого же пользователя в Windows и ожидает Hermes.
+
+В опубликованном rc4 задача использует консольный Python. Исправление запуска
+через `pythonw.exe` и логирования без stderr подготовлено для следующего релиза;
+переустановка текущего rc4 из PyPI этого исправления не содержит. На текущем ПК
+владельца применён локальный исправленный код и проверен фоновый запуск.
 В меню сначала `base`: создаст приватную конфигурацию без обязательного соединения.
 Затем выйти, приватно скопировать ключ с VPS (SSH_USER/SERVER_IP заменить):
 

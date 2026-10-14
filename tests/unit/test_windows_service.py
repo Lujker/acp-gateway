@@ -39,6 +39,7 @@ def test_request_uses_fixed_script_and_json_stdin(monkeypatch):
     assert gzip.decompress(base64.b64decode(compressed)).decode("utf-8") == windows.SCRIPT
     assert len(subprocess.list2cmdline(captured["argv"])) < 32767
     assert json.loads(captured["input"])["directory"] == value
+    assert captured["creationflags"] == getattr(subprocess, "CREATE_NO_WINDOW", 0)
     assert "shell" not in captured
 
 
@@ -180,3 +181,23 @@ def test_windows_wizard_refuses_enabled_task_before_writing(tmp_path, monkeypatc
     with pytest.raises(ValueError, match="Disable the connector task"):
         wizard.wizard(tmp_path / "new")
     assert not (tmp_path / "new").exists()
+
+
+def test_windowless_python_is_selected_on_windows(tmp_path, monkeypatch):
+    console = tmp_path / "python.exe"
+    windowless = tmp_path / "pythonw.exe"
+    console.touch()
+    windowless.touch()
+    monkeypatch.setattr(
+        windows,
+        "sys",
+        SimpleNamespace(
+            platform="win32",
+            executable=str(console),
+            frozen=False,
+        ),
+    )
+    assert windows._background_executable() == str(windowless)
+    windowless.unlink()
+    with pytest.raises(ValueError, match="Windowless Python is missing"):
+        windows._background_executable()
