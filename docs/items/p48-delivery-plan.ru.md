@@ -766,3 +766,12 @@ service install → enable, чтобы заменить Action на pythonw; uv 
 Владелец сам обновит VPS/текущий Windows и затем установит второй connector.
 Его рабочие службы, Hermes и диалоги в процессе сборки не изменяются.
 Проверки и публикация будут записаны после завершения.
+
+
+Перед публикацией полный source suite: 1250 passed / 31 expected platform/opt-in
+skips (228.99s). Linux installed-wheel smoke update/failed-health/rollback/uninstall
+прошёл. Native Windows smoke первоначально корректно отказался управлять рабочей
+задачей из чужого temporary tool environment. В test harness добавлен ограниченный
+sitecustomize bootstrap: только Python внутри временного tools tree заменяет
+Scheduler prefix на уникальный ACP Gateway Smoke. Production package/задача не
+меняются; update/recovery child processes наследуют тот же test namespace.

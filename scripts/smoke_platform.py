@@ -12,6 +12,7 @@ import socket
 import subprocess
 import tempfile
 import time
+import uuid
 from pathlib import Path
 
 import yaml
@@ -52,6 +53,23 @@ def smoke(wheel: Path, binary: Path | None = None):
         if os.name == "nt":
             environment["UV_MANAGED_PYTHON"] = "true"
             environment["UV_PYTHON"] = "3.12"
+        if os.name == "nt":
+            # This harness runs beside the owner's real connector. Keep every child
+            # interpreter's Scheduler lookup in a disposable namespace, including
+            # update/recovery workers after a tool environment has been replaced.
+            bootstrap = root / "test-bootstrap"
+            bootstrap.mkdir()
+            task_prefix = "ACP Gateway Smoke-" + uuid.uuid4().hex + "-"
+            (bootstrap / "sitecustomize.py").write_text(
+                "import sys\nfrom pathlib import Path\n"
+                "if Path(sys.executable).resolve().is_relative_to("
+                f"Path({str(root / 'tools')!r}).resolve()):\n"
+                "    from acp_gateway import windows_service\n"
+                "    windows_service.SCRIPT = windows_service.SCRIPT.replace("
+                f"'ACP Gateway Connector-', {task_prefix!r})\n",
+                encoding="utf-8",
+            )
+            environment["PYTHONPATH"] = str(bootstrap)
         config_dir = root / "config"
         config = config_dir / "config.yaml"
         env_file = config_dir / ".env"
