@@ -398,11 +398,12 @@ def _first_existing(*candidates: Path) -> Path | None:
 
 
 def find_config_file(explicit: Path | None = None) -> Path | None:
+    """Project files require explicit opt-in; cwd must not redirect installed secrets."""
     if explicit is not None:
         return explicit
     if env := os.environ.get(CONFIG_PATH_ENV):
         return Path(env)
-    return _first_existing(Path("config.yaml"), paths.config_dir() / "config.yaml")
+    return _first_existing(paths.config_dir() / "config.yaml")
 
 
 def find_env_file(explicit: Path | None = None) -> Path | None:
@@ -410,7 +411,7 @@ def find_env_file(explicit: Path | None = None) -> Path | None:
         return explicit
     if env := os.environ.get(ENV_FILE_ENV):
         return Path(env)
-    return _first_existing(Path(".env"), paths.config_dir() / ".env")
+    return _first_existing(paths.config_dir() / ".env")
 
 
 def load_config(config_path: Path | None = None, env_file: Path | None = None) -> AppConfig:

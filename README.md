@@ -1,7 +1,9 @@
 # ACP Gateway
 
 Release candidate 0.2.0rc7 (schema 8), with independent setup sections: [PyPI installation, Ubuntu + Windows/Hermes (Russian)](docs/setup/self-install-pypi.ru.md).
-Check PyPI availability before installing. This candidate includes persistent Telegram
+Unreleased source `0.2.0rc8.dev0` contains security-review fixes; published rc7
+artifacts are unchanged. Check PyPI availability before installing.
+This candidate includes persistent Telegram
 delivery/status, rate limits, history retention and update recovery.
 The earlier [frozen 0.2.0rc1 bundle guide](docs/setup/self-install-0.2.0rc1.ru.md)
 remains specific to that artifact.
@@ -172,6 +174,9 @@ goose serve --host 0.0.0.0 --port 3284 --tls
 ```bash
 cp config.example.yaml config.yaml      # agents, policy, logging
 cp .env.example .env && chmod 600 .env  # secrets only
+# Explicitly trust these checkout files; installed defaults never depend on cwd.
+export ACPGW_CONFIG="$PWD/config.yaml"
+export ACPGW_ENV_FILE="$PWD/.env"
 ```
 
 Set the agent address and certificate fingerprint in `config.yaml`:
@@ -269,9 +274,9 @@ distro. Instructions and the remaining reboot check:
 
 | Source | Contents |
 |---|---|
-| `config.yaml` (`--config`, `ACPGW_CONFIG`, `./`, platform config dir) | structure: `gateway`, `agents`, `policy`, `logging` |
+| `config.yaml` (`--config`, `ACPGW_CONFIG`, platform config dir) | structure: `gateway`, `agents`, `policy`, `logging` |
 | `ACPGW_<SECTION>__<FIELD>` variables | overrides, e.g. `ACPGW_LOGGING__LEVEL=DEBUG` |
-| `.env` (`--env-file`, `ACPGW_ENV_FILE`, `./`, config dir) | **secrets only**, referenced by name (`secret_env`) |
+| `.env` (`--env-file`, `ACPGW_ENV_FILE`, platform config dir) | **secrets only**, referenced by name (`secret_env`) |
 
 `uv run acpgw paths` shows the config, data and log directories on the
 current platform.

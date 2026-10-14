@@ -276,6 +276,13 @@ class ControlDispatcher:
 
 
 def read_credential(path: Path) -> str:
+    if os.name == "nt":
+        from acp_gateway.windows_acl import check_private_paths
+
+        absolute = path.absolute()
+        check_private_paths(
+            [absolute], directories=[absolute.parent], purpose="Computer credential"
+        )
     flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0)
     fd = os.open(path, flags)
     with os.fdopen(fd, "rb") as stream:

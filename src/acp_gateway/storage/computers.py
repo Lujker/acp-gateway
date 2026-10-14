@@ -114,6 +114,15 @@ class ComputerRegistry:
         _validate_id(computer_id)
         if display_name is not None and not 1 <= len(display_name.strip()) <= 128:
             raise ValueError("computer display name must contain 1-128 characters")
+        if os.name == "nt":
+            from acp_gateway.windows_acl import check_private_paths
+
+            # New files inherit the parent DACL. Refuse public inheritance before
+            # creating a file or writing any bearer bytes; never repair user ACLs.
+            parent = token_file.absolute().parent
+            check_private_paths(
+                [parent], directories=[parent], purpose="Computer credential export"
+            )
         token = "acpc_" + secrets.token_urlsafe(32)
         created = None
         fd = None
@@ -130,6 +139,12 @@ class ComputerRegistry:
             created = os.fstat(fd)
             if os.name == "posix":
                 os.fchmod(fd, 0o600)
+            elif os.name == "nt":
+                check_private_paths(
+                    [token_file.absolute()],
+                    directories=[parent],
+                    purpose="Computer credential export",
+                )
             with os.fdopen(fd, "w", encoding="utf-8") as stream:
                 fd = None
                 stream.write(token + "\n")

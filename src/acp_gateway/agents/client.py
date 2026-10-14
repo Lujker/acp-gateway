@@ -62,6 +62,7 @@ from acp_gateway.agents.transport import (
     PinnedWebSocketTransport,
     TransportFactory,
 )
+from acp_gateway.agents.turn_buffer import TurnBuffer, TurnDone
 from acp_gateway.config import AgentProfile
 from acp_gateway.log import get_logger
 
@@ -109,10 +110,6 @@ class AgentReply:
     text: str
     stop_reason: str
     usage: dict[str, Any] | None
-
-
-class _TurnDone:
-    """Queue sentinel: the prompt request has completed."""
 
 
 class _AcpClientSide:
@@ -219,7 +216,7 @@ class AgentClient:
         self._bindings: dict[str, dict] = {}
         self._session_cwds: dict[str, str] = {}
         self._loading: set[str] = set()  # sessions whose history replay is suppressed
-        self._turns: dict[str, asyncio.Queue[AgentEvent | _TurnDone]] = {}
+        self._turns: dict[str, TurnBuffer] = {}
         self._permission_tasks: defaultdict[str, set[asyncio.Task[str | None]]] = defaultdict(set)
         self._permission_tools: dict[tuple[str, str], asyncio.Task] = {}
         self._watchers: set[asyncio.Task[None]] = set()
@@ -692,7 +689,7 @@ class AgentClient:
         if session_id in self._turns:
             raise SessionBusy(f"session {session_id} is busy")
 
-        queue: asyncio.Queue[AgentEvent | _TurnDone] = asyncio.Queue()
+        queue = TurnBuffer()
         self._turns[session_id] = queue
         transport = self._transport
         request = asyncio.ensure_future(
@@ -701,12 +698,17 @@ class AgentClient:
             )
         )
         # Updates sent before the response are processed before this callback runs.
-        request.add_done_callback(lambda _: queue.put_nowait(_TurnDone()))
+        request.add_done_callback(lambda _: queue.put_nowait(TurnDone()))
         finished = False
         try:
             while True:
                 item = await queue.get()
-                if isinstance(item, _TurnDone):
+                if isinstance(item, TurnDone):
+                    if item.error:
+                        self._uncertain.add(session_id)
+                        self._attached.discard(session_id)
+                        await self._abandon(transport)
+                        raise PromptFailed(item.error)
                     break
                 yield item
             response = await self._result(request, transport)
@@ -730,7 +732,7 @@ class AgentClient:
                             asyncio.shield(request), timeout=DEFAULT_CANCEL_TIMEOUT
                         )
             finally:
-                if not request.done() or request.cancelled():
+                if queue.failed or not request.done() or request.cancelled():
                     # A local task cancellation doesn't stop work on the agent.
                     # Keep this session blocked until a fresh connection is made.
                     self._uncertain.add(session_id)
@@ -794,6 +796,9 @@ class AgentClient:
         queue = self._turns.get(session_id)
         if queue is not None:
             queue.put_nowait(normalize(session_id, update))
+            if queue.failed:
+                self._uncertain.add(session_id)
+                self._attached.discard(session_id)
 
     async def _on_permission(
         self, session_id: str, tool_call: Any, options: list[Any]
@@ -837,7 +842,7 @@ class AgentClient:
                 if not tasks:
                     del self._permission_tasks[session_id]
 
-        if option_id is None:
+        if option_id is None or session_id in self._uncertain:
             return RequestPermissionResponse(outcome=DeniedOutcome(outcome="cancelled"))
         if all(o.option_id != option_id for o in request.options):
             self._log.warning(

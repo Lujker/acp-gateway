@@ -18,6 +18,12 @@ configured agent credentials and the MCP token. Hermes will use its own MCP
 token for [the MCP channel](hermes.md). Setting `ACPGW_MCP_TOKEN` enables
 `/mcp`; leaving it unset keeps a CLI-only daemon.
 
+By default, config and secrets come from the platform config directory created
+by `acpgw setup`. To use checkout files, explicitly set `ACPGW_CONFIG` and
+`ACPGW_ENV_FILE` to their paths, or pass both `--config` and `--env-file` before
+each command. Files in the current working directory are never discovered
+automatically, so opening an unrelated repository cannot redirect saved secrets.
+
 Run `uv run acpgw config check`, then `uv run acpgw serve`. The daemon runs
 in the foreground and listens on the configured loopback host and port
 (default `127.0.0.1:8765`). One daemon owns a data directory; a file lock
