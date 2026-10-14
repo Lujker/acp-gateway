@@ -1,9 +1,10 @@
 # ACP Gateway
 
-Frozen installation candidate 0.2.0rc1: [step-by-step self-install (Russian)](docs/setup/self-install-0.2.0rc1.ru.md). Published 0.1.0 does not include this workflow.
-
-Current source development is 0.2.0rc2.dev0 (schema 8), with persistent Telegram
-delivery/status and update recovery; it does not replace the frozen installer.
+Release candidate 0.2.0rc2 (schema 8): [PyPI installation, Ubuntu + Windows/Hermes (Russian)](docs/setup/self-install-pypi.ru.md).
+Check PyPI availability before installing. This candidate includes persistent Telegram
+delivery/status, rate limits, history retention and update recovery.
+The earlier [frozen 0.2.0rc1 bundle guide](docs/setup/self-install-0.2.0rc1.ru.md)
+remains specific to that artifact.
 See [development evidence](docs/items/p3.3-reliability.ru.md) and
 [delivery behavior](docs/setup/telegram-recovery.md).
 Future proposals: [scenarios](docs/items/scenarios-and-schedules.ru.md),

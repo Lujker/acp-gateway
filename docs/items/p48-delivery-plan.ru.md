@@ -346,3 +346,36 @@ Real isolated uv tool + dispatcher + fake systemctl: managed update и rollback
 при invalid wheel, восстановление running/enabled, сохранение env/key/registry
 прошли; smoke повторён после Windows изменений. Настоящий systemd lifecycle
 и полный установленный Windows uv/task update ещё не приняты.
+
+## 2026-10-14 — самостоятельная установка через PyPI: проверка доступности
+
+Владелец выбрал установку опубликованного пакета через uv и самостоятельное
+выполнение команд на целевых хостах с пошаговым сопровождением.
+Проверены инструкция self-install-0.2.0rc1.ru.md, pyproject.toml, PyPI JSON API
+и GitHub Releases API: PyPI содержит только 0.1.0, GitHub Releases — v0.1.0.
+Инструкция относится к локальному frozen wheel 0.2.0rc1; исходники имеют
+версию 0.2.0rc2.dev0. В CLI опубликованного тега нет --interactive и agents probe,
+а service.py не реализует Windows Scheduler. Обычная установка из PyPI
+не соответствует инструкции для текущего Windows/Hermes сценария.
+
+Публикационный job .github/workflows/linux-binary.yml берёт готовые wheel/sdist
+из GitHub Release с проверкой SHA256SUMS, но разрешает только stable tag vX.Y.Z.
+До установки требуется выбрать выпуск и подготовить его публикацию; замена
+PyPI на Git является отдельным путём и не проверяет поставку из реестра.
+ОС/количество серверов, ОС connector и domain/TLS пока требуют уточнения.
+Публикация и установка не запускались, runtime тесты не выполнялись.
+
+## 2026-10-14 — выпуск актуальных исходников 0.2.0rc2: IN PROGRESS
+
+Владелец выбрал свежий релиз всех текущих доработок вместо frozen rc1.
+Цель: один Ubuntu 24.04 dispatcher по IP:порту; сначала текущий Windows/Hermes,
+затем второй схожий ПК. Домен/nginx на другом сервере отложены; возможный перенос
+dispatcher — отдельный последующий этап. Команды установки выполняет владелец.
+Версия выпуска — 0.2.0rc2, без заявления о завершённой живой приёмке.
+Подготовка: source checks, чистая сборка, installed-wheel проверки Linux/Windows,
+GitHub Release и PyPI, затем проверка установки опубликованного пакета.
+
+Первичная сверка исходников: 1198 passed, 28 expected skipped (172.72 s);
+Ruff check/format и uv sync --locked прошли. Evidence: dist/rc2-verification/source.xml.
+Изменены номер версии, фильтр prerelease-тегов публикации, экспорт runtime lock
+отдельным asset и новая инструкция self-install-pypi.ru.md. Пакетные проверки впереди.
