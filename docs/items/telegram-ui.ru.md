@@ -72,7 +72,7 @@ Stored answer не переписывается. Explicit result button испо
   остановка точного job, legacy chunk continuation, unknown delivery/ACK fences,
   parse fallback, Unicode/HTML/code/table и отсутствие запросов модели при навигации.
 - Ruff/format/diff checks пройдены. Preview wheel/evidence находятся в ignored
-  dist/telegram-ux-preview и dist/telegram-ux-verification. PyPI/tag rc5 не менялись.
+  dist/telegram-ux-preview и dist/telegram-ux-verification. PyPI/tag rc5 не менялись. rc6 опубликован; release/registry evidence — в журнале поставки.
 
 Источники: [markdown-it-py](https://github.com/executablebooks/markdown-it-py/blob/master/docs/using.md),
 [aiogram callbacks](https://github.com/aiogram/aiogram/blob/dev-3.x/docs/dispatcher/filters/callback_data.rst),
@@ -95,3 +95,7 @@ Context7 использован перед official Bot API сверкой. Ак
 5. Проверить Windows logon/reboot, порядок Hermes/connector, sleep/wake, idle
    reconnect и обрыв во время работы; затем managed update/rollback на установках.
    Cold resume и unsafe cancel не считать поддержанными без upstream contract.
+
+Релиз: [rc6](https://github.com/Lujker/acp-gateway/releases/tag/v0.2.0rc6),
+[PyPI](https://pypi.org/project/acp-gateway/0.2.0rc6/). Реальный registry rc5→rc6
+проверен в обеих ОС; живая UI приёмка владельцем остаётся впереди.
