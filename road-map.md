@@ -234,13 +234,13 @@ MCP не имеет инструментов принятия решений.
 
 ### P2.3. Telegram
 
-**Статус:** PARTIAL — private allowlist, команды, sessions/results,
-inline allow_once/reject_once, audit и durable update cursor реализованы.
-2026-10-13 в development 0.2.0rc2.dev0 добавлены persistent result outbox,
-partial/final status edits и recovery/rollback fence. Проверены real aiogram
-dispatcher/types с fake Bot API и ACP mock; ранее getMe и pinned TLS/ACP probe.
-Остаток: живая приёмка сообщений, кнопок и статусов владельцем.
-[Журнал](docs/items/p3.3-reliability.ru.md). Ограничений на данные через Telegram
+**Статус:** PARTIAL — rc5 команды/results проверены владельцем на двух ПК.
+В source после rc5 реализованы inline panel, выбор agents/dialogues/models,
+подтверждение model change, адресные job controls и Markdown→Telegram HTML.
+Доставка сохраняет прежние chunk ACK/unknown fences и продолжает rc5 payload.
+Остаток: выпуск/живая приёмка нового интерфейса и allow/reject подтверждений.
+[UI и результаты проверок](docs/items/telegram-ui.ru.md),
+[надёжность](docs/items/p3.3-reliability.ru.md). Ограничений на данные через Telegram
 нет (решение владельца 2026-10-06); в канал идут запросы, ответы и подтверждения.
 **Репозиторий:** `acp-gateway` (`channels/telegram.py`, `docs/setup/telegram.md`)
 
@@ -699,16 +699,13 @@ known model-loss reconciliation не повторяет mutation, prompt-loss о
 
 #### P4.8.5 — Отдельный этап установки и приёмки
 
-**Статус:** PARTIAL — VPS rc4 service active/enabled, Windows rc4/Hermes ready;
-настоящий `home` connector работает фоном через Task Scheduler, `home/hermes` ready.
-Исправлены TTY/colorama и окно консоли; GUI автозапуск Hermes настроен.
-Опубликован rc4: автоматический каталог connector agents, роли setup и диагностика,
-настоящий uv upgrade rc3→rc4 проверен Linux/Windows без потери YAML/env/key/БД.
-Все 24 native Scheduler cases прошли; текущие source/package evidence и выпуск —
-[журнал поставки](docs/items/p48-delivery-plan.ru.md).
-Первый Telegram model request завершён PONG по отчёту владельца. Остаются второй PC,
-approvals, reboot/logon/sleep/network и обновление службы.
-Владелец выполняет живую установку сам по [uv/PyPI инструкции](docs/setup/self-install-pypi.ru.md).
+**Статус:** PARTIAL — владелец обновил VPS/Windows до rc5 и подтвердил работу
+обоих компьютеров home/home2 с Hermes через Telegram. Первый PONG и команды
+sessions/results работают; обновление через uv выполнено владельцем.
+Остаются live approvals, параллельная изоляция, reboot/logon/sleep/network и
+managed service update/rollback на целевых установках. Domain/WSS — позднее.
+Текущие package/native доказательства — [журнал поставки](docs/items/p48-delivery-plan.ru.md);
+новый Telegram UI пока source-only — [журнал](docs/items/telegram-ui.ru.md).
 
 #### P4.8.6 — Перенесено в P4.9
 
@@ -813,29 +810,21 @@ Spikes возможны после базы P4.8; общий пользоват�
 Зафиксированы source/API и durable model state, оставшаяся очередь, ограничения Hermes,
 доказательства проверок и отдельный этап установки/приёмки.
 
-**Следующий этап:** обновление владельцем опубликованного rc5 (GitHub/PyPI), затем
-approvals, lifecycle и второй ПК; первый Telegram запрос
-завершился PONG (job cfbd548e43c4), сообщено владельцем; P4.8.5 PARTIAL.
-Windows задача работает без консоли; VPS ACP probe
-подтвердил `home/hermes` ready. GUI автозапуск Hermes настроен, вход/reboot ещё не проверен.
-TTY/colorama, фоновая Windows задача, Telegram menu/status и dialogue cards исправлены в rc5.
-GitHub prerelease/PyPI 0.2.0rc4 опубликованы 2026-10-14; SHA256 wheel/sdist сверены.
-Финальный Linux source 1233/30; native setup/discovery 80/26, последние protocol/catalog 36,
-все 24 Scheduler и 32/3 native recovery checks прошли. Исправлен Windows rollback при mapped DLL.
-Installed wheel Linux/Windows update/failed-health/rollback/uninstall и Linux bundle/Git install прошли.
-После публикации registry rc3→rc4 uv upgrade в обеих ОС сохранил настройки/ключи/БД;
-[журнал и evidence](docs/items/p48-delivery-plan.ru.md).
-Владелец устанавливает сам по [инструкции uv/PyPI](docs/setup/self-install-pypi.ru.md):
-один Ubuntu 22.04.5 dispatcher по IP:порту, Telegram, текущий Windows/Hermes, затем второй connector.
-Агенты настраиваются на ПК и появляются на VPS автоматически; enrollment/key transfer остаются явными.
-Живые model/approval, reconnect, logon/reboot/sleep/network и target service update/rollback остаются
-приёмкой; domain/WSS и перенос позже. Goose/platform combinations — P4.9; ownership — P4.10.
+**Следующий этап:** выпуск и живая приёмка нового Telegram UI (P2.3), затем
+approvals и host lifecycle P4.8.5. Владелец подтвердил rc5 на VPS и двух Windows
+ПК, ответы и переключение маршрутов работают. P4.8.5 остаётся PARTIAL.
+Inline buttons/Markdown и `update --stable --with-services` готовы в source после
+rc5; опубликованный rc5 этих возможностей ещё не содержит.
+Доказательства: [UI](docs/items/telegram-ui.ru.md),
+[поставка/обновление](docs/items/p48-delivery-plan.ru.md).
+Открыты live allow/reject, изоляция параллельных диалогов, reconnect при работе,
+logon/reboot/sleep/network и целевой managed update/rollback. Domain/WSS позже;
+Goose/platform — P4.9, ownership — P4.10.
 Перечень ниже — незакрытые смежные задачи, не prerequisites всего трека.
 
-1. **P4.8.5 — обновление до 0.2.0rc5 и живая приёмка.** VPS уже работает; текущий Windows connector
-   работает фоном; Hermes Desktop открыт, GUI автозапуск настроен. Далее Telegram
-   approvals, вход/reboot и второй PC; первый Telegram prompt завершён PONG;
-   [порядок проверок](docs/setup/p48-acceptance.md).
+1. **P2.3/P4.8.5 — Telegram UI и оставшаяся приёмка.** Выпустить source кнопок и
+   форматирования, проверить на двух ПК. Затем approvals/изоляция и lifecycle;
+   [UI](docs/items/telegram-ui.ru.md), [порядок проверок](docs/setup/p48-acceptance.md).
 2. **P3.4/P3.5 — установка, настройка и контроль службы.** Основа Linux/WSL
    и самостоятельная Linux-сборка подтверждены чистым контейнерным CI;
    выпускать версии вручную из локальной сборки; Actions только по ручному запуску.
@@ -843,7 +832,7 @@ Installed wheel Linux/Windows update/failed-health/rollback/uninstall и Linux b
    Task Scheduler lifecycles уже подтверждены на текущем хосте.
 4. **P2.3/P3.3 — живая приёмка Telegram.** Команды/подтверждения реализованы;
    persistent delivery и status edits включены в опубликованный 0.2.0rc2,
-   [журнал](docs/items/p3.3-reliability.ru.md). Кандидат установки — 0.2.0rc4.
+   [журнал](docs/items/p3.3-reliability.ru.md). Кандидат установки — 0.2.0rc5.
 5. **P4.1 — VPS-диспетчер и собственный WebSocket-коннектор.** Основа для `P4.8`:
    один владелец, ACP-релей. Enrollment и WS/WSS-регистрация
    готовы; инъекция транспорта в AgentClient реализована и проверена на mock ACP

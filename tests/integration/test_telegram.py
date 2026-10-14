@@ -25,6 +25,14 @@ TOKEN = "123456:" + "test-telegram-credential"
 SECRET = "mock-goose-" + "secret-7781"
 
 
+def approval_message(message):
+    return bool(message.reply_markup) and any(
+        (button.callback_data or "").startswith("a:")
+        for row in message.reply_markup.inline_keyboard
+        for button in row
+    )
+
+
 async def eventually(predicate):
     async with asyncio.timeout(5):
         while not predicate():
@@ -119,7 +127,7 @@ async def test_mcp_approval_bound_to_owner_chat_message_and_request(telegram, in
     await feed(channel, 1, "/start")
     job = await core.submit(Conversation("mcp", "test", "work"), "run exactly: echo hi .")
     await eventually(lambda: bool(channel._buttons))
-    button_message = next(m for m in session.sent if m.reply_markup)
+    button_message = next(m for m in session.sent if approval_message(m))
     buttons = button_message.reply_markup.inline_keyboard[0]
     assert len(buttons) == 2
     data = buttons[index].callback_data
@@ -224,7 +232,7 @@ async def test_expired_button_cannot_allow_and_stop_cancels_pending_turn(telegra
     core.policy.settings.approval_timeout_seconds = 1
     job = await core.submit(Conversation("telegram", str(OWNER), "work"), "run exactly: echo hi .")
     await eventually(lambda: bool(channel._buttons))
-    msg = next(m for m in session.sent if m.reply_markup)
+    msg = next(m for m in session.sent if approval_message(m))
     data = msg.reply_markup.inline_keyboard[0][0].callback_data
     result = await core.wait(job.id, 3)
     assert result.answer == "DENIED"
@@ -256,10 +264,10 @@ async def test_chat_approval_stays_private_to_its_owner(telegram):
     await feed(channel, 4, "run exactly: echo hi .", user=OTHER)
     await eventually(lambda: bool(channel._buttons))
     assert {chat for chat, _ in channel._buttons} == {OTHER}
-    assert not any(m.reply_markup and m.chat.id == OWNER for m in session.sent)
+    assert not any(approval_message(m) and m.chat.id == OWNER for m in session.sent)
     await feed(channel, 5, "/approvals", user=OWNER)
     assert session.sent[-1].text == "No pending approvals."
-    button_message = next(m for m in session.sent if m.reply_markup and m.chat.id == OTHER)
+    button_message = next(m for m in session.sent if approval_message(m) and m.chat.id == OTHER)
     assert "From: this chat" in button_message.text
     await click(
         channel,
@@ -291,7 +299,7 @@ async def test_blocked_chat_does_not_starve_other_approvers(telegram):
     job = await core.submit(Conversation("mcp", "test", "work"), "run exactly: echo hi .")
     await eventually(lambda: bool(channel._buttons))
     assert {chat for chat, _ in channel._buttons} == {OTHER}
-    button_message = next(m for m in session.sent if m.reply_markup)
+    button_message = next(m for m in session.sent if approval_message(m))
     assert "From: mcp:test" in button_message.text
     await core.cancel(job.conversation)
 
@@ -348,7 +356,7 @@ async def test_slow_result_delivery_does_not_block_approval_clicks(telegram):
     try:
         job = await core.submit(Conversation("mcp", "test", "work"), "run exactly: echo hi .")
         await eventually(lambda: bool(channel._buttons))
-        message = next(m for m in session.sent if m.reply_markup)
+        message = next(m for m in session.sent if approval_message(m))
         await click(channel, 2, message, message.reply_markup.inline_keyboard[0][0].callback_data)
         assert (await core.wait(job.id, 2)).answer == "hi"
         assert not release.is_set()
@@ -482,6 +490,8 @@ async def test_status_distinguishes_pc_link_from_lazy_acp(
         agents={"home/hermes": client},
         channels={"cli": SimpleNamespace(connected=False), "mcp": SimpleNamespace(connected=True)},
         running_jobs=lambda: [],
+        agent=lambda alias: client,
+        store=SimpleNamespace(channel_state=lambda *args: None, active_revision=lambda conv: 0),
     )
     try:
         await channel._command(OWNER, "/status")
