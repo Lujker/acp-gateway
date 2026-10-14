@@ -76,9 +76,16 @@ class ConnectorLaunch:
     def hello(self, config):
         try:
             return Hello(
+                version=2,
                 computer_id=self.computer_id,
                 agents=[
-                    AgentManifest(alias=p.alias, display_name=p.display_name)
+                    AgentManifest(
+                        alias=p.alias,
+                        display_name=p.display_name,
+                        kind=p.kind,
+                        default_cwd=p.default_cwd,
+                        session_mode=p.session_mode,
+                    )
                     for p in config.settings.agents
                 ],
             )

@@ -36,6 +36,7 @@ def setup(tmp_path, monkeypatch):
     def prompts(*, save=True, task=True):
         values = {
             "Role": "connector",
+            "Server connection URL": "wss://server.example/acpgw/connect",
             "Enrollment key file copied privately from the server": str(key),
             QUESTION: task,
             "Computer ID registered on the server": "work",

@@ -221,6 +221,20 @@ def service(cfg, alias, action, *, config_file=None):
 
 def run(cfg, args):
     if args.agent_command == "list":
+        if cfg.settings.connector.enabled:
+            from acp_gateway.cli.client import api_url, check_response
+            from acp_gateway.daemon import owner_token
+
+            response = httpx.get(
+                api_url(cfg) + "/health",
+                headers={"Authorization": "Bearer " + owner_token(cfg).get_secret_value()},
+                timeout=5,
+                trust_env=False,
+            )
+            check_response(response)
+            for agent in response.json()["agents"]:
+                print(f"{agent['alias']}: {agent['title']}; connected={agent['connected']}")
+            return 0
         for profile in cfg.settings.agents:
             print(f"{profile.address}: {profile.kind}/{profile.backend} cwd={profile.default_cwd}")
         return 0

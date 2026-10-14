@@ -143,6 +143,7 @@ def test_connector_base_can_add_connection_and_agents_in_either_order(tmp_path):
         prompts=save_answers(
             **{
                 "Enrollment key file copied privately from the server": str(key),
+                "Server connection URL": "wss://server.example/acpgw/connect",
             }
         ),
     )
@@ -315,3 +316,32 @@ def test_active_service_role_change_is_refused_without_writing(tmp_path, monkeyp
     with pytest.raises(ValueError, match="Stop the existing service"):
         wizard(tmp_path, section="base", role="server", prompts=save_answers())
     assert (tmp_path / STATE).read_bytes() == before
+
+
+@pytest.mark.parametrize(
+    "role,hidden",
+    [
+        ("server", {"agents", "connection", "hermes", "agent-tools"}),
+        ("connector", {"gateway", "telegram", "hermes", "computers", "agent-tools"}),
+    ],
+)
+def test_role_specific_setup_choices(tmp_path, role, hidden):
+    base(tmp_path, role)
+
+    class RoleChoices(Sections):
+        def choice(self, label, choices, default):
+            if label == "Setup section":
+                assert hidden.isdisjoint(choices)
+                assert {"base", "service", "check", "exit"}.issubset(choices)
+            return super().choice(label, choices, default)
+
+    assert setup_menu(tmp_path, prompts=RoleChoices(["exit"])) == 0
+
+
+def test_local_working_directory_is_real_and_absolute(tmp_path):
+    from acp_gateway.cli.wizard import _working_directory
+
+    assert _working_directory(str(tmp_path)) == str(tmp_path)
+    for value in ("relative", str(tmp_path / "missing")):
+        with pytest.raises(ValueError, match="existing absolute"):
+            _working_directory(value)

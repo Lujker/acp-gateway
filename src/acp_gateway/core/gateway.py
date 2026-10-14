@@ -118,6 +118,28 @@ class GatewayCore:
     def agents(self) -> Mapping[str, AgentClient]:
         return self._agents
 
+    def add_agent(self, client: AgentClient) -> None:
+        """Publish a newly discovered route to all running channels."""
+        alias = client.profile.address
+        if self._closed or alias in self._agents:
+            raise ValueError("agent route is already registered or gateway is closed")
+        client.set_permission_handler(partial(self._on_permission, alias))
+        self._agents[alias] = client
+        for channel in self._channels.values():
+            callback = getattr(channel, "agent_added", None)
+            if callback is not None:
+                callback(alias)
+
+    async def remove_agents(self, aliases) -> None:
+        clients = []
+        for alias in aliases:
+            clients.append(self._agents.pop(alias))
+            for channel in self._channels.values():
+                callback = getattr(channel, "agent_removed", None)
+                if callback is not None:
+                    callback(alias)
+        await asyncio.gather(*(client.close() for client in clients))
+
     def agent(self, alias: str) -> AgentClient:
         try:
             return self._agents[alias]
@@ -318,6 +340,7 @@ class GatewayCore:
     ) -> SessionRecord:
         self._check_admission()
         client = self.agent(conversation.agent)
+        cwd = cwd or client.profile.default_cwd
         self.policy.check_new_session()
         revision = self.store.active_revision(conversation)
         self._creating += 1

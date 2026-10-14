@@ -75,12 +75,12 @@ def test_hermes_setup_cancel_and_repeat_preserve_credentials(discovered, tmp_pat
     assert (directory / ".env").read_bytes() == before
 
 
-def test_switch_goose_to_hermes_discards_mode_url_and_keeps_saved_secret(discovered):
+def test_switch_goose_to_hermes_discards_mode_url_and_keeps_saved_secret(discovered, tmp_path):
     old = {
         "alias": "agent",
         "kind": "goose",
         "url": "ws://127.0.0.1:3284/acp",
-        "default_cwd": "/work",
+        "default_cwd": str(tmp_path),
         "session_mode": "smart_approve",
         "secret_env": "GOOSE_SECRET",
     }
@@ -113,6 +113,7 @@ def test_connector_accepts_hermes_attachment(discovered, tmp_path):
             prompts=save_answers(
                 **{
                     "Role": "connector",
+                    "Server connection URL": "wss://server.example/acpgw/connect",
                     "Agent type": "hermes",
                     "Enrollment key file copied privately from the server": str(key),
                 }

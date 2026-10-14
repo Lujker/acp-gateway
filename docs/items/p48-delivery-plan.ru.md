@@ -516,3 +516,57 @@ source-final.xml, windows-final.xml и windows-race.xml.
 uv tool install --upgrade --python 3.12 "acp-gateway==0.2.0rc3", проверить version,
 затем пройти новый setup начиная с base. Target службы ещё не запускались;
 живые VPS/Telegram/Hermes/два PC и physical lifecycle остаются P4.8.5 PARTIAL.
+
+
+### 2026-10-14 — rc4: устранение повторной настройки на VPS (IN PROGRESS)
+
+Владелец остановил живую установку после enrollment `home` и поручил аудит полного пути
+установки/настройки dispatcher и Windows connectors, исправления и выпуск 0.2.0rc4.
+Проблема rc3: вручную повторяются alias/kind/cwd локального агента на VPS, отсутствует
+автоматическое включение объявленных connector agents в runtime core, меню предлагает
+неприменимые к роли разделы; CLI conversation использует YAML вместо runtime каталога.
+Выбран authenticated hello v2 с ограниченными metadata; прочие control frames остаются v1.
+Dispatcher rc4 принимает legacy hello v1/manual routes. Порядок обновления: dispatcher первым.
+Каталог хранится в существующем channel_state, schema остаётся 8 для совместимости rollback;
+настройки агента и локальные ограничения принадлежат ПК, прежние адреса сохраняют историю.
+Проверки и публикация ещё не выполнены. Аккаунты/pairing P4.10 не включены в этот выпуск.
+
+
+#### Аудит rc4 и реализованные исправления
+
+| Неудобство / дефект | Результат |
+| --- | --- |
+| Повторный kind/alias/Windows cwd на VPS | Коннектор объявляет metadata; dispatcher автоматически добавляет runtime routes |
+| Новый ПК требует перезапуска gateway | Runtime core и MCP обновляют каталог; CLI/Telegram читают актуальные agents |
+| Отключение/перезапуск теряет список ПК | Каталог сохранён в channel_state; offline не объявляется ready |
+| Одинаковый alias на двух ПК | Адрес computer/alias; интеграционно проверены два разных enrollment keys |
+| Коллизия MCP для a/b__c и a__b/c | Компоненты имени экранируются; простые home__hermes имена сохранены |
+| Смешение ролей в setup/settings | Меню setup фильтрует разделы по роли; settings открывает тот же мастер |
+| Пустой server принимается за ошибку | doctor сообщает discovery; config check отличает configured profiles от remote catalog |
+| Фиктивный server.example по Enter | Новый endpoint нужно ввести явно; пример вынесен в подсказку |
+| cwd воспринимается как условность | На ПК объясняется назначение и проверяется существующий абсолютный каталог |
+| Смена defaults во время создания сессии | Core фиксирует cwd запроса; уже сохранённые диалоги не мигрируют молча |
+| Install принимается за запуск службы | Отдельная подсказка install → enable; инструкции linger / Windows logon |
+| Непонятная ошибка connector doctor | Разделены ненастроенное connection, enrollment/config и TCP/TLS |
+| Обновление сбрасывает ручную настройку | Настоящие uv rc3→rc4 проверки Linux/Windows сохранили YAML/env/setup/key/registry/SQLite |
+
+Протокол: только hello расширен до v2; остальные frames v1, legacy hello v1 сериализуется
+без новых полей и принимается rc4. Неполные metadata, traversal/relative cwd отклоняются.
+Сначала обновляется dispatcher. Для rc3 connector остаются прежние ручные маршруты.
+БД остаётся schema 8: metadata использует существующее channel_state, что сохраняет
+возможность отката пакета. Приватные ключи не попадают в manifest или журнал.
+
+Обязательные ручные шаги: enrollment компьютера и приватная передача ключа; реальный
+URL нельзя вывести из listen 0.0.0.0. Windows connector редактируется при отключённой
+задаче, затем enable; install без отдельного enable не запускает задачу.
+MCP-клиенту с кешем инструментов может потребоваться refresh/reconnect. Изменение cwd
+действует на новые диалоги; изменение alias/ID создаёт другую адресацию истории.
+Автоматический pairing/user UID/workspace ownership остаются P4.10.
+
+Проверки на текущем этапе: полный Linux до последнего MCP-fix 1230 passed / 29 skips;
+финальный профиль последних изменений 70 passed; native Windows 80 passed / 26 skips
+(24 Scheduler opt-in + 2 POSIX-only), отдельные все 24 native Scheduler cases прошли,
+последние protocol/catalog/doctor изменения native 36 passed. Настоящий uv upgrade с
+registry rc3 на rc4 wheel выполнен в обеих ОС; конфигурация/ключи/registry/SQLite сохранены.
+Linux PTY setup и запуск пустого dispatcher проверены. Итоговый source и installed-wheel
+update/rollback прогон и публикация фиксируются ниже после завершения.

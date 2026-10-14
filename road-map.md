@@ -699,16 +699,14 @@ known model-loss reconciliation не повторяет mutation, prompt-loss о
 
 #### P4.8.5 — Отдельный этап установки и приёмки
 
-**Статус:** PARTIAL — frozen 0.2.0rc1 проверен source и installed wheel:
-Linux 1152/28; native wheel 374/2 POSIX skips, все 23 Scheduler cases.
-Readonly Hermes probe готов; реальный VPS→Windows/Hermes→Telegram не принят.
-Целевые uv/Git install/update/services, второй PC, approvals/model calls,
-reboot/logon/sleep/network остаются открытыми. Владелец сначала устанавливает сам.
-Development 0.2.0rc2.dev0 имеет отдельные 1198/28 source, 62 native source checks
-и isolated wheel schema 6→8/update/rollback; это не обновлённый rc1 или live proof.
-[Матрица и обязанности](docs/items/p48-delivery-plan.ru.md),
-[checkpoint/evidence](docs/items/p48-resume.ru.md),
-[самостоятельная установка](docs/setup/self-install-0.2.0rc1.ru.md).
+**Статус:** PARTIAL — владелец установил PyPI rc3 на Ubuntu 22.04.5 и выполнил
+base/Telegram/enrollment `home`; служба и реальные Windows agents ещё не приняты.
+Готовится rc4: автоматический каталог connector agents, роли setup и диагностика,
+настоящий uv upgrade rc3→rc4 проверен Linux/Windows без потери YAML/env/key/БД.
+Все 24 native Scheduler cases прошли; текущие source/package evidence и выпуск —
+[журнал поставки](docs/items/p48-delivery-plan.ru.md).
+Остаются целевые services, второй PC, реальные model/approvals, reboot/logon/sleep/network.
+Владелец выполняет живую установку сам по [uv/PyPI инструкции](docs/setup/self-install-pypi.ru.md).
 
 #### P4.8.6 — Перенесено в P4.9
 
@@ -813,7 +811,7 @@ Spikes возможны после базы P4.8; общий пользоват�
 Зафиксированы source/API и durable model state, оставшаяся очередь, ограничения Hermes,
 доказательства проверок и отдельный этап установки/приёмки.
 
-**Следующий этап:** владелец обновляет установленный rc2 до опубликованного rc3 и проходит независимый setup; P4.8.5 PARTIAL.
+**Следующий этап:** IN PROGRESS — аудит установки и выпуск rc4 с автоматическим каталогом connector agents; затем продолжение живой приёмки P4.8.5 (PARTIAL).
 GitHub prerelease и PyPI опубликованы 2026-10-14; SHA256 wheel/sdist сверены,
 свежая uv/PyPI установка в Linux и Windows дала version 0.2.0rc3 / source registry; registry rc2→rc3 upgrade сохранил настройки/ключи/БД.
 Пакетные Linux/Windows update/rollback и 24 native Scheduler cases проверены;
@@ -825,7 +823,7 @@ GitHub prerelease и PyPI опубликованы 2026-10-14; SHA256 wheel/sdis
 Goose/platform combinations — P4.9, cold/shared write recovery вне Windows MVP.
 Перечень ниже — незакрытые смежные задачи, не prerequisites всего трека.
 
-1. **P4.8.5 — живая установка и приёмка 0.2.0rc3.** Сначала uv update с rc2; Ubuntu 22.04.5 по IP:порту,
+1. **P4.8.5 — живая установка и приёмка 0.2.0rc4.** Сначала uv update с rc3; Ubuntu 22.04.5 по IP:порту,
    бот, текущий Windows/Hermes+connector/автозапуск/CLI, затем второй PC;
    [порядок проверок](docs/setup/p48-acceptance.md).
 2. **P3.4/P3.5 — установка, настройка и контроль службы.** Основа Linux/WSL
@@ -835,7 +833,7 @@ Goose/platform combinations — P4.9, cold/shared write recovery вне Windows 
    Task Scheduler lifecycles уже подтверждены на текущем хосте.
 4. **P2.3/P3.3 — живая приёмка Telegram.** Команды/подтверждения реализованы;
    persistent delivery и status edits включены в опубликованный 0.2.0rc2,
-   [журнал](docs/items/p3.3-reliability.ru.md). Кандидат установки — 0.2.0rc3.
+   [журнал](docs/items/p3.3-reliability.ru.md). Кандидат установки — 0.2.0rc4.
 5. **P4.1 — VPS-диспетчер и собственный WebSocket-коннектор.** Основа для `P4.8`:
    один владелец, ACP-релей. Enrollment и WS/WSS-регистрация
    готовы; инъекция транспорта в AgentClient реализована и проверена на mock ACP

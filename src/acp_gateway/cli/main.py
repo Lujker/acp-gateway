@@ -320,7 +320,9 @@ def _cmd_config_check(cfg: AppConfig) -> int:
     for name in (s.gateway.api_token_env, s.gateway.mcp_token_env):
         print(f"  {name}: {'set' if name in cfg.secrets else 'missing'}")
 
-    print(f"agents:      {len(s.agents)}")
+    print(f"agents:      {len(s.agents)} configured")
+    if s.connector.enabled:
+        print("remote agents: discovered from enrolled connectors; acpgw computers status")
     for agent in s.agents:
         if agent.tls_fingerprint:
             tls = "pinned"

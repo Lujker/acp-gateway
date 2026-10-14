@@ -41,31 +41,78 @@ def setup_menu(
         state = _state(_snapshot(config_file.parent / "setup.json"))
         print(f"\nACP Gateway setup · {config_file}")
         print("Role: " + state.get("role", "not configured") + "; each section is independent.")
-        print(
-            "base: role and network; agents: local profiles or server routes; "
-            "connection: outgoing connector; telegram: bot and access; "
-            "hermes: gateway MCP integration; computers: private enrollment keys; "
-            "service: autostart; policy/rate-limits/retention/logging: runtime settings."
+        if state:
+            try:
+                cfg = load_config(config_file, env_file)
+            except (OSError, ValueError):
+                cfg = None
+                print("Configuration needs repair; choose check for diagnostics.")
+            if state["role"] == "server":
+                print("Enroll a PC here; configure its agents there. Routes appear automatically.")
+            elif state["role"] == "connector" and cfg is not None:
+                print(
+                    "Local agents: "
+                    + str(len(cfg.settings.agents))
+                    + "; server connection: "
+                    + ("configured" if state.get("connection") else "not configured")
+                )
+                if not cfg.settings.agents or not state.get("connection"):
+                    print("Complete agents and connection before starting or enabling the service.")
+            print(
+                "Service: install prepares autostart; enable starts it and enables future startup."
+            )
+        else:
+            print("Start with base; optional sections become available for the selected role.")
+        saved_role = state.get("role", role or "local")
+        choices = (
+            (
+                (
+                    "base",
+                    "gateway",
+                    "telegram",
+                    "computers",
+                    "service",
+                    "policy",
+                    "rate-limits",
+                    "retention",
+                    "logging",
+                    "check",
+                    "exit",
+                )
+                if saved_role == "server"
+                else (
+                    "base",
+                    "agents",
+                    "connection",
+                    "service",
+                    "policy",
+                    "logging",
+                    "check",
+                    "exit",
+                )
+                if saved_role == "connector"
+                else (
+                    "base",
+                    "gateway",
+                    "agents",
+                    "telegram",
+                    "hermes",
+                    "agent-tools",
+                    "service",
+                    "policy",
+                    "rate-limits",
+                    "retention",
+                    "logging",
+                    "check",
+                    "exit",
+                )
+            )
+            if state
+            else ("base", "exit")
         )
         action = prompts.choice(
             "Setup section",
-            (
-                "base",
-                "gateway",
-                "agents",
-                "connection",
-                "telegram",
-                "hermes",
-                "computers",
-                "agent-tools",
-                "service",
-                "policy",
-                "rate-limits",
-                "retention",
-                "logging",
-                "check",
-                "exit",
-            ),
+            choices,
             "exit" if config_file.exists() else "base",
         )
         if action == "exit":

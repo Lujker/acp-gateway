@@ -114,6 +114,7 @@ def test_server_enrollment_and_connector_start(tmp_path, monkeypatch):
             prompts=save_answers(
                 **{
                     "Role": "connector",
+                    "Server connection URL": "wss://server.example/acpgw/connect",
                     "Enrollment key file copied privately from the server": str(key),
                 }
             ),
@@ -261,14 +262,14 @@ def test_service_start_failure_restores_configuration_and_unit(
     assert operations == ["enable", "stop"]
 
 
-def test_profile_edit_preserves_advanced_options_and_remove_keeps_other_agent():
+def test_profile_edit_preserves_advanced_options_and_remove_keeps_other_agent(tmp_path):
     raw = {
         "agents": [
             {
                 "alias": "goose",
                 "kind": "goose",
                 "url": "ws://192.0.2.1/acp",
-                "default_cwd": "/work",
+                "default_cwd": str(tmp_path),
                 "allow_insecure_transport": True,
                 "session_mode": "manual",
             },

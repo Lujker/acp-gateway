@@ -83,6 +83,12 @@ def configured_app(config: AppConfig):
             retention=config.settings.retention,
             rate_limits=config.settings.rate_limits,
         )
+        if dispatcher is not None:
+            from acp_gateway.connectors.catalog import ConnectorCatalog
+
+            catalog = ConnectorCatalog(core, dispatcher, pin_dir=data_dir / "pins")
+            catalog.restore()
+            dispatcher.on_registration = catalog.registered
         cli = CliChannel()
         core.add_channel(cli)
         if config.settings.telegram.enabled:

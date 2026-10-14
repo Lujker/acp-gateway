@@ -112,3 +112,22 @@ def test_doctor_detects_stale_hermes_token(configured, tmp_path, capsys):
     assert doctor(config, env, as_json=True) == 1
     report = json.loads(capsys.readouterr().out)
     assert any(c["name"] == "hermes" and c["status"] == "error" for c in report["checks"])
+
+
+def test_server_without_manual_profiles_is_valid(tmp_path, capsys, monkeypatch):
+    monkeypatch.setattr("acp_gateway.cli.wizard._check_ports", lambda *args: None)
+    monkeypatch.setattr("acp_gateway.cli.wizard._managed_running", lambda *args: False)
+    wizard(tmp_path, section="base", role="server", prompts=save_answers())
+    capsys.readouterr()
+    assert doctor(tmp_path / "config.yaml", tmp_path / ".env", as_json=True) == 0
+    report = json.loads(capsys.readouterr().out)
+    assert any(c["name"] == "agents" and c["status"] == "info" for c in report["checks"])
+
+
+def test_partial_connector_explains_missing_connection(tmp_path, capsys, monkeypatch):
+    monkeypatch.setattr("acp_gateway.cli.wizard._managed_running", lambda *args: False)
+    wizard(tmp_path, section="base", role="connector", prompts=save_answers())
+    capsys.readouterr()
+    assert doctor(tmp_path / "config.yaml", tmp_path / ".env", as_json=True) == 1
+    report = json.loads(capsys.readouterr().out)
+    assert any(c["detail"] == "Server connection is not configured yet" for c in report["checks"])
