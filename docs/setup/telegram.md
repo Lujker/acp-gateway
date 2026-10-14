@@ -1,8 +1,8 @@
 # Telegram channel
 
-Development 0.2.0rc2.dev0 adds durable result delivery and advisory status
-edits. See [recovery and status configuration](telegram-recovery.md).
-The frozen 0.2.0rc1 self-install candidate keeps its earlier behavior.
+Published 0.2.0rc5 includes durable result delivery and status edits. See
+[recovery and status configuration](telegram-recovery.md). Release candidate 0.2.0rc6 adds inline controls and Markdown rendering described
+below; published rc5 retains its earlier plain-text interface.
 
 Use a separate development bot created with BotFather, and put its token in
 `.env` as `TELEGRAM_BOT_TOKEN`. Never put the token in YAML or a command line.
@@ -44,7 +44,8 @@ is created automatically. Older direct/disabled bindings retain their refusal ru
 | Command | Action |
 |---|---|
 | Plain text | Send to the selected dialogue; refuse if none is selected |
-| `/start`, `/help` | Show commands |
+| `/start`, `/menu` | Open the inline control panel (rc6) |
+| `/help` | Show commands |
 | `/agent`, `/agent ALIAS` | List available routes or select one, e.g. `home/goose` |
 | `/new [ALIAS]` | Create and activate a new session |
 | `/sessions [PAGE]` | Dialogue cards for the selected agent, 10 per page; ▶ marks the active one |
@@ -54,6 +55,7 @@ is created automatically. Older direct/disabled bindings retain their refusal ru
 | `/delivery JOB_ID` | Development: inspect saved automatic delivery state |
 | `/stop` | Cancel this chat's selected agent jobs |
 | `/approvals` | Redisplay pending human approval buttons |
+| `/model`, `/models [PAGE]` | Observe the model and choose from paginated model buttons |
 
 Human approvals from other originating channels, including MCP and CLI, are
 delivered to known authorized private chats. Approvals for a Telegram chat's
@@ -126,3 +128,47 @@ Dialogue cards show the saved title (or “Untitled dialogue”), last activity 
 connection state when known, and the working folder on a separate line. `/new`
 and `/switch` confirm the dialogue ID, agent and folder. The list is scoped to
 this private chat and selected agent; `/sessions 2` opens the next page.
+
+
+## Inline controls and formatted answers (rc6)
+
+`/start` or `/menu` opens buttons under the message: Agents, Dialogues, New
+dialogue, Status, Model, Approvals and Help. Agent and dialogue lists offer
+selection buttons and dialogue pages. Text commands remain available. No reply
+keyboard is installed and button labels are never submitted as prompts.
+
+Each control is bound to the private user/chat and exact message. Agent/dialogue
+controls also capture the selected route and revision. Changing selection makes
+old controls stale. New/switch/model changes and cancellation are one-shot;
+a repeated click cannot repeat a host operation. Controls expire after one hour,
+a dispatcher restart, or bounded cache eviction; reopen `/menu`. Callback data
+contains an opaque random reference, not routes or confirmation credentials.
+Navigation shares the message rate limit. Human tool approvals keep their
+separate existing binding and do not consume the navigation limit.
+
+Job controls show the originating agent and dialogue ID. Saved results and
+job details remain accessible through their own private button even after
+selecting another agent. Cancel targets the exact owned job, never a newer job
+on another route; it is omitted when safe cancellation is explicitly unsupported.
+Finished jobs cannot be cancelled through an old control. Model choice buttons
+carry the observed dialogue/revision; upstream-required confirmation uses a
+separate one-shot button with the token retained only on the dispatcher.
+
+Agent answers, explicit results and bounded status previews support Markdown
+headings, emphasis, strikeout, inline code, fenced code with language, lists,
+quotes and HTTP(S) links. This compatible `sendMessage` HTML path renders tables
+as monospaced rows. Raw HTML is literal; images remain descriptive links and
+are not downloaded. Link previews are disabled. Unsupported math/media are
+not silently promoted into executable HTML or remote file uploads.
+
+Every long-answer fragment is independently valid HTML with at most 2000
+codepoints/4000 UTF-16 units after entity parsing. Formatting closes and reopens
+at boundaries, including code blocks. Redaction precedes parsing; redaction masks
+remain visible. Only an explicit Telegram entity-parse rejection falls back to
+plain text; ambiguous network outcomes never trigger an automatic resend.
+
+Automatic delivery hashes a versioned, deterministic rendered payload before
+sending and ACKs one fragment at a time. Already-bound rc5 deliveries finish
+using their original plain-text chunks; changed content/unknown outcomes retain
+the existing fences. Manual result buttons use the bounded explicit delivery
+queue and do not replay a model prompt. Formatting does not change stored answers.
