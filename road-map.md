@@ -813,19 +813,19 @@ Spikes возможны после базы P4.8; общий пользоват�
 Зафиксированы source/API и durable model state, оставшаяся очередь, ограничения Hermes,
 доказательства проверок и отдельный этап установки/приёмки.
 
-**Следующий этап:** живая установка опубликованного 0.2.0rc2, P4.8.5.
+**Следующий этап:** IN PROGRESS — разделение setup/TUI и выпуск rc3; затем обновление rc2 владельцем и P4.8.5.
 GitHub prerelease и PyPI опубликованы 2026-10-14; SHA256 wheel/sdist сверены,
 свежая uv/PyPI установка в Linux и Windows дала version 0.2.0rc2 / source registry.
 Пакетные Linux/Windows update/rollback и 23 native Scheduler cases проверены;
 [подробности выпуска](docs/items/p48-delivery-plan.ru.md).
 Владелец устанавливает сам по [инструкции uv/PyPI](docs/setup/self-install-pypi.ru.md):
-один Ubuntu 24.04 dispatcher по IP:порту, Telegram bot, текущий Windows/Hermes,
+один Ubuntu 22.04.5 dispatcher по IP:порту, Telegram bot, текущий Windows/Hermes,
 затем второй connector. Живые model/approval, reconnect, logon/reboot/sleep/network
 и target service update/rollback остаются приёмкой; domain/WSS и перенос позже.
 Goose/platform combinations — P4.9, cold/shared write recovery вне Windows MVP.
 Перечень ниже — незакрытые смежные задачи, не prerequisites всего трека.
 
-1. **P4.8.5 — живая установка и приёмка 0.2.0rc2.** Выпуск опубликован; Ubuntu 24.04 по IP:порту,
+1. **P4.8.5 — живая установка и приёмка 0.2.0rc2.** Выпуск опубликован; Ubuntu 22.04.5 по IP:порту,
    бот, текущий Windows/Hermes+connector/автозапуск/CLI, затем второй PC;
    [порядок проверок](docs/setup/p48-acceptance.md).
 2. **P3.4/P3.5 — установка, настройка и контроль службы.** Основа Linux/WSL

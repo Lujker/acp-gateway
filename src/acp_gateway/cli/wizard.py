@@ -23,7 +23,17 @@ from dotenv import dotenv_values
 from pydantic import ValidationError
 
 from acp_gateway import paths
-from acp_gateway.config import AgentProfile, AppConfig, SecretStore, Settings
+from acp_gateway.cli.setup_sections import SECTIONS
+from acp_gateway.config import (
+    AgentProfile,
+    AppConfig,
+    LoggingSettings,
+    PolicySettings,
+    RateLimitSettings,
+    RetentionSettings,
+    SecretStore,
+    Settings,
+)
 from acp_gateway.connectors.control import normalize_pin, read_credential, validate_url
 from acp_gateway.connectors.launch import ConnectorLaunch
 from acp_gateway.log import register_secret
@@ -305,7 +315,7 @@ def _agent(prompts, values, *, routed=False, old=None):
     return AgentProfile.model_validate(result).model_dump(mode="json", exclude_none=True)
 
 
-def _profiles(prompts, raw, values, role):
+def _profiles(prompts, raw, values, role, *, allow_empty=False):
     agents = raw.get("agents", [])
     if agents:
         print("Existing agents: " + ", ".join(a["alias"] for a in agents))
@@ -329,7 +339,7 @@ def _profiles(prompts, raw, values, role):
             tuple(AgentProfile.model_validate(a).address for a in agents),
             AgentProfile.model_validate(agents[0]).address,
         )
-        if len(agents) == 1:
+        if len(agents) == 1 and not allow_empty:
             raise ValueError("Keep at least one agent; use replace to change the only profile")
         if prompts.yes("Remove " + address + "? (saved secrets are kept)"):
             agents = [a for a in agents if AgentProfile.model_validate(a).address != address]
@@ -347,7 +357,7 @@ def _profiles(prompts, raw, values, role):
             if not prompts.yes("Add another agent?"):
                 break
     raw["agents"] = agents
-    if not agents:
+    if not agents and not allow_empty:
         raise ValueError("At least one agent profile is required")
     if role == "connector" and any(
         a.get("backend", "remote") not in {"remote", "hermes"} for a in agents
@@ -394,6 +404,48 @@ def _connection(prompts, state):
     return connection
 
 
+def _settings_section(prompts, raw, key, model):
+    """Edit only this section; each answer is validated before accepting it."""
+    from typing import Literal, get_args, get_origin
+
+    values = model.model_validate(raw.get(key, {})).model_dump(mode="json")
+    print("Use 'none' to clear an optional value; lists use comma-separated values.")
+    for name, field in model.model_fields.items():
+        old = values[name]
+        label = key.replace("_", " ").capitalize() + ": " + name.replace("_", " ")
+        if isinstance(old, bool):
+            value = prompts.yes(label, old)
+        elif get_origin(field.annotation) is Literal:
+            value = prompts.choice(label, get_args(field.annotation), old)
+        else:
+            default = (
+                ",".join(old) if isinstance(old, list) else str(old) if old is not None else "none"
+            )
+
+            def validate(answer, name=name, old=old, field=field):
+                if answer.lower() == "none" and not isinstance(old, list):
+                    value = None
+                elif isinstance(old, list):
+                    value = [v.strip() for v in answer.split(",") if v.strip()]
+                elif isinstance(old, int) or int in get_args(field.annotation):
+                    value = int(answer)
+                else:
+                    value = answer
+                candidate = model.model_validate({**values, name: value})
+                return candidate.model_dump(mode="json")[name]
+
+            value = prompts.ask(label, default, validate)
+        values[name] = value
+    raw[key] = model.model_validate(values).model_dump(mode="json", exclude_none=True)
+
+
+def _status_interval(value):
+    value = int(value)
+    if not 1 <= value <= 60:
+        raise ValueError("Telegram progress interval must be 1..60 seconds")
+    return value
+
+
 def _telegram(prompts, raw, values):
     section = raw.setdefault("telegram", {})
     section["enabled"] = prompts.yes("Enable Telegram?", section.get("enabled", False))
@@ -407,6 +459,14 @@ def _telegram(prompts, raw, values):
         "Allowed Telegram user IDs, separated by commas",
         ",".join(str(v) for v in section.get("allowed_user_ids", [])),
         _ids,
+    )
+    section["status_enabled"] = prompts.yes(
+        "Enable Telegram progress status?", section.get("status_enabled", True)
+    )
+    section["status_interval_seconds"] = prompts.ask(
+        "Telegram progress interval (seconds)",
+        str(section.get("status_interval_seconds", 2)),
+        lambda value: _status_interval(value),
     )
     approvers = raw.setdefault("policy", {}).setdefault("approver_channels", ["cli"])
     if "telegram" not in approvers:
@@ -523,7 +583,9 @@ async def _check_agents(cfg):
 
 def check_connections(cfg, state):
     asyncio.run(_check_agents(cfg))
-    if state["role"] == "connector":
+    if state["role"] == "connector" and not state.get("connection"):
+        print("Server connection is not configured; choose connection in acpgw setup.")
+    elif state["role"] == "connector":
         parts = validate_url(state["connection"]["dispatcher_url"])
         try:
             with socket.create_connection(
@@ -607,9 +669,12 @@ def _windows_connector_defaults(raw, config_file, *, existing=False):
 def _prepare_windows_connector(cfg, launch):
     from acp_gateway.windows_acl import check_private_paths, ensure_private_directory
 
-    check_private_paths(
-        [launch.token_file], directories=[launch.token_file.parent], purpose="Connector credential"
-    )
+    if launch is not None:
+        check_private_paths(
+            [launch.token_file],
+            directories=[launch.token_file.parent],
+            purpose="Connector credential",
+        )
     log = cfg.settings.logging.file
     ensure_private_directory(cfg.settings.resolved_data_dir())
     ensure_private_directory(log.parent)
@@ -648,9 +713,9 @@ def wizard(
     for value in values.values():
         register_secret(value)
     previous = _state(originals[state_file])
-    if section not in {"all", "agents", "gateway", "telegram", "hermes", "connection"}:
+    if section not in SECTIONS:
         raise ValueError("Unknown configuration section")
-    if section != "all" and not originals[config_file]:
+    if section not in {"all", "base"} and not originals[config_file]:
         raise ValueError("Run acpgw setup first before editing an individual section")
     print("ACP Gateway setup. Ctrl+C cancels. Secrets are hidden; existing keys are kept.")
     print(
@@ -660,10 +725,14 @@ def wizard(
     saved_role = previous.get("role", "local")
     role = (
         (role or prompts.choice("Role", ("local", "server", "connector"), saved_role))
-        if section == "all"
+        if section in {"all", "base"}
         else saved_role
     )
     if section == "connection":
+        if saved_role == "server":
+            raise ValueError(
+                "Outgoing connection belongs on a connector; server uses gateway ingress"
+            )
         role = "connector"
     if role not in {"local", "server", "connector"}:
         raise ValueError("Unknown setup role")
@@ -672,15 +741,27 @@ def wizard(
             "Configure API, Telegram and Hermes on the gateway/server host; "
             "this host is an outgoing connector"
         )
+    if role is not None and section not in {"all", "base", "connection"} and role != saved_role:
+        raise ValueError("Choose base setup to change this installation's role")
     state = {**previous, "version": 1, "role": role}
+    if role == "connector":
+        raw.setdefault("connector", {})["enabled"] = False
     if role != "connector":
         state.pop("connection", None)
+    if section in {"policy", "rate-limits", "retention", "logging"}:
+        key, model = {
+            "policy": ("policy", PolicySettings),
+            "rate-limits": ("rate_limits", RateLimitSettings),
+            "retention": ("retention", RetentionSettings),
+            "logging": ("logging", LoggingSettings),
+        }[section]
+        _settings_section(prompts, raw, key, model)
     gateway = raw.setdefault("gateway", {})
-    if role != "connector" and section in {"all", "gateway"}:
+    if role != "connector" and section in {"all", "base", "gateway"}:
         gateway["port"] = prompts.ask(
             "Local API/MCP port (loopback only)", str(gateway.get("port", 8765)), _port
         )
-    if role == "server" and section in {"all", "gateway"}:
+    if role == "server" and section in {"all", "base", "gateway"}:
         ingress = raw.setdefault("connector", {})
         ingress["enabled"] = True
         ingress["host"] = prompts.ask(
@@ -727,7 +808,7 @@ def wizard(
         raw.setdefault("connector", {})["enabled"] = False
         state["connection"] = _connection(prompts, previous)
     if section in {"all", "agents"}:
-        _profiles(prompts, raw, values, role)
+        _profiles(prompts, raw, values, role, allow_empty=section == "agents")
     if (
         role == "local"
         and section == "all"
@@ -778,7 +859,7 @@ def wizard(
             ),
             cfg,
         )
-        if role == "connector"
+        if role == "connector" and state.get("connection") and settings.agents
         else None
     )
     files = {
@@ -795,11 +876,13 @@ def wizard(
         files[state_file] = json.dumps(state, indent=2).encode()
     service_role = "connector" if role == "connector" else "gateway"
     active_roles = [r for r in ("gateway", "connector") if _managed_running(config_file, r)]
+    if active_roles and section != "all" and previous.get("role", "local") != role:
+        raise ValueError("Stop the existing service explicitly before changing its role")
     start_service = False
     windows_task = None
     old_unit = None
     was_enabled = False
-    if sys.platform == "linux" and shutil.which("systemctl"):
+    if section == "all" and sys.platform == "linux" and shutil.which("systemctl"):
         start_service = prompts.yes(
             "Install and start the systemd user service?", bool(active_roles)
         )
@@ -818,7 +901,7 @@ def wizard(
             was_enabled = "UnitFileState=enabled" in _systemctl(
                 "show", unit.name, "--property=UnitFileState", allow_not_found=True
             )
-    elif sys.platform == "win32" and role == "connector":
+    elif section == "all" and sys.platform == "win32" and role == "connector":
         start_service = prompts.yes("Install and start the Windows connector logon task?", False)
         if start_service:
             from acp_gateway.windows_service import SetupTask
@@ -923,9 +1006,22 @@ def wizard(
     for running_role in active_roles:
         if running_role != service_role:
             control("disable", role=running_role)
-    if role == "server":
+        elif not start_service:
+            try:
+                control("start", role=running_role)
+            except BaseException:
+                # A section edit must not leave a formerly running service stopped.
+                control("stop", role=running_role)
+                for path, original in originals.items():
+                    if original is None:
+                        path.unlink(missing_ok=True)
+                    else:
+                        _atomic(path, original)
+                control("start", role=running_role)
+                raise
+    if role == "server" and section == "all":
         _enroll(prompts, cfg, directory)
-    if role != "server" and section in {"all", "agents"}:
+    if role != "server" and section == "all":
         from types import SimpleNamespace
 
         from acp_gateway.cli.executors import local_goose, run_bootstrap, service
@@ -951,7 +1047,9 @@ def wizard(
                     ):
                         service(cfg, profile.alias, "install")
                         service(cfg, profile.alias, "enable")
-    if prompts.yes("Check connections now (no model prompts or messages)?", True):
+    if section == "all" and prompts.yes(
+        "Check connections now (no model prompts or messages)?", True
+    ):
         check_connections(cfg, state)
     command = ["acpgw", "--config", str(config_file), "--env-file", str(env_file), "start"]
     print("Run: " + shlex.join(command))

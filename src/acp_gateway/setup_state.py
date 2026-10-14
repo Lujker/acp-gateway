@@ -16,7 +16,7 @@ def parse(contents):
             or value.get("role") not in {"local", "server", "connector"}
         ):
             raise ValueError
-        if value.get("role") == "connector":
+        if value.get("role") == "connector" and "connection" in value:
             connection = value["connection"]
             if not isinstance(connection, dict) or not all(
                 isinstance(connection.get(key), str) and connection[key]

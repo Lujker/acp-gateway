@@ -1,254 +1,180 @@
-# Установка из PyPI: Ubuntu 24.04 + Windows/Hermes
+# Установка через uv/PyPI и независимые настройки
 
-Целевая версия: **0.2.0rc2**, кандидат для живой проверки. До публикации этой
-версии команды установки не сработают. На всех компьютерах ставится один пакет
-`acp-gateway`, команда называется `acpgw`; роль выбирается при настройке.
+Версия инструкции — **0.2.0rc3**. Один пакет `acp-gateway` устанавливается на
+VPS и ПК; роль выбирается в базовой настройке. Git checkout, Docker и скачивание
+wheel/lock файлов для обычной установки не нужны.
 
-Идём по этапам. После каждого проверяем результат, затем продолжаем.
-Для первой установки не нужны checkout Git, Docker, архивы из WSL или nginx.
-Существующую установку сначала проверяем через `acpgw version --json` и
-`acpgw service status`; команды ниже предназначены для новой установки.
+## 1. Установка на Ubuntu
 
-## 1. Схема и выбранные значения
-
-| Где | Роль |
-| --- | --- |
-| Ubuntu 24.04, обычный SSH-пользователь | Dispatcher и единственный Telegram polling |
-| Текущий Windows, пользователь Hermes Desktop | Connector и существующий Hermes |
-| Второй Windows, позже | Другой connector со своим ID и ключом |
-
-Примеры: listener TCP `18766`, path `/acpgw/connect`, первый computer ID `home`,
-alias `hermes`, route `home/hermes`. Адрес подключения:
-`ws://SERVER_IP:18766/acpgw/connect`. Заменить SERVER_IP реальным адресом.
-Owner API слушает `127.0.0.1:8765`; этот порт наружу не открываем.
-
-Прямой `ws://` не шифрует трафик. Это согласованный временный IP-тест;
-ограничиваем входящий порт адресами connector-компьютеров. Постоянный WSS
-через домен и перенос dispatcher проверяются отдельным этапом.
-
-Заранее выбрать существующую рабочую папку Windows (например,
-`C:\Users\YOUR_USER\work`). Её точный путь понадобится и на VPS, и на Windows.
-Подготовить Telegram bot token и числовой Telegram user ID владельца.
-Token вводится скрыто в мастере; ключи и `.env` в чат не присылать.
-Если тот же бот уже работает где-то ещё, сначала остановить прежний polling.
-
-## 2. Ubuntu: проверить исходное состояние
-
-В обычном SSH-сеансе:
-
-```bash
-cat /etc/os-release
-whoami
-command -v uv || true
-command -v acpgw || true
-systemctl --user is-system-running
-```
-
-Нужен обычный пользователь, не root. Если нет user bus или ответ `degraded`,
-сначала разбираем вывод; службы пока не создаём.
-
-## 3. Ubuntu: установить uv
+Под обычным SSH-пользователем (в текущей установке `vpnadmin`, Ubuntu 22.04.5):
 
 ```bash
 curl -LsSf https://astral.sh/uv/install.sh | sh
 export PATH="$HOME/.local/bin:$PATH"
-uv --version
-```
-
-Если curl отсутствует: `sudo apt update`, затем `sudo apt install curl ca-certificates`.
-Ожидается версия uv. Python 3.12 пакетный менеджер предоставит при установке.
-
-## 4. Ubuntu: установить опубликованный пакет
-
-Скачиваем только список закреплённых зависимостей и контрольные суммы из
-официального GitHub Release. Сам пакет uv скачивает из PyPI.
-
-```bash
-VERSION=0.2.0rc2
-PKGDIR="$HOME/acpgw-packages/$VERSION"
-mkdir -p "$PKGDIR"
-cd "$PKGDIR"
-BASE="https://github.com/Lujker/acp-gateway/releases/download/v$VERSION"
-curl -fL "$BASE/requirements.lock.txt" -o requirements.lock.txt
-curl -fL "$BASE/SHA256SUMS" -o SHA256SUMS
-grep '  requirements.lock.txt$' SHA256SUMS > requirements.sha256
-test -s requirements.sha256 && sha256sum -c requirements.sha256
-```
-
-Продолжать только после `requirements.lock.txt: OK`:
-
-```bash
-uv tool install --python 3.12 --managed-python --index-url https://pypi.org/simple --constraints "$PKGDIR/requirements.lock.txt" "acp-gateway==$VERSION"
+uv tool install --python 3.12 "acp-gateway==0.2.0rc3"
 uv tool update-shell
 export PATH="$(uv tool dir --bin):$PATH"
 acpgw version --json
 ```
 
-Ожидается `0.2.0rc2`. Явная версия выбирает release candidate; установка без
-номера может выбрать старый стабильный `0.1.0`. При ошибке не добавляем `--force`.
+Ожидается version `0.2.0rc3`, manager `uv`, source `registry`.
+Python и зависимости предоставляет uv. Существующую установку обновляем по
+разделу ниже; повторная установка не означает повторную настройку.
 
-## 5. Ubuntu: настроить dispatcher
+## 2. Меню setup
 
 ```bash
-acpgw setup --config-dir "$HOME/.config/acp-gateway" --role server --interactive
+acpgw setup
 ```
 
-Основные ответы:
+Выбрать номер или название раздела. Изменения сохраняются только после
+подтверждения выбранного раздела. После завершения или отмены вернётся меню.
+Открытие меню и `exit` сами по себе ничего не создают.
 
-| Вопрос | Ответ |
+| Раздел | Что настраивается |
 | --- | --- |
-| Local API/MCP port | `8765` |
-| Connector listen address | `0.0.0.0` |
-| Connector port / URL path | `18766` / `/acpgw/connect` |
-| TLS certificate path | пусто |
-| Allow unencrypted public test ingress? | yes для этого IP-теста |
-| Agent type / alias | hermes / hermes |
-| Working directory on the agent computer | выбранный точный Windows-путь |
-| Computer ID | home |
-| Add another agent? | no на первом проходе |
-| Enable Telegram? | yes |
-| Bot token | скрытый ввод |
-| Allowed Telegram user IDs | числовой ID владельца |
-| Connect this gateway to a local Hermes installation? | no |
-| Install and start the systemd user service? | no, включим следующим шагом |
-| Save / Export enrollment keys | yes / yes |
+| base | Первичная настройка роли и сети; не требует агентов или Telegram |
+| gateway | API/connector listener; без повторной настройки других разделов |
+| agents | Локальные профили или маршруты к агентам на компьютерах |
+| connection | Исходящее подключение ПК к диспетчеру |
+| telegram | Bot token, разрешённые user IDs и progress status |
+| hermes | Подключение gateway MCP к локальному Hermes Agent |
+| computers | Выпуск/ротация/отзыв отдельных ключей компьютеров |
+| agent-tools | Отдельные команды установки/provider/службы локального Goose |
+| service | Установка, запуск и автозапуск службы или Windows task |
+| policy | Разрешённые действия и лимиты prompt/response/approval |
+| rate-limits | Ограничение числа запросов |
+| retention | Сроки хранения истории и audit |
+| logging | Уровень, формат, файл и ротация логов |
+| check | Проверка конфигурации; live probes запускаются только по выбору |
 
-Ключ первого компьютера: `~/.config/acp-gateway/enrollment/home.key`.
-Для следующих команд определить функцию; в новом SSH-сеансе повторить её:
+Раздел можно открыть напрямую:
 
 ```bash
-gateway_cli() {
-  acpgw --config "$HOME/.config/acp-gateway/config.yaml" --env-file "$HOME/.config/acp-gateway/.env" "$@"
-}
-gateway_cli config check
-gateway_cli doctor
-gateway_cli computers list
+acpgw setup --section base --role server
+acpgw setup --section telegram
+acpgw setup --section agents
 ```
 
-## 6. Ubuntu: включить службу
+`--role` применяется в базовой настройке. Для конкретной конфигурации:
 
 ```bash
-gateway_cli service install
-gateway_cli service enable
-gateway_cli service status
-gateway_cli status
+acpgw --config "$HOME/.config/acp-gateway/config.yaml" --env-file "$HOME/.config/acp-gateway/.env" setup
+```
+
+`--config-dir` у setup выбирает другой каталог. Все действия меню сохраняют
+выбранные YAML/env пути. `setup --non-interactive` сохраняет прежний режим
+создания templates для автоматизации. `--section all` — явный совместимый
+общий мастер старых workflows, для обычной настройки он не требуется.
+
+## 3. Первичная настройка VPS
+
+В меню выбрать `base`, роль `server`:
+
+| Вопрос | Ответ для текущего IP-теста |
+| --- | --- |
+| Local API/MCP port | 8765 |
+| Connector listen address | **0.0.0.0**, ввести явно |
+| Connector port / URL path | 18766 / /acpgw/connect |
+| TLS certificate path | пусто |
+| Allow unencrypted public test ingress? | yes |
+| Save these settings? | yes |
+
+Этот шаг завершится без вопросов о Windows, агенте, Telegram или автозапуске.
+Можно выбрать `exit` и вернуться к остальным настройкам позже.
+Текущий временный маршрут — `ws://SERVER_IP:18766/acpgw/connect`; TCP 18766
+открыт для всех по решению владельца из-за динамических IP домашних ПК.
+Owner API 8765 остаётся на loopback. Для постоянного WSS/переноса будет другой этап.
+
+## 4. Отдельные шаги на VPS
+
+- `telegram`: включить бот, скрыто ввести token, указать числовой ID владельца.
+  Один бот обслуживается одним polling process; старый polling остановить отдельно.
+- `computers` → `enroll`: ID первого ПК `home`, display name по желанию.
+  Default ключ — `~/.config/acp-gateway/enrollment/home.key`; файл создаётся
+  приватно, в чат его не присылать. Для второго ПК отдельный ID и ключ.
+- `agents`: тип **hermes** (ввести явно), alias `hermes`, computer ID `home`,
+  точный существующий Windows cwd. Это маршрут `home/hermes`; Hermes на VPS не нужен.
+- `service` → `install`, затем `enable`. Это отдельное действие, настройка
+  Telegram/агентов сама по себе автозапуск не устанавливает.
+- `check`: проверить конфигурацию и по желанию подключения.
+
+Можно запустить сервер без агентов и подключать их позже. Текущий rc3 всё ещё
+требует отдельного key enrollment и server route; автоматический pairing и
+user/workspace ownership не заявляются реализованными.
+
+Для systemd user после выхода из SSH/reboot:
+
+```bash
 sudo loginctl enable-linger "$USER"
 loginctl show-user "$USER" -p Linger
 ```
 
-Ожидаются работающая служба и `Linger=yes`. Отдельный `serve/start` одновременно
-со службой не запускаем. На firewall сервера и в панели VPS разрешаем TCP 18766
-с внешних IP Windows-компьютеров. Правила выбираем после проверки действующего
-firewall; SSH-доступ сохраняем. Порт 8765 остаётся закрытым снаружи.
+Ожидается `Linger=yes`. Если нет user bus, сначала разбираем ошибку.
+Работающую службу не дублируем foreground `start/serve`.
 
-## 7. Windows: установить uv и тот же пакет
+## 5. Windows/Hermes
 
-Обычная PowerShell под пользователем Hermes, **не WSL**:
+Обычная PowerShell под пользователем Hermes, не WSL:
 
 ```powershell
 powershell -ExecutionPolicy ByPass -c "irm https://astral.sh/uv/install.ps1 | iex"
 ```
 
-Открыть новое окно PowerShell:
+В новом окне:
 
 ```powershell
-uv --version
-$Version = '0.2.0rc2'
-$PkgDir = Join-Path $env:LOCALAPPDATA "acpgw-packages\$Version"
-New-Item -ItemType Directory -Force -Path $PkgDir | Out-Null
-$Base = "https://github.com/Lujker/acp-gateway/releases/download/v$Version"
-Invoke-WebRequest "$Base/requirements.lock.txt" -OutFile (Join-Path $PkgDir 'requirements.lock.txt')
-Invoke-WebRequest "$Base/SHA256SUMS" -OutFile (Join-Path $PkgDir 'SHA256SUMS')
-$Rows = @(Get-Content (Join-Path $PkgDir 'SHA256SUMS') | Where-Object { $_ -match '^([a-f0-9]{64})  requirements\.lock\.txt$' })
-if ($Rows.Count -ne 1) { throw 'Missing or ambiguous runtime lock checksum' }
-$Expected = ($Rows[0] -split '\s+')[0]
-if ((Get-FileHash (Join-Path $PkgDir 'requirements.lock.txt') -Algorithm SHA256).Hash -ne $Expected) { throw 'Runtime lock checksum mismatch' }
-uv tool install --python 3.12 --managed-python --index-url https://pypi.org/simple --constraints (Join-Path $PkgDir 'requirements.lock.txt') "acp-gateway==$Version"
-if ($LASTEXITCODE -ne 0) { throw 'Installation failed' }
+uv tool install --python 3.12 --managed-python 'acp-gateway==0.2.0rc3'
 uv tool update-shell
 $Acpgw = Join-Path ((uv tool dir --bin).Trim()) 'acpgw.exe'
 & $Acpgw version --json
 & $Acpgw agents probe hermes --role desktop-serve --json
+$Cfg = Join-Path $env:LOCALAPPDATA 'acpgw-connector'
+& $Acpgw setup --config-dir $Cfg --role connector
 ```
 
-Ожидаются версия `0.2.0rc2` и Hermes `ready`. Hermes должен быть открыт под
-тем же пользователем, provider/model настроены в Desktop.
-
-## 8. Windows: получить ключ и настроить connector
-
-Заменить `SSH_USER@SERVER_IP` реальными данными. Создаём **новый** каталог:
+Hermes должен быть открыт, provider/model настроены; probe ожидает `ready`.
+В меню сначала `base`: создаст приватную конфигурацию без обязательного соединения.
+Затем выйти, приватно скопировать ключ с VPS (SSH_USER/SERVER_IP заменить):
 
 ```powershell
-$Cfg = Join-Path $env:LOCALAPPDATA 'acpgw-connector'
-if (Test-Path -LiteralPath $Cfg) { throw 'Config already exists: inspect before continuing' }
-New-Item -ItemType Directory -Path $Cfg | Out-Null
-$Sid = [Security.Principal.WindowsIdentity]::GetCurrent().User.Value
-icacls.exe $Cfg /inheritance:r /grant:r "*${Sid}:(OI)(CI)F" '*S-1-5-18:(OI)(CI)F' '*S-1-5-32-544:(OI)(CI)F'
-if ($LASTEXITCODE -ne 0) { throw 'Private directory ACL setup failed' }
 scp SSH_USER@SERVER_IP:.config/acp-gateway/enrollment/home.key (Join-Path $Cfg 'home.key')
-if ($LASTEXITCODE -ne 0) { throw 'Key transfer failed' }
-& $Acpgw setup --config-dir $Cfg --role connector --interactive
+& $Acpgw setup --config-dir $Cfg
 ```
 
-В мастере: URL `ws://SERVER_IP:18766/acpgw/connect`, unencrypted test = yes,
-computer ID `home`, key file — полный путь `$Cfg\home.key`, pin пустой.
-Agent type/alias `hermes`, cwd точно как на VPS, existing instance `desktop-serve`.
-Discovery directory взять из успешного probe (обычно
-`%USERPROFILE%\.local\state\hermes\gateway-locks`), profile — фактический профиль
-Hermes. Других агентов пока не добавлять. На установку logon task ответить no,
-на сохранение yes.
+- `agents`: тип Hermes, alias `hermes`, тот же cwd, discovery directory из probe,
+  existing instance `desktop-serve`, фактический profile.
+- `connection`: `ws://SERVER_IP:18766/acpgw/connect`, test yes, ID `home`,
+  key file — полный `$Cfg\home.key`. Эти два раздела можно проходить в любом порядке.
+- `service`: install, затем enable, когда оба раздела готовы.
 
-## 9. Windows: включить connector и проверить связь
+Telegram на connector отключён. Входящие порты на Windows не нужны.
+Входящий TCP 18766 нужен только на диспетчере. Запуск незавершённого connector
+откажет с указанием недостающей настройки, не зарегистрирует пустой manifest.
 
-Этот блок определения путей и функции повторяется в новом окне PowerShell:
+На VPS: `acpgw computers status`. Затем в Telegram `/start`, `/agent`,
+`/agent home/hermes`, `/new` и текст «Ответь одним словом PONG».
+Это реальный вызов модели. Второй ПК подключаем после первого, с отдельным
+computer ID/key/route. Reboot/logon/sleep/network, model/approvals и перенос/WSS
+проверяются отдельными этапами.
 
-```powershell
-$Cfg = Join-Path $env:LOCALAPPDATA 'acpgw-connector'
-$Acpgw = Join-Path ((uv tool dir --bin).Trim()) 'acpgw.exe'
-function Connector-Cli {
-  & $Acpgw --config (Join-Path $Cfg 'config.yaml') --env-file (Join-Path $Cfg '.env') @args
-}
-Connector-Cli config check
-Connector-Cli doctor --live
-Connector-Cli service --role connector install
-Connector-Cli service --role connector enable
-Connector-Cli service --role connector status
+## 6. Обновление установленного rc2 через uv
+
+Для текущей начальной установки, пока daemon/service ещё не запущены:
+
+```bash
+uv tool install --upgrade --python 3.12 "acp-gateway==0.2.0rc3"
+acpgw version --json
+acpgw setup
 ```
 
-На VPS: `gateway_cli computers status`. Ожидается online для `home`.
-При ошибке: Windows `Connector-Cli service --role connector logs`,
-VPS `gateway_cli service logs`. Не удаляем ключ/DB и не перевыпускаем enrollment
-для исправления сетевой ошибки. Windows делает исходящее подключение;
-входящий порт для connector на ПК не требуется.
+Сначала выйти из старого мастера через Ctrl+C. Настройка хранится вне uv tool,
+повторный setup не требуется для самого обновления. Команда выше намеренно
+заменяет исходное `==0.2.0rc2`: `uv tool upgrade acp-gateway` сохраняет прежнее
+ограничение и может оставить rc2.
 
-## 10. Первый запрос и второй компьютер
-
-В личном чате с ботом, по очереди:
-
-```text
-/start
-/agent
-/agent home/hermes
-/new
-```
-
-Затем: `Ответь одним словом PONG`. Проверить ответ, сохранение чата в Hermes
-и `/sessions`, `/model`. Это реальный вызов модели; настройки остаются в Hermes.
-CLI и Telegram пока имеют раздельные диалоги. Повторять запрос после неизвестного
-результата автоматически нельзя; сначала смотрим состояние.
-
-Второй ПК подключаем после успешной проверки первого: отдельный computer ID
-(например, `work`), отдельный ключ, фактический cwd второго ПК, route `work/hermes`.
-Добавление профиля на dispatcher и запланированный restart выполняем отдельно,
-после завершения активной работы. Старый ключ `home` на второй ПК не копируем.
-
-Hermes должен запускаться при входе пользователя собственным механизмом
-автозагрузки; задача Gateway запускает только connector. Reboot/logon, sleep,
-network changes, approvals/model switching и update/rollback проверяются отдельно.
-Перенос на другой сервер требует сохранения config/env/data/enrollment,
-согласованного переключения и проверки состояния; заново создавать ключи
-для простого изменения URL не требуется.
-
-Источники: [uv](https://docs.astral.sh/uv/getting-started/installation/),
-[поставка и обновления](distribution.md), [Windows connector](windows-connector.md),
-[границы живой приёмки](p48-acceptance.md).
+Для уже работающих служб/активных jobs сначала завершить работу и штатно
+остановить процессы. Управляемое обновление/rollback с сохранением состояния
+службы — `acpgw update --version 0.2.0rc3 --with-services`; подробности в
+[distribution.md](distribution.md). Прямые uv-команды не выполняют lifecycle
+проверки приложения. Не обновлять tool environment во время работы connector.

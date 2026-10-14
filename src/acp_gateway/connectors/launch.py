@@ -38,7 +38,7 @@ class ConnectorLaunch:
         from acp_gateway.setup_state import read
 
         state = read(config.config_path)
-        if state.get("role") != "connector":
+        if state.get("role") != "connector" or not state.get("connection"):
             raise ValueError(
                 "No saved connector connection; run acpgw setup --role connector "
                 "or provide all connector launch options explicitly"

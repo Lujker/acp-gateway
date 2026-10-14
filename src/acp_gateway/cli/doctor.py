@@ -206,6 +206,8 @@ def collect(config_file=None, env_file=None, *, live=False, timeout=5):
             )
     if role == "connector":
         try:
+            if not state.get("connection"):
+                raise ValueError("Server connection is not configured")
             launch = ConnectorLaunch(
                 **(state["connection"] | {"token_file": Path(state["connection"]["token_file"])})
             )
