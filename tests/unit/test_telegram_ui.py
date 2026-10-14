@@ -4,7 +4,9 @@ from acp_gateway.channels.telegram_ui import Panels
 from acp_gateway.core import GatewayError
 
 
-@pytest.mark.parametrize("command", ["/new", "/switch 1", "/agent home2/hermes", "cancel:job"])
+@pytest.mark.parametrize(
+    "command", ["/new", "/switch 1", "/agent home2/hermes", "cancel:job", "/mode set auto 1 2"]
+)
 def test_mutating_controls_are_bound_to_message_and_one_shot(command):
     panels = Panels()
     markup, tokens = panels.create(10, [[("Go", command)]], ("home/hermes", 1, 2))
@@ -44,3 +46,12 @@ def test_global_navigation_and_expiration_are_bounded(monkeypatch):
     assert len(panels.actions) == 1024
     panels.clear()
     assert not panels.actions
+
+
+@pytest.mark.parametrize("context", [("other", 1, 2), ("home/hermes", 1, 3)])
+def test_execution_controls_are_scoped_to_route_and_selection(context):
+    panels = Panels()
+    markup, tokens = panels.create(10, [[("Auto", "/mode set auto 1 2")]], ("home/hermes", 1, 2))
+    panels.bind(tokens, 100)
+    with pytest.raises(GatewayError):
+        panels.take(markup.inline_keyboard[0][0].callback_data, 10, 100, context)

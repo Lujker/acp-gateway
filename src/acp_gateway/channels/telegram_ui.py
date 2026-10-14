@@ -31,10 +31,18 @@ class Panels:
             buttons = []
             for label, command in row:
                 verb = command.split(" ", 1)[0]
-                bound = verb in {"/new", "/sessions", "/switch", "/model", "/models", "/result"}
-                selected = verb in {"/new", "/switch", "/model", "/models"}
+                bound = verb in {
+                    "/new",
+                    "/sessions",
+                    "/switch",
+                    "/model",
+                    "/models",
+                    "/result",
+                    "/mode",
+                }
+                selected = verb in {"/new", "/switch", "/model", "/models", "/mode"}
                 once = verb in {"/new", "/switch"} or command.startswith(
-                    ("/agent ", "cancel:", "/model set ", "/model default ")
+                    ("/agent ", "cancel:", "/model set ", "/model default ", "/mode set ")
                 )
                 token = secrets.token_hex(12)
                 self.actions[token] = _Action(

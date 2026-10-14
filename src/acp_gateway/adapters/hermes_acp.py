@@ -126,7 +126,7 @@ class HermesAcpTransport:
             elif method == "session/list":
                 result = {
                     "sessions": [
-                        {"sessionId": sid, "cwd": cwd, "title": "Dispatcher"}
+                        {"sessionId": sid, "cwd": cwd, "title": self.driver.title(sid)}
                         for sid, cwd in self._sessions.items()
                         if cwd == params["cwd"]
                     ]
@@ -214,7 +214,10 @@ class HermesAcpTransport:
         turn = _Turn(asyncio.get_running_loop().create_future())
         self._turns[session] = turn
         try:
+            previous_title = self.driver.title(session)
             await self.driver.submit(session, "\n".join(b["text"] for b in params["prompt"]))
+            if previous_title is None and (title := self.driver.title(session)):
+                self._update(session, {"sessionUpdate": "session_info_update", "title": title})
             payload = await turn.done
             if payload.get("status") != "complete":
                 raise HermesDiscoveryError("Hermes turn failed")

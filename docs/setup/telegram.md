@@ -172,3 +172,26 @@ sending and ACKs one fragment at a time. Already-bound rc5 deliveries finish
 using their original plain-text chunks; changed content/unknown outcomes retain
 the existing fences. Manual result buttons use the bounded explicit delivery
 queue and do not replay a model prompt. Formatting does not change stored answers.
+
+
+## Dialogue execution mode (0.2.0rc7)
+
+`/menu` → **Выполнение**, or `/mode`, controls the selected dialogue:
+
+- **Как Hermes** (default): Hermes decides which actions need approval; the
+  dispatcher sends those requests to a human. Smart mode can still ask about
+  untrusted MCP servers and tools without a read-only annotation.
+- **Без подтверждений**: explicitly authorize every subsequent permission
+  request in this dialogue. The dispatcher returns `allow_once` and records each
+  decision in the approval audit. This includes writes and command execution.
+
+Choose the mode between jobs. The panel shows the agent, dialogue and current
+mode. It persists for that dialogue across dispatcher restart; a new dialogue
+always starts with the default. Other chats, computers and Hermes profile settings
+are unaffected. Changing back restores human handling of future requests.
+The gateway's configured approval policy still applies, and audit failure never
+returns an allow decision. Unsupported host operations remain unsupported.
+
+New Hermes dialogues no longer receive the pinned title `Dispatcher`: Hermes can
+name them normally. The gateway dialogue list uses a short first-message summary.
+Existing Hermes titles are retained; rename them in Desktop if desired.

@@ -287,3 +287,70 @@ async def test_per_channel_events_filter_options_and_cannot_mutate_audit(harness
     await task
     (audit,) = h.store.approval_audit()
     assert audit.raw_input["command"] == "echo hello"
+
+
+async def test_explicit_auto_mode_is_once_only_audited_without_human_cards(harness):
+    h = harness
+    conv = Conversation("telegram", "42", "work")
+    h.policy.settings.approver_channels.append("telegram")
+    h.channels.clear()  # Persisted authorization works while the chat is offline.
+    result = await h.manager.request(
+        conv,
+        h.job.id,
+        h.request,
+        automatic={
+            "mode": "auto",
+            "channel": "telegram",
+            "actor": "telegram:42",
+        },
+    )
+    assert result.option_id == "allow_once"
+    assert h.manager.pending_count == 0
+    (audit,) = h.store.approval_audit()
+    assert audit.actor == "telegram:42" and audit.decided_channel == "telegram"
+    assert audit.reason == "explicit dialogue execution mode: auto"
+
+
+@pytest.mark.parametrize(
+    "fault", ["policy", "channel", "actor", "conversation", "options", "closed"]
+)
+async def test_auto_mode_cannot_override_policy_identity_or_option_boundaries(harness, fault):
+    h = harness
+    conv = Conversation("telegram", "42", "work")
+    h.policy.settings.approver_channels.append("telegram")
+    request = h.request
+    auth = {"mode": "auto", "channel": "telegram", "actor": "telegram:42"}
+    if fault == "policy":
+        h.policy.settings.allow_approvals = False
+    elif fault == "channel":
+        h.policy.settings.approver_channels.remove("telegram")
+    elif fault == "actor":
+        auth["actor"] = "telegram:99"
+    elif fault == "conversation":
+        conv = h.conversation
+    elif fault == "options":
+        request = replace(
+            request, options=tuple(o for o in request.options if o.kind != "allow_once")
+        )
+    elif fault == "closed":
+        h.manager.close()
+    result = await h.manager.request(conv, h.job.id, request, automatic=auth)
+    assert result.option_id != "allow_once" and result.outcome != "approved"
+
+
+async def test_auto_mode_audit_failure_never_returns_allow(harness, monkeypatch):
+    h = harness
+    h.policy.settings.approver_channels.append("telegram")
+
+    def fail(*args):
+        raise OSError("disk full")
+
+    monkeypatch.setattr(h.store, "record_approval", fail)
+    with pytest.raises(OSError):
+        await h.manager.request(
+            Conversation("telegram", "42", "work"),
+            h.job.id,
+            h.request,
+            automatic={"mode": "auto", "channel": "telegram", "actor": "telegram:42"},
+        )
+    assert h.manager.pending_count == 0

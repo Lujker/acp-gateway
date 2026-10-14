@@ -176,3 +176,24 @@ async def test_upstream_withdrawal_clears_core_human_approval_card(hermes, tmp_p
         assert (await core.wait(job.id, timeout=2)).answer == "withdrawn"
     finally:
         await core.close()
+
+
+async def test_new_hermes_dialogue_has_no_pinned_title_and_core_keeps_first_prompt_summary(
+    hermes, tmp_path
+):
+    backend, client = hermes
+    core = GatewayCore(Store.open(tmp_path / "title.db"), {"hermes": client})
+    await core.start()
+    try:
+        conv = Conversation("cli", "titles", "hermes")
+        record = await core.new_session(conv)
+        create = next(frame for frame in backend.calls if frame["method"] == "session.create")
+        assert "title" not in create["params"]  # Hermes can generate a native title.
+        job = await core.submit(conv, "Review   the project\nrelease plan")
+        await core.wait(job.id, 2)
+        assert core.store.session(record.id).title == "Review the project release plan"
+        await core.wait((await core.submit(conv, "another question")).id, 2)
+        assert core.store.session(record.id).title == "Review the project release plan"
+        assert (await client.list_sessions())[0]["title"] == "Review the project release plan"
+    finally:
+        await core.close()

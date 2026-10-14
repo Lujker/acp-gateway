@@ -275,3 +275,107 @@ async def test_cancel_control_is_not_shown_when_agent_refuses_safe_cancel(telegr
     assert not any(
         command.startswith("cancel:") for row in channel._job_rows(job) for _, command in row
     )
+
+
+async def test_execution_mode_buttons_authorize_only_selected_dialogue_and_restore_ask(telegram):
+    from test_telegram import approval_message
+
+    from acp_gateway.core import GatewayError
+
+    core, channel, session, _ = telegram
+    await feed(channel, 1, "/start")
+    await feed(channel, 2, "/new")
+    conv = Conversation("telegram", str(OWNER), "work")
+    first = core.active_session(conv)
+    await feed(channel, 3, "/mode")
+    panel = session.sent[-1]
+    auto = button(panel, "Без подтверждений").callback_data
+    await click(channel, 4, panel, auto, user=OTHER)
+    assert core.execution_mode(conv)["mode"] == "ask"
+    await click(channel, 5, panel, auto)
+    assert core.execution_mode(conv)["mode"] == "auto"
+    channel._recent.clear()
+    await feed(channel, 6, "run exactly: echo hi .")
+    job = core.running_jobs()[0]
+    final = await core.wait(job.id, 5)
+    assert final.answer == "hi" and final.error is None
+    (audit,) = core.store.approval_audit(job.id)
+    assert audit.actor == f"telegram:{OWNER}" and "auto" in audit.reason
+    assert not any(approval_message(m) for m in session.sent)
+    # The setting is durable but does not spread to a new dialogue or another chat.
+    await feed(channel, 7, "/new")
+    second = core.active_session(conv)
+    assert second.id != first.id and core.execution_mode(conv)["mode"] == "ask"
+    await click(channel, 8, panel, auto)  # Used/stale control cannot authorize the new one.
+    assert core.execution_mode(conv)["mode"] == "ask"
+    with pytest.raises(GatewayError):
+        core.set_execution_mode(
+            conv,
+            "auto",
+            dialogue_id=first.id,
+            expected_revision=core.store.active_revision(conv),
+            actor=f"telegram:{OWNER}",
+        )
+    channel._recent.clear()
+    await feed(channel, 9, f"/switch {first.id}")
+    assert core.execution_mode(conv)["mode"] == "auto"
+    await feed(channel, 10, "/mode")
+    panel = session.sent[-1]
+    await click(channel, 11, panel, button(panel, "Как Hermes").callback_data)
+    assert core.execution_mode(conv)["mode"] == "ask"
+    await feed(channel, 12, "run exactly: echo hi .")
+    job = core.running_jobs()[0]
+    await eventually(lambda: any(approval_message(m) for m in session.sent))
+    core.approvals.cancel_job(job.id)
+    assert (await core.wait(job.id, 5)).answer == "DENIED"
+
+
+async def test_execution_authorization_rejects_busy_foreign_actor_and_disabled_policy(telegram):
+    from acp_gateway.core import GatewayError
+
+    core, channel, _, _ = telegram
+    await feed(channel, 1, "/start")
+    await feed(channel, 2, "/new")
+    conv = Conversation("telegram", str(OWNER), "work")
+    state = core.execution_mode(conv)
+
+    def change(actor=f"telegram:{OWNER}"):
+        return core.set_execution_mode(
+            conv,
+            "auto",
+            dialogue_id=state["dialogue_id"],
+            expected_revision=state["selection_revision"],
+            actor=actor,
+        )
+
+    with pytest.raises(GatewayError):
+        change(f"telegram:{OTHER}")
+    from acp_gateway.agents import SessionBusy
+
+    core._busy[state["dialogue_id"]] = "busy-test"
+    with pytest.raises(SessionBusy):
+        change()
+    core._busy.clear()
+    core.policy.settings.allow_approvals = False
+    with pytest.raises(GatewayError):
+        change()
+    assert core.execution_mode(conv)["mode"] == "ask"
+
+
+async def test_reused_storage_id_cannot_inherit_another_dialogues_authorization(telegram):
+    core, channel, _, _ = telegram
+    await feed(channel, 1, "/start")
+    await feed(channel, 2, "/new")
+    conv = Conversation("telegram", str(OWNER), "work")
+    first = core.active_session(conv)
+    core.set_execution_mode(
+        conv,
+        "auto",
+        dialogue_id=first.id,
+        expected_revision=core.store.active_revision(conv),
+        actor=f"telegram:{OWNER}",
+    )
+    core.store._conn.execute(
+        "UPDATE sessions SET acp_session_id = 'replacement' WHERE id = ?", (first.id,)
+    )
+    assert core.execution_mode(conv)["mode"] == "ask"
