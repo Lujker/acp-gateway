@@ -852,3 +852,23 @@ Linux bundle/direct Git install, ACP/MCP/approvals и delivery rollback fence pa
 Evidence: dist/telegram-ux-verification и dist/rc6-verification.
 Владелец сам обновляет VPS, затем оба ПК через existing managed updater; production
 службы/Hermes этой итерацией не изменялись. Публикация идёт из clean checkout.
+### 2026-10-14 — rc6 опубликован и registry upgrade проверен
+
+GitHub: https://github.com/Lujker/acp-gateway/releases/tag/v0.2.0rc6.
+PyPI: https://pypi.org/project/acp-gateway/0.2.0rc6/.
+Tag v0.2.0rc6 → 47549d2b5a6df6590f223b229c617ea245793927.
+Actions dry-run 38581865693 и Trusted Publishing 38582093367 завершились success.
+GitHub downloaded assets прошли SHA256SUMS; PyPI JSON hashes wheel/sdist совпали
+с локальными файлами. Wheel SHA256:
+da7cf6aea721c411cc9248b070e051be65b939aacef0cc119cad729afe47c745.
+
+Настоящий registry rc5 → registry rc6 upgrade проверен в Linux и native Windows:
+version rc6/manager uv/source registry; YAML/env/setup/key bytes, enrollment registry
+и SQLite sentinel сохранены. update --stable --with-services вернул No newer stable
+и не затронул файлы/службы; на Windows рядом оставалась работающая production task,
+защитный поиск этой чужой для temp tool задачи не запускался при no-op.
+Linux PTY setup и dispatcher без static agents также прошли. Evidence/report paths:
+dist/rc6-verification/{linux,windows}-registry-upgrade.log и upgrade.json.
+Production Windows tool проверен read-only: registry rc5, task enabled/state=4;
+VPS/оба ПК владелец обновляет самостоятельно. Коннекторы rc5 совместимы с rc6
+диспетчером (protocol/schema не менялись), поэтому для UI первым обновляется VPS.

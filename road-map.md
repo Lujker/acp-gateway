@@ -235,7 +235,7 @@ MCP не имеет инструментов принятия решений.
 ### P2.3. Telegram
 
 **Статус:** PARTIAL — rc5 команды/results проверены владельцем на двух ПК.
-В source после rc5 реализованы inline panel, выбор agents/dialogues/models,
+В rc6 реализованы inline panel, выбор agents/dialogues/models,
 подтверждение model change, адресные job controls и Markdown→Telegram HTML.
 Доставка сохраняет прежние chunk ACK/unknown fences и продолжает rc5 payload.
 Остаток: выпуск/живая приёмка нового интерфейса и allow/reject подтверждений.
@@ -705,7 +705,7 @@ sessions/results работают; обновление через uv выпол
 Остаются live approvals, параллельная изоляция, reboot/logon/sleep/network и
 managed service update/rollback на целевых установках. Domain/WSS — позднее.
 Текущие package/native доказательства — [журнал поставки](docs/items/p48-delivery-plan.ru.md);
-новый Telegram UI пока source-only — [журнал](docs/items/telegram-ui.ru.md).
+новый Telegram UI опубликован в rc6, живая приёмка впереди — [журнал](docs/items/telegram-ui.ru.md).
 
 #### P4.8.6 — Перенесено в P4.9
 
@@ -810,11 +810,11 @@ Spikes возможны после базы P4.8; общий пользоват�
 Зафиксированы source/API и durable model state, оставшаяся очередь, ограничения Hermes,
 доказательства проверок и отдельный этап установки/приёмки.
 
-**Следующий этап:** выпуск и живая приёмка нового Telegram UI (P2.3), затем
+**Следующий этап:** обновление VPS до опубликованного rc6 и живая приёмка Telegram UI (P2.3), затем
 approvals и host lifecycle P4.8.5. Владелец подтвердил rc5 на VPS и двух Windows
 ПК, ответы и переключение маршрутов работают. P4.8.5 остаётся PARTIAL.
-Inline buttons/Markdown и `update --stable --with-services` готовы в source после
-rc5; опубликованный rc5 этих возможностей ещё не содержит.
+Inline buttons/Markdown и `update --stable --with-services` опубликованы в rc6;
+registry rc5→rc6 проверен в Linux/Windows без потери настроек/ключей/БД.
 Доказательства: [UI](docs/items/telegram-ui.ru.md),
 [поставка/обновление](docs/items/p48-delivery-plan.ru.md).
 Открыты live allow/reject, изоляция параллельных диалогов, reconnect при работе,
@@ -822,8 +822,8 @@ logon/reboot/sleep/network и целевой managed update/rollback. Domain/WSS
 Goose/platform — P4.9, ownership — P4.10.
 Перечень ниже — незакрытые смежные задачи, не prerequisites всего трека.
 
-1. **P2.3/P4.8.5 — Telegram UI и оставшаяся приёмка.** Выпустить source кнопок и
-   форматирования, проверить на двух ПК. Затем approvals/изоляция и lifecycle;
+1. **P2.3/P4.8.5 — Telegram UI и оставшаяся приёмка.** Обновить dispatcher до rc6 с
+   кнопками/форматированием, проверить на двух ПК. Затем approvals/изоляция и lifecycle;
    [UI](docs/items/telegram-ui.ru.md), [порядок проверок](docs/setup/p48-acceptance.md).
 2. **P3.4/P3.5 — установка, настройка и контроль службы.** Основа Linux/WSL
    и самостоятельная Linux-сборка подтверждены чистым контейнерным CI;
