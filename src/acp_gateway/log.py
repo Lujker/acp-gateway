@@ -175,6 +175,19 @@ LogFormat = Literal["auto", "console", "json"]
 _configured_handlers: list[logging.Handler] = []
 
 
+class _SilentStream:
+    """A bounded sink for pythonw, where sys.stderr may be None."""
+
+    def write(self, text):
+        return len(text)
+
+    def flush(self):
+        pass
+
+    def isatty(self):
+        return False
+
+
 class _PrivateRotatingFileHandler(RotatingFileHandler):
     def _open(self):
         flags = os.O_WRONLY | os.O_CREAT | os.O_APPEND | getattr(os, "O_NOFOLLOW", 0)
@@ -198,7 +211,7 @@ def configure_logging(
     for secret in extra_secrets:
         register_secret(secret)
 
-    stream = stream or sys.stderr
+    stream = stream or sys.stderr or _SilentStream()
     if fmt == "auto":
         fmt = "console" if stream.isatty() else "json"
     if fmt == "json":

@@ -663,3 +663,46 @@ Installed-wheel Windows smoke теперь явно импортирует color
 Инструкция текущего rc4 дополнена --with colorama. Опубликованные rc4/tag не заменялись;
 новый релиз сейчас не выпускается, согласно указанию владельца продолжать установку.
 P4.8.5 остаётся PARTIAL: service/Telegram/provider/второй ПК и host lifecycle впереди.
+
+
+### 2026-10-14 — фоновая задача Windows и настоящий Hermes Desktop
+
+Владелец сообщил об окне Python после service enable и disconnected в Telegram.
+Код 267009 (0x41301) у Scheduler означает running; state=4 также running.
+Задача rc4 запускала python.exe. Для следующего релиза выбран соседний pythonw.exe;
+проверка владения допускает только пару интерпретаторов в том же каталоге с прежними
+marker/principal/controlId fences. Logging поддерживает отсутствующий stderr,
+приватный JSON log сохраняется. PowerShell для Scheduler/ACL запускается с
+CREATE_NO_WINDOW. Журнал connector runtime записывает наличие консоли.
+
+Дополнительно выявлен дефект uv 0.11.26: GUI trampoline из managed Python minor link
+запускал console Python. Официальный changelog uv 0.12.4 содержит исправление #19235:
+https://github.com/astral-sh/uv/blob/main/changelogs/0.12.x.md.
+На ПК uv обновлён до 0.13.1. Launchers отдельного test environment, затем tool
+обновлены через uv venv --allow-existing --python 3.12 --managed-python без clear.
+Старые четыре package files сохранены в ignored windowless-local-backup; локально
+применены исправленные windows_service/windows_acl/log/connectors.commands.
+Metadata установленного tool остаётся registry 0.2.0rc4; опубликованный rc4/tag не
+заменялся. Повторная установка rc4 может стереть локальный hotfix; постоянный фикс
+войдёт в следующий релиз. YAML/env/setup/key сохранились (проверены hashes).
+
+Служба штатно остановлена после idle/maintenance проверки и переустановлена с pythonw.
+Фактический журнал: console_attached=false, computer connected; задача enabled/running.
+Резервирование maintenance снято. Рабочий connector оставлен включённым.
+Через VPS выполнен read-only ACP initialize: home/hermes connected, hermes-attach
+0.21.6, error=null. computers status: computer_connected=true, agent_ready=true,
+status=ready, problem=null. Диалоги/prompts не создавались. До initialize агент может
+отображаться disconnected при подключённом computer: клиент инициализируется лениво.
+CLI unavailable означает отсутствие подключённого CLI approver.
+
+Hermes Desktop уже работал: GUI Hermes.exe и локальный serve 127.0.0.1:65012,
+0.21.6, profiles default/deepseek-bot; существующие пользовательские сессии сохранены.
+GUI не перезапускался. Проверенный Start Menu shortcut скопирован в пользовательский
+Startup/Hermes Desktop.lnk. Отдельный прежний Hermes_Gateway.vbs сохранён.
+Фактический вход/reboot, provider prompt, approvals и второй ПК ещё не проверены.
+
+Проверки: source service/ACL/wizard/log 77 passed, Ruff passed. Установленный preview
+wheel в отдельном native Windows environment: Scheduler/service/ACL/windowless logging
+54 passed за 190.57s, включая запуск без консоли и graceful disable.
+Evidence: dist/rc4-verification/windowless-native-final.log и .xml; сборка находится
+в dist/windowless-preview и не заменяет опубликованные артефакты.

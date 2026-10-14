@@ -71,6 +71,7 @@ def check_private_paths(files, *, directories=(), purpose="Hermes discovery"):
             ],
             input=json.dumps(payload),
             capture_output=True,
+            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
             text=True,
             encoding="utf-8",
             errors="replace",

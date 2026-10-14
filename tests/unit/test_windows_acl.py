@@ -60,6 +60,7 @@ def test_fixed_script_checks_batched_paths_without_shell(monkeypatch, tmp_path):
         "directories": [str(tmp_path)],
     }
     assert base64.b64decode(captured["argv"][-1]).decode("utf-16-le") == windows_acl.SCRIPT
+    assert captured["creationflags"] == getattr(subprocess, "CREATE_NO_WINDOW", 0)
     assert "shell" not in captured
     assert captured["timeout"] == 10
 

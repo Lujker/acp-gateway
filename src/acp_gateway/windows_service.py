@@ -5,6 +5,7 @@ import shutil
 import subprocess
 import sys
 import uuid
+from pathlib import Path
 
 from acp_gateway.powershell import encoded_script
 
@@ -56,6 +57,15 @@ try {
         while ($null -ne $exception.InnerException) { $exception = $exception.InnerException }
         if ($exception.HResult -notin @(-2147024894, -2147024893)) { throw }
     }
+    $ownedExecutables = @($r.executable)
+    $interpreterName = [IO.Path]::GetFileName($r.executable)
+    if ($interpreterName -in @('python.exe', 'pythonw.exe')) {
+        $siblingName = if ($interpreterName -eq 'python.exe') {
+            'pythonw.exe'
+        } else { 'python.exe' }
+        $sibling = [IO.Path]::Combine([IO.Path]::GetDirectoryName($r.executable), $siblingName)
+        if (Test-Path -LiteralPath $sibling -PathType Leaf) { $ownedExecutables += $sibling }
+    }
     if ($null -ne $task) {
         try { $meta = $task.Definition.RegistrationInfo.Description | ConvertFrom-Json }
         catch { throw 'Refusing an unmanaged Task Scheduler task' }
@@ -68,7 +78,7 @@ try {
         if ($meta.marker -ne 'acpgw-connector-v1' -or $taskUser -ne $sid -or
             $principal.LogonType -ne 3 -or $principal.RunLevel -ne 0 -or
             $task.Definition.Actions.Count -ne 1 -or
-            $task.Definition.Actions.Item(1).Path -ne $r.executable) {
+            $task.Definition.Actions.Item(1).Path -notin $ownedExecutables) {
             throw 'Refusing an unmanaged task or a task owned by another installation'
         }
     }
@@ -296,6 +306,7 @@ def _request(action, **values):
             [executable, "-NoProfile", "-NonInteractive", "-EncodedCommand", script],
             input=json.dumps({"action": action, "executable": sys.executable, **values}),
             capture_output=True,
+            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
             text=True,
             encoding="utf-8",
             errors="replace",
@@ -358,6 +369,17 @@ class SetupTask:
         _request("restore", expectedControlId=self.control_id, snapshot=self.snapshot)
 
 
+def _background_executable():
+    if sys.platform == "win32" and not getattr(sys, "frozen", False):
+        windowless = Path(sys.executable).with_name("pythonw.exe")
+        if not windowless.is_file():
+            raise ValueError(
+                "Windowless Python is missing; reinstall the uv tool with managed Python"
+            )
+        return str(windowless)
+    return sys.executable
+
+
 def install(config, launch, *, setup=None):
     log_file = config.settings.logging.file
     if log_file is None or not log_file.is_absolute() or not log_file.parent.is_dir():
@@ -367,7 +389,8 @@ def install(config, launch, *, setup=None):
     command = _arguments_prefix(config) + launch.arguments()
     control_id = setup.control_id if setup else uuid.uuid4().hex
     command += ["--control-id", control_id]
-    paths = [sys.executable, *command, str(log_file)]
+    executable = _background_executable()
+    paths = [executable, *command, str(log_file)]
     if any(ord(char) < 32 or ord(char) == 127 for value in paths for char in value):
         raise ValueError("service paths cannot contain control characters")
     directory = config.settings.resolved_data_dir()
@@ -382,6 +405,7 @@ def install(config, launch, *, setup=None):
     )
     result = _request(
         "install",
+        executable=executable,
         arguments=subprocess.list2cmdline(command),
         directory=str(config.config_path.resolve().parent),
         privateFiles=[str(config.config_path), str(config.env_file), str(launch.token_file)],
