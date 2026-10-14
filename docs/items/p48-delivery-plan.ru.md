@@ -379,3 +379,24 @@ GitHub Release и PyPI, затем проверка установки опуб�
 Ruff check/format и uv sync --locked прошли. Evidence: dist/rc2-verification/source.xml.
 Изменены номер версии, фильтр prerelease-тегов публикации, экспорт runtime lock
 отдельным asset и новая инструкция self-install-pypi.ru.md. Пакетные проверки впереди.
+
+Пакетная проверка rc2: Linux isolated wheel/bundle/Git install/update/uninstall,
+active-runtime refusal, сохранение enrollment/key/Telegram result и rollback
+прошли. SQL health failure/recovery и explicit rollback отдельно прошли на Linux
+и native Windows. Windows broad installed-wheel профиль: 528 passed, 4 expected
+skipped, 3 fixture errors; эти три ошибки вызваны mock shutil.which в doctor,
+скрывавшим powershell.exe. Fixture исправлен по примеру test_wizard; повторный
+Windows doctor профиль — 10 passed (Linux — 10 passed). Все 23 disposable Scheduler
+cases прошли, после прогона временных ACP Gateway Test-* задач нет.
+
+В smoke_platform исправлен устаревший injected migration номер 0006: теперь
+добавляется следующий номер после текущей схемы, поэтому SQL health rejection
+проверяется реально. Для Windows smoke и инструкции выбран uv-managed Python
+3.12: Microsoft Store alias не работает при подмене профиля во временном стенде.
+Приложение эти исправления не меняют. Реальный Hermes 0.21.6 observer дал ready,
+модель/пользовательские диалоги не запускались. Bash/PowerShell блоки инструкции,
+фильтр stable/prerelease tag, runtime lock и SHA256SUMS проверены.
+
+Evidence хранится в dist/rc2-verification. Живая установка Ubuntu 24.04,
+Telegram/model/approvals, два PC, reboot/logon/sleep/network и перенос/WSS остаются
+отдельным P4.8.5; выпуск rc2 не закрывает эти проверки.

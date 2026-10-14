@@ -78,7 +78,7 @@ test -s requirements.sha256 && sha256sum -c requirements.sha256
 Продолжать только после `requirements.lock.txt: OK`:
 
 ```bash
-uv tool install --python 3.12 --index-url https://pypi.org/simple --constraints "$PKGDIR/requirements.lock.txt" "acp-gateway==$VERSION"
+uv tool install --python 3.12 --managed-python --index-url https://pypi.org/simple --constraints "$PKGDIR/requirements.lock.txt" "acp-gateway==$VERSION"
 uv tool update-shell
 export PATH="$(uv tool dir --bin):$PATH"
 acpgw version --json
@@ -163,7 +163,7 @@ $Rows = @(Get-Content (Join-Path $PkgDir 'SHA256SUMS') | Where-Object { $_ -matc
 if ($Rows.Count -ne 1) { throw 'Missing or ambiguous runtime lock checksum' }
 $Expected = ($Rows[0] -split '\s+')[0]
 if ((Get-FileHash (Join-Path $PkgDir 'requirements.lock.txt') -Algorithm SHA256).Hash -ne $Expected) { throw 'Runtime lock checksum mismatch' }
-uv tool install --python 3.12 --index-url https://pypi.org/simple --constraints (Join-Path $PkgDir 'requirements.lock.txt') "acp-gateway==$Version"
+uv tool install --python 3.12 --managed-python --index-url https://pypi.org/simple --constraints (Join-Path $PkgDir 'requirements.lock.txt') "acp-gateway==$Version"
 if ($LASTEXITCODE -ne 0) { throw 'Installation failed' }
 uv tool update-shell
 $Acpgw = Join-Path ((uv tool dir --bin).Trim()) 'acpgw.exe'

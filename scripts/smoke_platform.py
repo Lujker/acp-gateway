@@ -47,6 +47,9 @@ def smoke(wheel: Path, binary: Path | None = None):
                 "XDG_DATA_HOME": str(root / "platform-data"),
             }
         )
+        if os.name == "nt":
+            environment["UV_MANAGED_PYTHON"] = "true"
+            environment["UV_PYTHON"] = "3.12"
         config_dir = root / "config"
         config = config_dir / "config.yaml"
         env_file = config_dir / ".env"
@@ -179,7 +182,11 @@ def smoke(wheel: Path, binary: Path | None = None):
         project.write_text(
             original.replace(f'version = "{version}"', 'version = "0.1.0+broken"', 1)
         )
-        (fixture / "src/acp_gateway/storage/migrations/0006_broken.sql").write_text("INVALID SQL;")
+        migrations = fixture / "src/acp_gateway/storage/migrations"
+        next_version = (
+            max(int(path.name.split("_", 1)[0]) for path in migrations.glob("[0-9]*.sql")) + 1
+        )
+        (migrations / f"{next_version:04d}_broken.sql").write_text("INVALID SQL;")
         run([uv, "build", "--wheel", "--out-dir", str(root / "broken")], cwd=fixture)
         command("update", "--from", str(next((root / "broken").glob("*.whl"))), ok=False)
         require(
