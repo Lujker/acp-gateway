@@ -2,7 +2,8 @@
 
 > Статус: единый действующий план ACP Gateway.
 > Последняя сверка: 2026-10-14 — опубликован rc7; независимое ревью завершено, три находки исправлены в rc8.dev0,
-> добавлены будущие P4.15–P4.16 (remote update/host management). VPS/Telegram + два Windows/Hermes connectors,
+> добавлены будущие P4.15–P4.16 (remote update/host management) и отложенный P2.4 (Telegram UX);
+> README сокращён, docs получили оглавление. VPS/Telegram + два Windows/Hermes connectors,
 > поставка uv/Git, CLI/update (`P4.8`); Goose и платформенное расширение — `P4.9`.
 > VPS-диспетчер с собственным WebSocket-коннектором
 > (`P4.1`) поставлен перед расширениями каналов; готовы MCP-фасад Hermes и
@@ -259,6 +260,15 @@ aiogram 3, отдельный бот (не бот Hermes), allowlist user_id; к
 таймаута — Telegram становится основным каналом подтверждений; понятные
 ошибки («Work Goose сейчас недоступен»). Критерий: пункты MVP Definition of
 Done из исходного плана (раздел 20), выполненные через Telegram.
+
+### P2.4. Удобство Telegram: диалоги, подтверждения и ход работы
+
+**Статус:** OPEN — сохранено 2026-10-14 для возвращения позже; реализация отложена.
+**Репозиторий:** `acp-gateway`.
+Осмысленные карточки диалогов/переименование, компактные и полные по смыслу
+подтверждения, фактический progress, единые подписи и возврат с сохранением страницы.
+Основа — P2.3; при возвращении сначала диалоги и подтверждения, затем progress.
+[Объём, ограничения и приёмка](docs/items/telegram-usability.ru.md). Новый release не разрешён.
 
 ## 6. P3 — Эксплуатация
 
@@ -858,15 +868,18 @@ Goose/platform — P4.9, ownership — P4.10.
    Дальше — живая приёмка dashboard после решения о поставке. Published rc7: кнопки, форматирование,
    названия и режим выполнения; проверить на двух ПК. Затем approvals/изоляция и lifecycle;
    [UI](docs/items/telegram-ui.ru.md), [порядок проверок](docs/setup/p48-acceptance.md).
-2. **P3.4/P3.5 — установка, настройка и контроль службы.** Основа Linux/WSL
+2. **P2.4 — дальнейшее удобство Telegram (OPEN, отложено).** Вернуться по решению
+   владельца: диалоги/подтверждения → progress →
+   единая навигация; [объём и приёмка](docs/items/telegram-usability.ru.md).
+3. **P3.4/P3.5 — установка, настройка и контроль службы.** Основа Linux/WSL
    и самостоятельная Linux-сборка подтверждены чистым контейнерным CI;
    выпускать версии вручную из локальной сборки; Actions только по ручному запуску.
-3. **P3.1/P3.5 — настоящий Windows reboot.** D-Bus восстановлен; systemd и
+4. **P3.1/P3.5 — настоящий Windows reboot.** D-Bus восстановлен; systemd и
    Task Scheduler lifecycles уже подтверждены на текущем хосте.
-4. **P2.3/P3.3 — живая приёмка Telegram.** Команды/подтверждения реализованы;
+5. **P2.3/P3.3 — живая приёмка Telegram.** Команды/подтверждения реализованы;
    persistent delivery и status edits включены в опубликованный 0.2.0rc2,
    [журнал](docs/items/p3.3-reliability.ru.md). Кандидат установки — 0.2.0rc7.
-5. **P4.1 — VPS-диспетчер и собственный WebSocket-коннектор.** Основа для `P4.8`:
+6. **P4.1 — VPS-диспетчер и собственный WebSocket-коннектор.** Основа для `P4.8`:
    один владелец, ACP-релей. Enrollment и WS/WSS-регистрация
    готовы; инъекция транспорта в AgentClient реализована и проверена на mock ACP
    без WebSocket; локальная политика ACP реализована и проверена (методы,
@@ -875,22 +888,22 @@ Goose/platform — P4.9, ownership — P4.10.
    Первый guarded ACP relay в serve готов и mock-tested.
    Два узла и изоляция mock-tested; служба и диагностика готовы.
    Дальше: живая приёмка в `P4.8.5`, затем recovery и stdio по их триггерам.
-6. **P3.2 — Windows native**, в составе `P4.8.4`, вместе с
+7. **P3.2 — Windows native**, в составе `P4.8.4`, вместе с
    Windows-частями `P3.4/P3.5`; Scheduler/ACL/locks уже проверены,
    остаются целевая поставка/update и сценарии P4.8.5 reboot/logon/sleep/network.
-7. **P4.15 → P4.16 — удалённые обновления и управление ПК.** После базовой P4.8.5:
+8. **P4.15 → P4.16 — удалённые обновления и управление ПК.** После базовой P4.8.5:
    общий управляющий контракт, затем update/restart/diagnostics и Telegram buttons.
    Multi-user выпуск требует P4.10 scopes. [Предложение](docs/items/remote-connector-management.ru.md).
-8. **P4.10 — user/workspace ownership.** Основа новых shared сценариев,
+9. **P4.10 — user/workspace ownership.** Основа новых shared сценариев,
    пользовательского API и connector scopes; [контракт](docs/items/dispatcher-accounts-and-dialogues.ru.md).
-9. **P4.12 — client Web API.** Контракт и auth вместе с P4.10; нужен до
+10. **P4.12 — client Web API.** Контракт и auth вместе с P4.10; нужен до
    multi-user Web UI/mobile. [Предложение](docs/items/client-api-and-mobile.ru.md).
-10. **P4.11 — сценарии.** Приняты новый dialogue на Run и offline skip+notify;
+11. **P4.11 — сценарии.** Приняты новый dialogue на Run и offline skip+notify;
    manual runs, затем scheduler по времени диспетчера. [Предложение](docs/items/scenarios-and-schedules.ru.md).
-11. **P4.13 — harness adapters.** Managed Codex/Claude spikes, capability tests;
+12. **P4.13 — harness adapters.** Managed Codex/Claude spikes, capability tests;
     исследование возможно независимо, публичный scope зависит от P4.10.
     [Источники и этапы](docs/items/connector-harness-adapters.ru.md).
-12. **P4.2 → P4.3 → P4.4 — Snikket, Email, Web UI.** После рабочего P4.8.5;
+13. **P4.2 → P4.3 → P4.4 — Snikket, Email, Web UI.** После рабочего P4.8.5;
     пользовательский Web UI использует P4.12/P4.10.
 
 Новые пункты — будущие этапы; runtime реализации нет. Условные P4.5–P4.7
