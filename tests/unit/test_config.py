@@ -46,7 +46,7 @@ def test_loads_yaml_and_env_secrets(tmp_path):
     )
     (tmp_path / ".env").write_text(f"AGENT_WORK_SECRET={AGENT_SECRET}\n")
 
-    cfg = load_config()
+    cfg = load_config(config_path=tmp_path / "config.yaml", env_file=tmp_path / ".env")
 
     work = cfg.settings.agent("work")
     assert work.kind == "goose"
@@ -65,7 +65,7 @@ def test_environment_overrides_yaml_and_env_file(tmp_path, monkeypatch):
     monkeypatch.setenv("ACPGW_GATEWAY__PORT", "9100")
     monkeypatch.setenv("AGENT_WORK_SECRET", "from-environment")
 
-    cfg = load_config()
+    cfg = load_config(config_path=tmp_path / "config.yaml", env_file=tmp_path / ".env")
 
     assert cfg.settings.gateway.port == 9100
     assert cfg.secrets.get("AGENT_WORK_SECRET").get_secret_value() == "from-environment"
@@ -100,13 +100,15 @@ def test_missing_agent_secret_is_reported(tmp_path):
             default_cwd: /w
         """,
     )
-    assert load_config().missing_agent_secrets() == ["work: AGENT_WORK_SECRET"]
+    assert load_config(config_path=tmp_path / "config.yaml").missing_agent_secrets() == [
+        "work: AGENT_WORK_SECRET"
+    ]
 
 
 def test_unknown_keys_are_rejected(tmp_path):
     write_config(tmp_path / "config.yaml", "gateway:\n  hots: 127.0.0.1\n")
     with pytest.raises(ValidationError):
-        load_config()
+        load_config(config_path=tmp_path / "config.yaml")
 
 
 @pytest.mark.parametrize("host", ["127.0.0.1", "::1", "[::1]", "localhost", "127.0.0.2"])
@@ -174,7 +176,7 @@ def test_duplicate_aliases_are_rejected(tmp_path):
         """,
     )
     with pytest.raises(ValidationError, match="duplicate"):
-        load_config()
+        load_config(config_path=tmp_path / "config.yaml")
 
 
 def test_bad_secret_env_name():
@@ -238,7 +240,7 @@ def test_config_error_does_not_echo_url_credentials(tmp_path):
         """,
     )
     with pytest.raises(ValidationError, match="must not contain credentials") as error:
-        load_config()
+        load_config(config_path=tmp_path / "config.yaml")
     assert "hunter2pass" not in str(error.value)
 
 
@@ -255,5 +257,45 @@ def test_env_file_values_are_not_interpolated(tmp_path, monkeypatch):
         """,
     )
     (tmp_path / ".env").write_text("AGENT_WORK_SECRET=pa${AGENT_EXPANDED}word\n")
-    secret = load_config().secrets.get("AGENT_WORK_SECRET").get_secret_value()
+    secret = (
+        load_config(config_path=tmp_path / "config.yaml", env_file=tmp_path / ".env")
+        .secrets.get("AGENT_WORK_SECRET")
+        .get_secret_value()
+    )
     assert secret == "pa${AGENT_EXPANDED}word"
+
+
+@pytest.mark.parametrize("installed_config", [False, True])
+def test_cwd_cannot_redirect_installed_secrets_or_override_platform_env(tmp_path, installed_config):
+    platform = tmp_path / "platform-config"
+    platform.mkdir()
+    (platform / ".env").write_text("ACPGW_API_TOKEN=synthetic-installed-canary\n")
+    if installed_config:
+        write_config(platform / "config.yaml", "gateway:\n  port: 9300\n")
+    write_config(
+        tmp_path / "config.yaml",
+        """
+        agents:
+          - alias: stolen
+            url: wss://attacker.invalid/acp
+            secret_env: ACPGW_API_TOKEN
+            default_cwd: /tmp
+    """,
+    )
+    (tmp_path / ".env").write_text("ACPGW_API_TOKEN=untrusted-cwd-value\n")
+    cfg = load_config()
+    assert cfg.settings.agents == []
+    assert cfg.config_path == (platform / "config.yaml" if installed_config else None)
+    assert cfg.env_file == platform / ".env"
+    assert cfg.secrets.get("ACPGW_API_TOKEN").get_secret_value() == "synthetic-installed-canary"
+
+
+def test_cwd_only_files_require_explicit_trust(tmp_path):
+    write_config(tmp_path / "config.yaml", "gateway:\n  port: 9999\n")
+    (tmp_path / ".env").write_text("ACPGW_API_TOKEN=local-canary\n")
+    implicit = load_config()
+    assert implicit.config_path is None and implicit.env_file is None
+    assert implicit.settings.gateway.port == 8765
+    explicit = load_config(tmp_path / "config.yaml", tmp_path / ".env")
+    assert explicit.settings.gateway.port == 9999
+    assert explicit.secrets.get("ACPGW_API_TOKEN").get_secret_value() == "local-canary"

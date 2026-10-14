@@ -43,8 +43,10 @@ It generates independent owner and MCP tokens, with file mode `600` and a
 new directory mode `700` on Linux. It prints paths, never tokens. It skips
 existing files, including on repeated installation. Use `setup --config-dir
 /path` for a custom destination; pass matching global `--config` and
-`--env-file` options in later commands. An existing checkout's `config.yaml`
-and `.env` still take precedence over platform defaults: install the service
+`--env-file` options in later commands. Checkout `config.yaml` and `.env`
+require explicit `--config`/`--env-file`
+(or `ACPGW_CONFIG`/`ACPGW_ENV_FILE`) and never override installed defaults merely
+because you run a command in that directory: install the service
 with explicit paths when choosing between them.
 
 Add your agent profile to the config and its secret to `.env`, following

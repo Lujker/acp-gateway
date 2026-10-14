@@ -77,7 +77,9 @@ agents:
     default_cwd: /home/<user>
 ```
 
-`.env`: `AGENT_WORK_SECRET=<the same secret>`, mode `600`. Then check:
+`.env`: `AGENT_WORK_SECRET=<the same secret>`, mode `600`. For checkout files,
+explicitly set `ACPGW_CONFIG` and `ACPGW_ENV_FILE` to their absolute paths
+(or use the platform config directory created by setup). Then check:
 `uv run acpgw config check` and `uv run python scripts/spike_acp.py init`.
 
 ## Troubleshooting

@@ -2980,6 +2980,14 @@ Runtime/config/schema/кандидат этой документальной и�
 не входят в первый вариант. Busy agent, dispatcher misfire и approval policy
 этими ответами не утверждены и остаются открытыми. P4.11 OPEN: runtime ещё нет.
 
+## 2026-10-14 — независимое ревью проекта и будущие management задачи
+
+Отдельный GPT-6 Astra проверил критические ветви runtime/installation/deployment.
+Три находки подтверждены и исправлены в development rc8.dev0; source/native
+регрессии прошли; вопрос автоматического CWD config/env закрыт в пользу explicit opt-in.
+[Проверка и исправления](docs/items/project-review-2026-10-14.ru.md).
+В roadmap добавлены будущие P4.15/P4.16: [remote update/host control](docs/items/remote-connector-management.ru.md).
+
 ## Незакрытые вопросы
 
 - **Автотесты TLS/SSE** — наблюдавшиеся причины и исправления тестового стенда
@@ -2998,9 +3006,6 @@ Runtime/config/schema/кандидат этой документальной и�
 - **`P1.1`** — единичный непойманный сбой `test_agent_client.py` (1 из 106
   прогонов, 2026-10-06). Если повторится — сохранить вывод `pytest -ra`;
   подозрения: гонка за свободный порт в `free_port()` или тайминги отмены.
-- **Конфигурация** — оставлять ли поиск `config.yaml`/`.env` в текущем
-  каталоге: чужой репозиторий с `config.yaml` может направить агентский
-  секрет на свой URL. Варианты: убрать, предупреждать, требовать `--config`.
 - **`P2.3/P3.3`** — persistent delivery и partial/final status готовы в
   development 0.2.0rc2.dev0; остаётся живая Telegram-приёмка. Frozen rc1 сохраняет
   прежнее поведение; подробности в docs/items/p3.3-reliability.ru.md.

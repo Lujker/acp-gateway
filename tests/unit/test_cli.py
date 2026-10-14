@@ -47,7 +47,19 @@ def test_config_check_ok_does_not_print_secrets(tmp_path, capsys):
     (tmp_path / "config.yaml").write_text(CONFIG)
     (tmp_path / ".env").write_text(f"AGENT_WORK_SECRET={SECRET}\n")
 
-    assert main(["config", "check"]) == 0
+    assert (
+        main(
+            [
+                "--config",
+                str(tmp_path / "config.yaml"),
+                "--env-file",
+                str(tmp_path / ".env"),
+                "config",
+                "check",
+            ]
+        )
+        == 0
+    )
 
     out = capsys.readouterr().out
     assert "work [goose/remote] Work Goose" in out
@@ -58,13 +70,13 @@ def test_config_check_ok_does_not_print_secrets(tmp_path, capsys):
 
 def test_config_check_fails_on_missing_secret(tmp_path, capsys):
     (tmp_path / "config.yaml").write_text(CONFIG)
-    assert main(["config", "check"]) == 1
+    assert main(["--config", str(tmp_path / "config.yaml"), "config", "check"]) == 1
     assert "missing agent secrets: work: AGENT_WORK_SECRET" in capsys.readouterr().err
 
 
 def test_config_check_reports_invalid_config(tmp_path, capsys):
     (tmp_path / "config.yaml").write_text("gateway:\n  host: 0.0.0.0\n")
-    assert main(["config", "check"]) == 2
+    assert main(["--config", str(tmp_path / "config.yaml"), "config", "check"]) == 2
     assert "loopback" in capsys.readouterr().err
 
 
@@ -76,3 +88,16 @@ def test_config_check_missing_explicit_file(tmp_path, capsys):
 def test_paths(capsys):
     assert main(["paths"]) == 0
     assert "acp-gateway" in capsys.readouterr().out
+
+
+def test_cli_ignores_untrusted_cwd_files_and_keeps_installed_defaults(tmp_path, capsys):
+    platform = tmp_path / "platform-config"
+    platform.mkdir()
+    (platform / "config.yaml").write_text("gateway:\n  port: 9300\n")
+    (platform / ".env").write_text(f"ACPGW_API_TOKEN={SECRET}\n")
+    (tmp_path / "config.yaml").write_text(CONFIG)
+    (tmp_path / ".env").write_text("ACPGW_API_TOKEN=untrusted-cwd-value\n")
+    assert main(["config", "check"]) == 0
+    output = capsys.readouterr().out
+    assert "9300" in output and "0 configured" in output
+    assert "work [goose/remote]" not in output and SECRET not in output

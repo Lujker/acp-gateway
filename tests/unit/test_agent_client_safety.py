@@ -161,3 +161,66 @@ async def test_client_restores_custom_cwd_after_reconnect(client):
     client._attached.clear()
     await client.ask("s1", "hello")
     assert client._conn.load_session.call_args.kwargs["cwd"] == "/custom"
+
+
+@pytest.mark.parametrize("running", [False, True])
+async def test_turn_event_flood_fails_and_quarantines_without_prompt_replay(
+    client, monkeypatch, running
+):
+    from acp_gateway.agents import PromptFailed
+    from acp_gateway.agents.turn_buffer import MAX_TURN_EVENTS
+
+    monkeypatch.setattr("acp_gateway.agents.client.DEFAULT_CANCEL_TIMEOUT", 0.01)
+    requests = []
+
+    async def prompt(**kwargs):
+        requests.append(kwargs)
+        for _ in range(MAX_TURN_EVENTS + 1):
+            client._on_update(
+                "s1",
+                SimpleNamespace(
+                    session_update="agent_thought_chunk", content=SimpleNamespace(text="thinking")
+                ),
+            )
+        if running:
+            await asyncio.Event().wait()
+        return SimpleNamespace(stop_reason="end_turn", usage=None)
+
+    client._conn = SimpleNamespace(prompt=prompt, cancel=AsyncMock(), close=AsyncMock())
+    client._attached.add("s1")
+    with pytest.raises(PromptFailed, match="event buffer exceeded"):
+        await asyncio.wait_for(client.ask("s1", "one prompt"), 1)
+    assert len(requests) == 1 and "s1" in client._uncertain and "s1" not in client._attached
+    assert not client._turns
+    client._permission_handler = AsyncMock()
+    response = await client._on_permission("s1", None, [])
+    assert response.outcome.outcome == "cancelled"
+    client._permission_handler.assert_not_awaited()
+
+
+async def test_pending_permission_cannot_allow_after_event_buffer_overflow(client):
+    from acp_gateway.agents.turn_buffer import MAX_TURN_EVENTS, TurnBuffer
+
+    client._turns["s1"] = TurnBuffer()
+    ready = asyncio.Event()
+    decision = asyncio.get_running_loop().create_future()
+
+    async def handler(request):
+        ready.set()
+        return await decision
+
+    client._permission_handler = handler
+    tool = SimpleNamespace(tool_call_id="t1", title="command", kind="execute", raw_input={})
+    options = [SimpleNamespace(option_id="once", name="Allow", kind="allow_once")]
+    pending = asyncio.create_task(client._on_permission("s1", tool, options))
+    await ready.wait()
+    for _ in range(MAX_TURN_EVENTS + 1):
+        client._on_update(
+            "s1",
+            SimpleNamespace(
+                session_update="agent_thought_chunk", content=SimpleNamespace(text="reasoning")
+            ),
+        )
+    decision.set_result("once")  # Resolve before the consumer closes the transport.
+    assert (await pending).outcome.outcome == "cancelled"
+    client._turns.clear()
