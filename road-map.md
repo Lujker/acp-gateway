@@ -235,7 +235,7 @@ MCP не имеет инструментов принятия решений.
 ### P2.3. Telegram
 
 **Статус:** PARTIAL — rc5 команды/results и работа подтверждений проверены владельцем на двух ПК.
-Для rc7 проверены названия новых Hermes chats и отдельный режим выполнения /mode.
+В опубликованном rc7 проверены названия новых Hermes chats и отдельный режим выполнения /mode.
 В rc6 реализованы inline panel, выбор agents/dialogues/models,
 подтверждение model change, адресные job controls и Markdown→Telegram HTML.
 Доставка сохраняет прежние chunk ACK/unknown fences и продолжает rc5 payload.
@@ -815,7 +815,8 @@ Spikes возможны после базы P4.8; общий пользоват�
 approvals и host lifecycle P4.8.5. Владелец подтвердил rc5 на VPS и двух Windows
 ПК, ответы и переключение маршрутов работают. P4.8.5 остаётся PARTIAL.
 Inline buttons/Markdown и `update --stable --with-services` опубликованы в rc6;
-registry rc5→rc6 проверен в Linux/Windows без потери настроек/ключей/БД.
+rc7 добавляет названия и /mode; registry rc5→rc7 проверен в Linux/Windows
+без потери настроек/ключей/БД.
 Доказательства: [UI](docs/items/telegram-ui.ru.md),
 [поставка/обновление](docs/items/p48-delivery-plan.ru.md).
 Работу live approvals владелец подтвердил; открыты отдельная deny-проверка, изоляция параллельных диалогов, reconnect при работе,

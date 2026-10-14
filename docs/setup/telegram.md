@@ -1,8 +1,9 @@
 # Telegram channel
 
-Published 0.2.0rc5 includes durable result delivery and status edits. See
-[recovery and status configuration](telegram-recovery.md). Release candidate 0.2.0rc6 adds inline controls and Markdown rendering described
-below; published rc5 retains its earlier plain-text interface.
+Published 0.2.0rc7 includes durable result delivery, status edits, inline controls,
+Markdown rendering and dialogue execution modes. See
+[recovery and status configuration](telegram-recovery.md). Older rc5 installations
+retain their earlier plain-text interface until updated.
 
 Use a separate development bot created with BotFather, and put its token in
 `.env` as `TELEGRAM_BOT_TOKEN`. Never put the token in YAML or a command line.

@@ -162,3 +162,9 @@ registry rc5 → wheel rc7 upgrade выполнен в обеих ОС: конф
 enrollment registry и SQLite sentinel сохранены; Linux PTY setup и запуск пустого
 dispatcher прошли. Проверка `--stable` на file install ожидаемо отказала без
 изменений; registry no-op проверяется отдельно после публикации.
+
+
+Поставка: [rc7](https://github.com/Lujker/acp-gateway/releases/tag/v0.2.0rc7),
+[PyPI](https://pypi.org/project/acp-gateway/0.2.0rc7/). Registry rc5→rc7 проверен
+в обеих ОС с сохранением данных; hashes и workflow success записаны в
+[журнале поставки](p48-delivery-plan.ru.md). Живая приёмка владельцем впереди.
