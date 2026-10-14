@@ -47,8 +47,8 @@ jobs:
           RELEASE_TAG: ${{ inputs.release_tag }}
         shell: bash
         run: |
-          if [[ ! "$RELEASE_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-            echo 'Expected a stable version tag such as v0.1.0' >&2
+          if [[ ! "$RELEASE_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+((a|b|rc)[0-9]+)?$ ]]; then
+            echo 'Expected a release tag such as v0.2.0 or v0.2.0rc2' >&2
             exit 1
           fi
           gh release view "$RELEASE_TAG" --json isDraft --jq '.isDraft' | grep -qx false

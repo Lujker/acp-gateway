@@ -109,7 +109,9 @@ def build(destination: Path, image: str, *, include_image=False, allow_dirty=Fal
         archive = destination / f"acpgw-{version}-bundle.tar.gz"
         with tarfile.open(archive, "w:gz") as tar:
             tar.add(root, arcname=root.name)
-        files = [destination / file.name for file in package_files] + [archive]
+        runtime_lock = destination / "requirements.lock.txt"
+        shutil.copy(root / runtime_lock.name, runtime_lock)
+        files = [destination / file.name for file in package_files] + [archive, runtime_lock]
         (destination / "SHA256SUMS").write_text(
             "".join(f"{checksum(file)}  {file.name}\n" for file in files)
         )

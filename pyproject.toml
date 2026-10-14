@@ -1,6 +1,6 @@
 [project]
 name = "acp-gateway"
-version = "0.2.0rc2.dev0"
+version = "0.2.0rc2"
 description = "Local gateway that routes messages from external channels (Hermes, Telegram, ...) to ACP agents"
 readme = "README.md"
 requires-python = ">=3.12"

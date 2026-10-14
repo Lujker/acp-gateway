@@ -813,13 +813,13 @@ Spikes возможны после базы P4.8; общий пользоват�
 Зафиксированы source/API и durable model state, оставшаяся очередь, ограничения Hermes,
 доказательства проверок и отдельный этап установки/приёмки.
 
-**Следующий этап:** кандидат 0.2.0rc1 и отдельный P4.8.5 — установка/приёмка.
+**Следующий этап:** выпуск актуального 0.2.0rc2 в PyPI и P4.8.5 — установка/приёмка (решение владельца 2026-10-14).
 Кодовые доработки model defaults, CLI/Telegram, exact model recovery,
 bounded session journal и explicit retention готовы; candidate WSL source: 1152/28.
 Отдельный development 0.2.0rc2.dev0 (schema 8): 1198/28 WSL и 62 native source;
 retention, rate limits, durable Telegram delivery/status и update recovery.
 Это сохранённое evidence предыдущих прогонов, не live приёмка новой поставки.
-Владелец сначала устанавливает сам по [инструкции](docs/setup/self-install-0.2.0rc1.ru.md).
+Владелец устанавливает сам через uv/PyPI по [новой инструкции](docs/setup/self-install-pypi.ru.md).
 Начать с предоставляемого владельцем VPS (IP:port и domain/path), Telegram bot
 и текущего Windows/Hermes, затем второй connector. Проверить native autostart
 Hermes/connector, CLI обеих ролей, реальные model/approval и update/rollback.
@@ -827,7 +827,7 @@ Goose/platform combinations остаются P4.9, cold/shared write recovery н
 в выбранный Windows MVP. [Runbook](docs/setup/p48-acceptance.md).
 Перечень ниже — незакрытые смежные задачи, не prerequisites всего трека.
 
-1. **P4.8.5 — живая установка и приёмка кандидата 0.2.0rc1.** VPS IP/domain-path,
+1. **P4.8.5 — выпуск и живая установка 0.2.0rc2.** Подготовка выпуска IN PROGRESS; Ubuntu 24.04 по IP:порту,
    бот, текущий Windows/Hermes+connector/автозапуск/CLI, затем второй PC;
    [порядок проверок](docs/setup/p48-acceptance.md).
 2. **P3.4/P3.5 — установка, настройка и контроль службы.** Основа Linux/WSL
