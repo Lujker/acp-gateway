@@ -1,6 +1,7 @@
 import io
 import json
 import logging
+import os
 import time
 from collections import namedtuple
 from pathlib import Path
@@ -129,6 +130,7 @@ def test_textual_patterns_keep_harmless_text(text):
         "Authorization: Basic " + "a" * 100_000,
         "wss://" + "u" * 100_000,
     ],
+    ids=["dotted", "token-word", "mapping", "scheme", "basic-auth", "url-user"],
 )
 def test_textual_patterns_are_linear(text):
     started = time.monotonic()
@@ -233,13 +235,15 @@ def test_file_rotation_is_bounded_private_json_and_redacts_all_handlers(tmp_path
     files = sorted(path.parent.glob("gateway.log*"))
     assert len(files) == 3
     for log in files:
-        assert log.stat().st_mode & 0o777 == 0o600
+        if os.name != "nt":
+            assert log.stat().st_mode & 0o777 == 0o600
         assert SECRET not in log.read_text()
         assert all(isinstance(json.loads(line), dict) for line in log.read_text().splitlines())
     assert SECRET not in stream.getvalue()
     configure_logging(stream=stream)
 
 
+@pytest.mark.skipif(os.name == "nt", reason="POSIX O_NOFOLLOW; Windows ACLs tested separately")
 def test_log_file_does_not_follow_symlink(tmp_path):
     target = tmp_path / "target"
     target.write_text("preserved\n")
