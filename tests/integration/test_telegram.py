@@ -14,7 +14,7 @@ from pydantic import SecretStr, ValidationError
 from acp_gateway.agents import AgentClient
 from acp_gateway.channels.telegram import TelegramChannel
 from acp_gateway.config import AgentProfile, PolicySettings, TelegramSettings
-from acp_gateway.core import GatewayCore
+from acp_gateway.core import GatewayCore, GatewayError
 from acp_gateway.storage import Conversation, JobStatus, Store
 from fakes.fake_goose import FakeGooseServer
 from fakes.telegram import FakeTelegramSession as FakeSession
@@ -108,7 +108,7 @@ async def test_commands_durable_cursor_sessions_and_final_answer(telegram):
     await feed(channel, 3, "say pong")
     assert core.store._conn.execute("SELECT COUNT(*) FROM jobs").fetchone()[0] == prompt_count == 1
     await feed(channel, 4, "/sessions")
-    assert "*" in session.sent[-1].text
+    assert "▶ #" in session.sent[-1].text
     assert core.store.channel_state(channel.namespace, "cursor")["id"] == 4
     assert core.store.channel_state(channel.namespace, "chats") == [OWNER]
 
@@ -359,8 +359,8 @@ async def test_slow_result_delivery_does_not_block_approval_clicks(telegram):
 async def test_agent_command_lists_available_routes_without_selection(telegram):
     _, channel, session, _ = telegram
     await feed(channel, 1, "/agent")
-    assert "work: work" in session.sent[-1].text
-    assert "Select with /agent ALIAS" in session.sent[-1].text
+    assert "work — work" in session.sent[-1].text
+    assert "Select: /agent ALIAS" in session.sent[-1].text
 
 
 async def test_message_without_selected_dialogue_requires_explicit_new(telegram):
@@ -499,3 +499,42 @@ async def test_local_status_does_not_connect_to_agent(telegram):
     await feed(channel, 1, "/status")
     assert "work: not initialized" in session.sent[-1].text
     assert not server.log
+
+
+async def test_dialogue_cards_titles_selection_pagination_and_private_scope(telegram):
+    core, channel, session, server = telegram
+    conv = Conversation("telegram", str(OWNER), "work")
+    records = [
+        core.store.add_session(conv, f"saved-{i}", r"C:\Users\owner\work") for i in range(12)
+    ]
+    core.store.set_session_title(records[-1].id, "Research <draft>\nNext line")
+    foreign = core.store.add_session(
+        Conversation("telegram", str(OTHER), "work"), "foreign", "/private"
+    )
+    core.store.set_session_title(foreign.id, "PRIVATE OTHER CHAT")
+    await channel._command(OWNER, "/sessions")
+    text = "\n".join(m.text for m in session.sent)
+    assert "Dialogues · work" in text and "Page 1/2" in text
+    assert f"▶ #{records[-1].id} — Research &lt;draft&gt; Next line" in text
+    assert "Last used:" in text and "UTC" in text and "Folder: C:" in text
+    assert "PRIVATE OTHER CHAT" not in text and "/private" not in text
+    assert text.count("Folder:") == 10
+    session.sent.clear()
+    await channel._command(OWNER, "/sessions 2")
+    text = "\n".join(m.text for m in session.sent)
+    assert "Page 2/2" in text and text.count("Folder:") == 2
+    assert "Untitled dialogue" in text and "Switch: /switch ID" in text
+    with pytest.raises(GatewayError, match="Choose a page"):
+        await channel._command(OWNER, "/sessions 3")
+    assert not server.log
+
+
+async def test_new_and_selected_dialogue_include_agent_and_folder(telegram):
+    _, channel, session, _ = telegram
+    await channel._command(OWNER, "/new")
+    text = session.sent[-1].text
+    assert "New dialogue #" in text and "Agent: work" in text and "Folder: /work" in text
+    dialogue_id = text.split("#", 1)[1].splitlines()[0]
+    await channel._command(OWNER, f"/switch {dialogue_id}")
+    assert f"Selected dialogue #{dialogue_id}" in session.sent[-1].text
+    assert "Agent: work" in session.sent[-1].text and "Folder: /work" in session.sent[-1].text

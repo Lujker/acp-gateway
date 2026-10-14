@@ -12,7 +12,7 @@ installed program. Stop jobs and processes before replacing an installation.
 For a new installation, install uv and run:
 
 ```bash
-uv tool install --python 3.12 "acp-gateway==0.2.0rc4"
+uv tool install --python 3.12 "acp-gateway==0.2.0rc5"
 acpgw setup
 ```
 
@@ -21,7 +21,7 @@ the role; each further section is independent. Servers discover agent profiles
 from authenticated rc4 connectors. Configure the executor and its project folder
 on the PC; enroll its key on the server. See the [Ubuntu/Windows walkthrough](self-install-pypi.ru.md).
 For an existing pinned tool use `uv tool install --upgrade --python 3.12
-"acp-gateway==0.2.0rc4"` after stopping jobs/services, then restart the service.
+"acp-gateway==0.2.0rc5"` after stopping jobs/services, then restart the service.
 Upgrade servers before connectors. Package replacement keeps config/keys/data;
 it does not start or reconfigure services automatically.
 
