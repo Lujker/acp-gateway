@@ -422,3 +422,48 @@ observe, без model prompt. Это не установка на целевом
 проверить ОС, пользователя, наличие uv/acpgw и systemd user в SSH-сеансе владельца.
 P4.8.5 остаётся PARTIAL: target Ubuntu 24.04 + Telegram + текущий/второй Windows,
 реальные model/approvals и физические lifecycle проверки ещё не выполнены.
+
+## 2026-10-14 — находка при ручной установке: связанный server/agent setup
+
+Владелец установил rc2 одной командой uv tool install; version/source подтверждены.
+Фактический сервер — Ubuntu 22.04.5 (исправляет ранее сообщённую 24.04), gatewayuser,
+systemd user running, uv 0.13.1. Владелец явно принял публичный TCP 18766 для
+текущего IP-теста с динамическими адресами домашних ПК; ограничение source IP
+на данном этапе не требуется по его решению.
+
+При прохождении мастера поднято предложение отделить настройку dispatcher от
+добавления станций: connector регистрируется позднее с привязкой к пользователю.
+Это обсуждение UX/архитектуры, не поручение реализовать весь P4.10.
+Сверка wizard.py: role server не запрашивает исходящий URL, но вызывает _profiles
+и принудительно требует хотя бы один агент; затем _enroll экспортирует ключи.
+Default listener — 127.0.0.1, default agent kind — goose: Enter на всех вопросах
+не создаёт нужный публичный IP/Hermes маршрут. Динамические адреса ПК не меняют
+enrollment identity. План account/pairing уже описан в
+ dispatcher-accounts-and-dialogues.ru.md: сервер назначает owner по подтверждённой
+авторизации/pairing, переданный connector user_id сам по себе полномочий не даёт.
+Изменения runtime или договорённость о начале реализации пока отсутствуют.
+
+## 2026-10-14 — разделение setup/TUI, rc3: IN PROGRESS
+
+Владелец поручил разделить целостные настройки на независимые действия TUI.
+setup открывает список; base не требует agents/Telegram, server/connector connection,
+agents, Telegram, Hermes MCP, computers/enrollment, service и эксплуатационные
+настройки доступны отдельно. Повторная настройка сохраняет secrets/data.
+После проверок согласованы push, новый GitHub/PyPI релиз и самостоятельное
+uv-обновление установленного rc2 на VPS. Полная account/pairing модель остаётся
+P4.10; текущая работа меняет UX этапов, а не авторизацию устройств.
+
+Разделы реализованы: base/gateway/agents/connection/telegram/hermes,
+computers/enrollment, agent-tools, service, policy/rate-limits/retention/logging,
+check. CLI setup открывает меню; --section запускает независимый этап.
+Base не требует агента/Telegram; connector connection и profiles сохраняются
+по отдельности в любом порядке. Незавершённый connector отказывает при start.
+Установка/автозапуск, key export и local tools не запускаются из targeted edits.
+Полный legacy wizard сохранён только как explicit --section all.
+
+Source suite: 1216 passed, 28 expected skipped (193.07 s); после финализации
+меню/fields профиль 41 passed, расширенный section-профиль 21 passed. Проверены
+cancel/no writes, сохранение ключей, выдача enrollment до agents, last-agent removal,
+role guard, idle/stop/start и rollback при restart failure. Ruff и lock clean.
+Пакетные Windows/uv-update проверки впереди. User guide упрощён до одной команды
+установки; обновление pinned rc2 выполняется заменой requirement, не обычным upgrade.

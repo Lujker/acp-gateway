@@ -11,6 +11,7 @@ from typing import TYPE_CHECKING
 import httpx
 
 from acp_gateway import __version__, paths
+from acp_gateway.cli.setup_sections import SECTIONS as SETUP_SECTIONS
 from acp_gateway.log import redact_text
 
 if TYPE_CHECKING:
@@ -68,7 +69,7 @@ def _build_parser() -> argparse.ArgumentParser:
     edit = config_sub.add_parser("edit", help="edit settings with the interactive wizard")
     edit.add_argument(
         "--section",
-        choices=("all", "agents", "gateway", "telegram", "hermes", "connection"),
+        choices=SETUP_SECTIONS,
         default="all",
     )
 
@@ -166,6 +167,11 @@ def _build_parser() -> argparse.ArgumentParser:
         "--role",
         choices=("local", "server", "connector"),
         help="preselect role in the interactive wizard",
+    )
+    setup_cmd.add_argument(
+        "--section",
+        choices=SETUP_SECTIONS,
+        help="configure one section directly; otherwise open the setup menu",
     )
     setup_mode = setup_cmd.add_mutually_exclusive_group()
     setup_mode.add_argument("--interactive", action="store_true", help="run the setup wizard")
@@ -465,16 +471,28 @@ def _run_configured(args) -> int:
                 if interactive:
                     if not sys.stdin.isatty() or not sys.stdout.isatty():
                         raise ValueError("interactive setup requires a terminal")
-                    from acp_gateway.cli.wizard import wizard
+                    if args.section:
+                        if args.role and args.section not in {"base", "all"}:
+                            raise ValueError("--role belongs to --section base")
+                        from acp_gateway.cli.wizard import wizard
 
-                    return wizard(
+                        return wizard(
+                            args.config_dir,
+                            config_file=args.config,
+                            env_file=args.env_file,
+                            role=args.role,
+                            section=args.section,
+                        )
+                    from acp_gateway.cli.setup_menu import setup_menu
+
+                    return setup_menu(
                         args.config_dir,
                         config_file=args.config,
                         env_file=args.env_file,
                         role=args.role,
                     )
-                if args.role:
-                    raise ValueError("--role requires interactive setup")
+                if args.role or args.section:
+                    raise ValueError("--role/--section requires interactive setup")
                 from acp_gateway.setup import setup
 
                 return setup(args.config_dir)
