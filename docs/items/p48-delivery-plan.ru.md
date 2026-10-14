@@ -793,3 +793,23 @@ Scheduler prefix на уникальный ACP Gateway Smoke. Production package
 - Артефакты/evidence: dist/0.2.0rc5 и dist/rc5-verification. Публикация из чистого
   checkout, без rebuild в Actions. Реальный update владельца и второй ПК остаются
   следующими шагами приёмки; после connector restart нужен новый dialogue (cold resume вне MVP).
+#### 2026-10-14 — rc5 опубликован, registry update подтверждён
+
+Tag v0.2.0rc5 → 4e2ec857c91cca0cd48d9ee7749c69df7d023510.
+GitHub prerelease: https://github.com/Lujker/acp-gateway/releases/tag/v0.2.0rc5.
+PyPI: https://pypi.org/project/acp-gateway/0.2.0rc5/.
+Actions dry-run 38568240907 и Trusted Publishing 38568378135 завершились success.
+GitHub downloaded assets прошли SHA256SUMS; PyPI JSON подтвердил SHA256 wheel
+и sdist, идентичные локальным файлам. pypi-metadata.json сохранён в evidence.
+
+После публикации выполнен настоящий registry rc4 → registry rc5 upgrade в
+изолированных Linux/native Windows tool environments: version 0.2.0rc5,
+manager uv, source registry; config/env/setup/key bytes, enrollment registry и
+SQLite sentinel сохранились. Linux real PTY setup и agent-free dispatcher start
+также прошли. Evidence: linux/windows-registry-upgrade.log и upgrade.json.
+Временные окружения не изменяют установленный VPS/Windows владельца. Рабочая
+Windows задача осталась enabled/state=4/pythonw, test/smoke tasks=0.
+
+Дальше владелец обновляет VPS, затем Windows (service install после uv), проверяет
+меню /sessions /new/PONG и устанавливает второй PC с отдельными ID/key.
+P4.8.5 остаётся PARTIAL: approvals, два узла и host lifecycle ещё не приняты.

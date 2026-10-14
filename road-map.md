@@ -813,12 +813,12 @@ Spikes возможны после базы P4.8; общий пользоват�
 Зафиксированы source/API и durable model state, оставшаяся очередь, ограничения Hermes,
 доказательства проверок и отдельный этап установки/приёмки.
 
-**Следующий этап:** выпуск/обновление rc5 с Telegram UX и Windows fixes, затем
+**Следующий этап:** обновление владельцем опубликованного rc5 (GitHub/PyPI), затем
 approvals, lifecycle и второй ПК; первый Telegram запрос
 завершился PONG (job cfbd548e43c4), сообщено владельцем; P4.8.5 PARTIAL.
 Windows задача работает без консоли; VPS ACP probe
 подтвердил `home/hermes` ready. GUI автозапуск Hermes настроен, вход/reboot ещё не проверен.
-TTY/colorama дефект rc4 устранён локально; runtime dependency/fallback/regрессия добавлены для следующего релиза.
+TTY/colorama, фоновая Windows задача, Telegram menu/status и dialogue cards исправлены в rc5.
 GitHub prerelease/PyPI 0.2.0rc4 опубликованы 2026-10-14; SHA256 wheel/sdist сверены.
 Финальный Linux source 1233/30; native setup/discovery 80/26, последние protocol/catalog 36,
 все 24 Scheduler и 32/3 native recovery checks прошли. Исправлен Windows rollback при mapped DLL.
