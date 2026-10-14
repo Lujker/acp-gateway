@@ -102,6 +102,15 @@ not check the latest Git commit, release wheel or binary. A missing PyPI release
 is reported explicitly. This check is advisory; installation constraints and
 Python/platform requirements still determine what uv can install.
 
+For the release after 0.2.0rc5, `acpgw update --stable --with-services`
+selects a newer stable, non-yanked PyPI version and updates the selected managed
+service through the existing stop/health/restart cycle. It resolves an exact
+version before stopping anything, so a saved uv `==version` constraint cannot
+prevent the upgrade. With no newer stable release it changes neither package
+nor services, including when the installed RC is newer than the stable release.
+This flag requires a registry installation; explicit `--version` still selects
+an RC. Published rc5 does not yet include `--stable`.
+
 Before updating, stop both services if installed and any foreground Gateway,
 connector or dispatcher from this installation. First complete/cancel active
 jobs; an update does not recover an interrupted tool action.

@@ -171,3 +171,63 @@ def test_manager_checks_current_environment_not_just_uv_on_path(monkeypatch, tmp
     assert installation.installation_info()["manager"] == "unmanaged"
     monkeypatch.setattr(installation.sys, "prefix", str(tmp_path / "acp-gateway"))
     assert installation.installation_info()["manager"] == "uv"
+
+
+@pytest.mark.parametrize("latest", [None, "0.1.0", "0.2.0"])
+def test_stable_update_never_downgrades_or_stops_services(uv_tool, monkeypatch, capsys, latest):
+    from packaging.version import Version
+
+    monkeypatch.setattr(
+        installation,
+        "installation_info",
+        lambda: {
+            "version": "0.2.0rc5" if latest != "0.2.0" else "0.2.0",
+            "manager": "uv",
+            "source": "registry",
+        },
+    )
+    monkeypatch.setattr(
+        installation, "latest_stable_release", lambda: Version(latest) if latest else None
+    )
+    monkeypatch.setattr(installation, "_uv", lambda: pytest.fail("no update needed"))
+    assert main(["update", "--stable", "--with-services"]) == 0
+    assert "services are unchanged" in capsys.readouterr().out
+
+
+@pytest.mark.skipif(sys.platform != "linux", reason="Linux runtime lease")
+@pytest.mark.parametrize("managed", [False, True])
+def test_stable_update_resolves_exact_version_before_handoff(uv_tool, monkeypatch, managed):
+    from packaging.version import Version
+
+    monkeypatch.setattr(
+        installation,
+        "installation_info",
+        lambda: {
+            "version": "0.2.0rc5",
+            "manager": "uv",
+            "source": "registry",
+        },
+    )
+    monkeypatch.setattr(installation, "latest_stable_release", lambda: Version("0.2.0"))
+    calls = []
+    if managed:
+        monkeypatch.setattr(
+            installation, "_handoff_service_update", lambda args, fd: calls.append(args.version)
+        )
+    else:
+        monkeypatch.setattr(
+            installation, "_handoff", lambda args, command, fd: calls.append(command)
+        )
+    assert main(["update", "--stable", *(["--with-services"] if managed else [])]) == 0
+    if managed:
+        assert calls == ["0.2.0"]
+    else:
+        assert "acp-gateway==0.2.0" in calls[0]
+
+
+def test_stable_update_refuses_file_install_and_conflicting_selector(uv_tool, monkeypatch, capsys):
+    monkeypatch.setattr(installation, "latest_stable_release", lambda: pytest.fail("wrong channel"))
+    assert main(["update", "--stable"]) == 1
+    assert "registry installation" in capsys.readouterr().err
+    with pytest.raises(SystemExit):
+        main(["update", "--stable", "--version", "0.2.0"])

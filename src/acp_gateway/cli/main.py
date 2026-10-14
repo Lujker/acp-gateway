@@ -38,6 +38,7 @@ def _build_parser() -> argparse.ArgumentParser:
     target.add_argument("--check", action="store_true", help="check stable PyPI releases only")
     target.add_argument("--status", action="store_true", help="show the latest maintenance result")
     target.add_argument("--version", help="install an exact PyPI version")
+    target.add_argument("--stable", action="store_true", help="install a newer stable PyPI release")
     target.add_argument(
         "--rollback",
         action="store_true",

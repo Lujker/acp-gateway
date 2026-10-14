@@ -403,12 +403,12 @@ def _handoff_service_update(args, descriptor):
         raise
 
 
-def check_update() -> int:
+def latest_stable_release() -> Version | None:
     with httpx.Client(timeout=10, follow_redirects=False) as client:
         response = client.get(f"https://pypi.org/pypi/{PACKAGE}/json")
     if response.status_code == 404:
         print("No PyPI release is published yet. Install a reviewed release wheel or Git ref.")
-        return 0
+        return None
     response.raise_for_status()
     data = response.json()
     urls = data.get("info", {}).get("project_urls") or {}
@@ -426,10 +426,14 @@ def check_update() -> int:
             and any(not file.get("yanked", False) for file in files)
         ):
             candidates.append(version)
-    if not candidates:
+    return max(candidates, default=None)
+
+
+def check_update() -> int:
+    latest = latest_stable_release()
+    if latest is None:
         print("No stable PyPI release is available.")
         return 0
-    latest = max(candidates)
     print(f"Installed: {__version__}; latest stable PyPI release: {latest}")
     print("Update available." if latest > Version(__version__) else "No newer stable release.")
     print("This checks PyPI; file/Git installations require an explicit update --from source.")
@@ -483,6 +487,18 @@ def maintenance(args) -> int:
             "For Docker use compose pull/up; for Git checkout use scripts/install.sh; "
             "for other installations use the original package manager"
         )
+    if getattr(args, "stable", False):
+        if info["source"] != "registry":
+            raise ValueError("--stable requires a registry installation; use update --from SOURCE")
+        if args.constraints:
+            raise ValueError("--constraints requires --from")
+        latest = latest_stable_release()
+        if latest is None or latest <= Version(info["version"]):
+            print("No newer stable release. Package and services are unchanged.")
+            return 0
+        # Resolve once before any service stop. The coordinator receives the exact
+        # version, avoiding a second lookup or uv's saved ==version constraint.
+        args.version = str(latest)
     executable = _uv()
     if args.command == "uninstall":
         command = [executable, "tool", "uninstall", PACKAGE]

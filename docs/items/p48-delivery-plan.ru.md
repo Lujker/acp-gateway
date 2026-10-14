@@ -813,3 +813,25 @@ Windows задача осталась enabled/state=4/pythonw, test/smoke tasks=
 Дальше владелец обновляет VPS, затем Windows (service install после uv), проверяет
 меню /sessions /new/PONG и устанавливает второй PC с отдельными ID/key.
 P4.8.5 остаётся PARTIAL: approvals, два узла и host lifecycle ещё не приняты.
+
+### 2026-10-14 — обновление владельцем rc5 и явный stable update
+
+Владелец сообщил: VPS/Windows обновлены, Telegram вывод улучшился, основные
+команды работают. Следующий live этап — второй Windows PC с отдельным ID home2
+и новым enrollment key; alias hermes может совпадать (маршрут home2/hermes).
+
+При проверке update обнаружено: plain update использует uv tool upgrade и
+сохраняет исходный exact constraint, поэтому не является latest stable режимом.
+Для следующего релиза добавлен явный `update --stable [--with-services]`:
+общий с --check фильтр trusted repository/stable/non-yanked PyPI versions,
+однократное разрешение exact version до остановки; coordinator получает --version.
+Если stable не новее установленной версии (включая более новый RC), пакет и
+службы не изменяются. File/Git installations требуют explicit --from; selector
+взаимоисключён с --version/--from/rollback/check. Повторно использовать существующие
+reservation/health/recovery/service restoration guards вместо нового updater.
+
+Проверено 48 installation/Linux service/Windows coordinator tests. Покрыты
+no-op без UV/service operations, exact requirement, managed handoff, file rejection
+и конфликт selectors; прежние stable/yanked/prerelease/trust tests проходят.
+Read-only PyPI --check подтвердил: installed 0.2.0rc5, stable 0.1.0, newer stable нет.
+Ruff и diff check прошли. Этот код ещё не выпущен: rc5 tag/assets не изменялись.
