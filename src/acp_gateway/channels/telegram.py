@@ -17,12 +17,21 @@ from aiogram.exceptions import (
     TelegramRetryAfter,
 )
 from aiogram.methods import GetUpdates
-from aiogram.types import CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup, Message
+from aiogram.types import (
+    BotCommand,
+    BotCommandScopeAllPrivateChats,
+    CallbackQuery,
+    InlineKeyboardButton,
+    InlineKeyboardMarkup,
+    MenuButtonCommands,
+    Message,
+)
 from pydantic import SecretStr
 
 from acp_gateway.agents import AgentError
 from acp_gateway.channels.base import Channel
 from acp_gateway.config import TelegramSettings
+from acp_gateway.connectors.diagnostics import computer_diagnostics
 from acp_gateway.core import GatewayError
 from acp_gateway.core.bus import ApprovalRequested, ApprovalResolved, JobFinished
 from acp_gateway.log import get_logger, redact_text, redact_value, register_secret
@@ -42,6 +51,23 @@ HELP = (
     "/model default [PROVIDER MODEL | clear] — new-dialogue default\n"
     "/approvals — pending approval buttons\n"
     "Approvals offer allow once/reject once; permanent approval is unavailable."
+)
+
+
+COMMANDS = (
+    ("start", "Getting started", "Начало работы"),
+    ("help", "Commands and usage", "Команды и подсказки"),
+    ("agent", "List or select an agent", "Список и выбор агента"),
+    ("new", "Create a dialogue", "Создать диалог"),
+    ("sessions", "List dialogues", "Список диалогов"),
+    ("switch", "Switch dialogue: /switch ID", "Выбрать диалог: /switch ID"),
+    ("status", "PC connections, agents and jobs", "Подключения, агенты и задачи"),
+    ("result", "Saved answer: /result JOB_ID", "Результат: /result JOB_ID"),
+    ("delivery", "Answer delivery: /delivery JOB_ID", "Доставка: /delivery JOB_ID"),
+    ("stop", "Stop this chat's jobs", "Остановить задачи этого чата"),
+    ("model", "Current model and settings", "Текущая модель и настройки"),
+    ("models", "Available models", "Доступные модели"),
+    ("approvals", "Pending confirmations", "Ожидающие подтверждения"),
 )
 
 
@@ -66,12 +92,13 @@ class TelegramChannel(Channel):
     name = "telegram"
     can_approve = True
 
-    def __init__(self, settings: TelegramSettings, token: SecretStr, *, bot=None):
+    def __init__(self, settings: TelegramSettings, token: SecretStr, *, bot=None, dispatcher=None):
         register_secret(token.get_secret_value())
         self.settings = settings.model_copy(deep=True)
         self.bot = bot or Bot(
             token.get_secret_value(), default=DefaultBotProperties(parse_mode="HTML")
         )
+        self.connector_dispatcher = dispatcher
         self.namespace = f"telegram:{self.bot.id}"
         self.dispatcher = Dispatcher()
         self.dispatcher.update.outer_middleware(_Updates(self))
@@ -131,11 +158,78 @@ class TelegramChannel(Channel):
         self._tasks = [
             asyncio.create_task(self._deliver_results(), name="telegram-outbound"),
             asyncio.create_task(self._poll()),
+            asyncio.create_task(self._menus(), name="telegram-menu"),
             asyncio.create_task(self._events()),
             asyncio.create_task(self._deliver()),
         ]
         if self.settings.status_enabled:
             self._tasks.append(asyncio.create_task(self._update_statuses()))
+
+    async def _register_commands(self):
+        for language, column in (("", 1), ("ru", 2)):
+            await self.bot.set_my_commands(
+                [BotCommand(command=row[0], description=row[column]) for row in COMMANDS],
+                scope=BotCommandScopeAllPrivateChats(),
+                language_code=language,
+                request_timeout=10,
+            )
+        await self.bot.set_chat_menu_button(menu_button=MenuButtonCommands(), request_timeout=10)
+
+    async def _menus(self):
+        # Menu failures must never prevent polling or result delivery.
+        while True:
+            try:
+                await self._register_commands()
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                self._log.warning("Telegram command menu registration failed; retrying")
+                await asyncio.sleep(60)
+            else:
+                await asyncio.sleep(3600)
+
+    def _status_lines(self):
+        lines = ["Dispatcher: running"]
+        routes = {}
+        if self.connector_dispatcher is not None:
+            snapshot = computer_diagnostics(self.core, self.connector_dispatcher)
+            routes = {row["address"]: row for row in snapshot["routes"]}
+            for pc in snapshot["computers"]:
+                state = (
+                    "access disabled"
+                    if not pc["enabled"]
+                    else "online"
+                    if pc["connected"]
+                    else "offline"
+                )
+                lines.append(f"PC {pc['computer_id']}: {state}")
+        for alias, client in self.core.agents.items():
+            route = routes.get(alias)
+            if route is not None:
+                problem = route["problem"]
+                state = {
+                    "not_enrolled": "PC not registered",
+                    "access_disabled": "PC access disabled",
+                    "computer_offline": "PC offline",
+                    "agent_unadvertised": "agent not announced by PC",
+                    "agent_not_initialized": "not checked yet; PC online",
+                }.get(problem)
+                if route["agent_ready"]:
+                    state = "ready"
+                elif state is None:
+                    state = f"connection needs checking ({problem})"
+            else:
+                state = "ready" if client.connected else "not initialized"
+                if client.profile.backend == "connector":
+                    state = "ready" if client.connected else "PC connection not checked"
+            lines.append(f"{alias}: {state}")
+        if not self.core.agents:
+            lines.append("No agents configured.")
+        # CLI approvals are optional; stateless MCP readiness is not a client connection.
+        mcp = self.core.channels.get("mcp")
+        if mcp is not None:
+            lines.append(f"MCP: {'serving' if mcp.connected else 'not started'}")
+        return lines
 
     async def _poll(self):
         delay = 1
@@ -391,14 +485,7 @@ class TelegramChannel(Channel):
                 await self._send(chat, "\n".join([*lines, "Select with /agent ALIAS."]))
             return
         if command == "/status":
-            lines = [
-                f"{a}: {'connected' if c.connected else 'disconnected'}"
-                for a, c in self.core.agents.items()
-            ]
-            lines += [
-                f"{c.name}: {'connected' if c.connected else 'unavailable'}"
-                for c in self.core.channels.values()
-            ]
+            lines = self._status_lines()
             lines += [
                 f"Running: {j.id} ({j.conversation.agent})"
                 for j in self.core.running_jobs()

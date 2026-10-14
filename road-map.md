@@ -706,7 +706,8 @@ known model-loss reconciliation не повторяет mutation, prompt-loss о
 настоящий uv upgrade rc3→rc4 проверен Linux/Windows без потери YAML/env/key/БД.
 Все 24 native Scheduler cases прошли; текущие source/package evidence и выпуск —
 [журнал поставки](docs/items/p48-delivery-plan.ru.md).
-Остаются второй PC, реальные model/approvals, reboot/logon/sleep/network и обновление службы.
+Первый Telegram model request завершён PONG по отчёту владельца. Остаются второй PC,
+approvals, reboot/logon/sleep/network и обновление службы.
 Владелец выполняет живую установку сам по [uv/PyPI инструкции](docs/setup/self-install-pypi.ru.md).
 
 #### P4.8.6 — Перенесено в P4.9
@@ -812,8 +813,9 @@ Spikes возможны после базы P4.8; общий пользоват�
 Зафиксированы source/API и durable model state, оставшаяся очередь, ограничения Hermes,
 доказательства проверок и отдельный этап установки/приёмки.
 
-**Следующий этап:** первый реальный запрос через Telegram, затем model/approval
-и второй ПК; P4.8.5 PARTIAL. Windows задача работает без консоли; VPS ACP probe
+**Следующий этап:** model/approval, lifecycle и второй ПК; первый Telegram запрос
+завершился PONG (job cfbd548e43c4), сообщено владельцем; P4.8.5 PARTIAL.
+Windows задача работает без консоли; VPS ACP probe
 подтвердил `home/hermes` ready. GUI автозапуск Hermes настроен, вход/reboot ещё не проверен.
 TTY/colorama дефект rc4 устранён локально; runtime dependency/fallback/regрессия добавлены для следующего релиза.
 GitHub prerelease/PyPI 0.2.0rc4 опубликованы 2026-10-14; SHA256 wheel/sdist сверены.
@@ -831,7 +833,7 @@ Installed wheel Linux/Windows update/failed-health/rollback/uninstall и Linux b
 
 1. **P4.8.5 — живая установка и приёмка 0.2.0rc4.** VPS уже работает; текущий Windows connector
    работает фоном; Hermes Desktop открыт, GUI автозапуск настроен. Далее Telegram
-   model/approval, вход/reboot и второй PC;
+   approvals, вход/reboot и второй PC; первый Telegram prompt завершён PONG;
    [порядок проверок](docs/setup/p48-acceptance.md).
 2. **P3.4/P3.5 — установка, настройка и контроль службы.** Основа Linux/WSL
    и самостоятельная Linux-сборка подтверждены чистым контейнерным CI;

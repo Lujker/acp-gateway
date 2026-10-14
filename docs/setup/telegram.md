@@ -49,7 +49,7 @@ is created automatically. Older direct/disabled bindings retain their refusal ru
 | `/new [ALIAS]` | Create and activate a new session |
 | `/sessions` | List this chat's selected agent sessions; `*` marks the active one |
 | `/switch ID` | Activate a session owned by this chat and selected agent |
-| `/status` | Agent/channel connections and this chat's running jobs |
+| `/status` | PC link, agent readiness and this chat's running jobs |
 | `/result JOB_ID` | Retrieve a saved answer or status owned by this chat |
 | `/delivery JOB_ID` | Development: inspect saved automatic delivery state |
 | `/stop` | Cancel this chat's selected agent jobs |
@@ -108,3 +108,15 @@ the response. /model default [PROVIDER MODEL | clear] affects later new
 dispatcher dialogues only. /model reconcile ID REVISION reads the exact retained
 operation outcome without repeating the mutation. See the
 [P4.8 acceptance guide](p48-acceptance.md) for confirmation and recovery limits.
+
+
+For the next release, the dispatcher registers the command menu automatically
+at startup (default English and Russian descriptions for private chats). BotFather
+configuration is unnecessary. Registration retries independently when the API
+is unavailable; it never sends chat messages or changes the allowlist.
+
+`/status` uses local snapshots and does not initialize agents or call a model.
+It distinguishes an online PC from an ACP agent that has not been checked yet.
+A ready agent is reported only when both the PC connection and ACP client are
+ready. Optional inactive CLI approvers are omitted; MCP is described as serving,
+since its HTTP interface does not imply a persistent client connection.
