@@ -835,3 +835,20 @@ no-op без UV/service operations, exact requirement, managed handoff, file rej
 и конфликт selectors; прежние stable/yanked/prerelease/trust tests проходят.
 Read-only PyPI --check подтвердил: installed 0.2.0rc5, stable 0.1.0, newer stable нет.
 Ruff и diff check прошли. Этот код ещё не выпущен: rc5 tag/assets не изменялись.
+
+### 2026-10-14 — rc6: Telegram UI и stable update, проверки выпуска
+
+В rc6 включены inline control panel (/menu), выбор dialogue/model кнопками,
+адресные job controls, versioned Markdown→HTML delivery с legacy rc5 continuation
+и подготовленный ранее update --stable. Полный контракт и границы:
+[Telegram UI](telegram-ui.ru.md). Schema 8 не меняется; rc5 tag/assets сохранены.
+
+Полный source на основной реализации: 1287 passed / 31 expected skips. Финальная
+rc6 update/UI/delivery выборка 127 passed; установленный native Windows UI wheel
+79 passed. Последняя подпись exact provider/model перед confirmation проверена
+отдельно в Linux и установленном rc6 Windows wheel. Linux/Windows package smoke:
+update, negative SQL health recovery, rollback, active guard, uninstall passed;
+Linux bundle/direct Git install, ACP/MCP/approvals и delivery rollback fence passed.
+Evidence: dist/telegram-ux-verification и dist/rc6-verification.
+Владелец сам обновляет VPS, затем оба ПК через existing managed updater; production
+службы/Hermes этой итерацией не изменялись. Публикация идёт из clean checkout.
