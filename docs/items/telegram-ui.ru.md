@@ -1,12 +1,12 @@
 # P2.3 — Telegram: inline управление и форматирование
 
-**Статус:** PARTIAL — реализация rc6 проверена автоматически;
+**Статус:** PARTIAL — rc6 и дополнительные исправления проверены автоматически;
 живая приёмка нового интерфейса владельцем ещё впереди.
 
 ## Решения владельца и подтверждённая приёмка
 
 2026-10-14 владелец подтвердил обновление VPS/Windows до rc5 и корректную работу
-обоих ПК home/home2. Основные команды sessions/results и первый реальный prompt
+обоих ПК (на позднем скриншоте второй маршрут — work/hermes). Основные команды sessions/results и первый реальный prompt
 с ответом PONG проверены ранее. Это подтверждение функциональности двух узлов,
 а не доказательство всех сценариев approvals/parallel isolation/lifecycle.
 
@@ -99,3 +99,57 @@ Context7 использован перед official Bot API сверкой. Ак
 Релиз: [rc6](https://github.com/Lujker/acp-gateway/releases/tag/v0.2.0rc6),
 [PyPI](https://pypi.org/project/acp-gateway/0.2.0rc6/). Реальный registry rc5→rc6
 проверен в обеих ОС; живая UI приёмка владельцем остаётся впереди.
+
+
+## Дополнительные замечания владельца 2026-10-14: названия и выполнение
+
+Владелец уточнил, что ещё не устанавливал rc6: скриншот с сырыми `**bold**`,
+backticks и Markdown-таблицей относится к rc5. Рендерер rc6 уже исправляет этот
+класс вывода; новый screenshot не считается провалом приёмки rc6. Владелец
+подтвердил, что реальные approvals работают. Частота запросов остаётся неудобством:
+на скриншоте Hermes запрашивает once/deny для MCP atom-services с trust: untrusted
+и без readOnlyHint=true; это не доказательство дублирования одной permission RPC.
+
+Причина постоянного названия найдена в нашем session.create: явно заданный title
+Dispatcher становится пользовательским заголовком Hermes и блокирует его штатный
+auto-title. В новых dedicated chats этот параметр убран. Dispatcher сохраняет
+собственную краткую сводку первого принятого prompt (80 символов, redaction),
+передаёт session_info_update и использует её в списках вместо Dispatcher.
+Hermes свободен формировать собственное название. Уже созданные пользовательские
+заголовки не мигрируются: их можно переименовать в Desktop, новые диалоги создаются
+без pin. Production Hermes и его база не изменялись в ходе проверки.
+
+У установленного Hermes Desktop 0.21.6 config.set approvals.mode записывает
+настройку профиля (_word_setters в tui_gateway/methods_config_set.py), даже если
+передать session_id. Использовать этот RPC для переключателя одного диалога нельзя.
+Вместо глобального изменения реализована явная политика диспетчера `/mode`:
+
+- Как Hermes (ask): upstream сам решает, когда запросить разрешение, dispatcher
+  показывает такие запросы человеку. Это не обещание ручного запроса на каждый tool.
+- Без подтверждений (auto): владелец разрешает все последующие permission requests
+  этого диалога; dispatcher выбирает только allow_once и сохраняет каждое решение
+  до отправки в ACP. Global trust/allow_always и профиль Hermes не меняются.
+- Право задаётся из authenticated private Telegram chat для собственного активного
+  dialogue; связаны chat, channel, dialogue ID, ACP identity и selection revision.
+  Old/foreign buttons и busy операции отклоняются. Переключать нужно между задачами.
+- Настройка сохраняется в SQLite, видна в /menu и /mode, действует после возврата
+  к этому диалогу. Каждый новый диалог начинает с ask. Другие чаты, agents, MCP jobs
+  и переиспользованный storage ID не наследуют разрешение.
+- allow_approvals=false, исключённый approver channel, shutdown, отсутствие
+  allow_once и ошибка аудита не разрешают действие. Auto работает и при временной
+  недоступности Telegram после явного выбора, без карточек на каждый вызов.
+- Политика распространяется на запросы разрешений, которые агент передал через
+  ACP; она не подменяет неподдерживаемые host RPC или другие ограничения агента.
+
+Полный source suite: **1305 passed / 31 expected skips**, 204.59s;
+`dist/rc7-verification/source.xml` и `source.log`. Покрыты реальный ACP SDK с fake
+Hermes, first-title lifecycle, Telegram auto→ask, чужие/stale controls, busy,
+policy, storage identity, once-only audit и disk-full отказ без allow.
+Живая проверка новых названий и режимов остаётся за владельцем после обновления.
+
+Native Windows: установлен preview wheel rc7 в отдельное validation environment,
+**161 passed**, 33.65s; `dist/rc7-verification/windows-focused.xml/.log`.
+Production uv tool, scheduled task и живые Hermes conversations не менялись.
+Ruff/format/diff checks пройдены. Новое поведение названий находится на стороне
+коннектора: для него нужно обновить оба ПК; `/mode` находится в dispatcher и
+совместим с rc5/rc6 connectors. Старые заголовки не мигрируются автоматически.

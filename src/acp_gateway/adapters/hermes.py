@@ -21,6 +21,7 @@ from acp_gateway.adapters.hermes_models import (
 )
 from acp_gateway.discovery.hermes import HermesDiscoveryError, HermesEndpoint
 from acp_gateway.discovery.hermes_rpc import HermesRpcClient, HermesRpcError, stored_session_id
+from acp_gateway.log import redact_text
 
 MAX_CONVERSATIONS = 32
 SessionState = Literal["idle", "running", "configuring", "uncertain"]
@@ -40,6 +41,7 @@ class _Entry:
     conversation: HermesConversation
     state: SessionState = "idle"
     submitting: bool = False
+    title: str | None = None
     models: HermesModelControl = field(default_factory=HermesModelControl)
 
 
@@ -174,6 +176,10 @@ class HermesDedicatedClient:
     def state(self, handle: str) -> SessionState:
         entry = self._entry(handle)
         return "configuring" if entry.state == "idle" and entry.models.busy else entry.state
+
+    def title(self, handle: str) -> str | None:
+        """Local first-prompt summary; upstream remains free to generate its own title."""
+        return self._entry(handle).title
 
     def model_activity(self, handle: str) -> bool:
         """Pending/deferred changes are not an idle proof for package maintenance."""
@@ -323,7 +329,6 @@ class HermesDedicatedClient:
             self._creating = {
                 "profile": self.profile,
                 "source": "acp_gateway",
-                "title": "Dispatcher",
                 "cwd": cwd,
                 "cwd_explicit": True,
                 "close_on_disconnect": False,
@@ -377,6 +382,8 @@ class HermesDedicatedClient:
                 # queued/steered/redirected means the reserved-chat assumption
                 # did not hold. No safe automatic interrupt or replay exists.
                 raise HermesDiscoveryError("Hermes did not accept an isolated dispatcher turn")
+            if entry.title is None:
+                entry.title = " ".join(redact_text(text).split())[:80]
         except BaseException:
             entry.state = "uncertain"
             self._clear_permissions(entry)

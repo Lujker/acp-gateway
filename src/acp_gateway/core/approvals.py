@@ -86,11 +86,20 @@ class ApprovalManager:
         )
 
     async def request(
-        self, conversation: Conversation, job_id: str, request: PermissionRequest
+        self,
+        conversation: Conversation,
+        job_id: str,
+        request: PermissionRequest,
+        *,
+        automatic: dict | None = None,
     ) -> ApprovalResult:
         now = utcnow()
         timeout = self._policy.settings.approval_timeout_seconds
-        channels = tuple(name for name in self._channels() if self._eligible(name))
+        channels = (
+            ()
+            if automatic is not None
+            else tuple(name for name in self._channels() if self._eligible(name))
+        )
         approval = Approval(
             secrets.token_hex(12),
             job_id,
@@ -107,6 +116,29 @@ class ApprovalManager:
             return self._finish(pending, None, "cancelled", "the gateway is stopping")
         if not self._policy.settings.allow_approvals:
             return self._reject(pending, "policy_denied", "approvals are disabled by policy")
+        if automatic is not None:
+            channel, actor = automatic.get("channel"), automatic.get("actor")
+            if (
+                automatic.get("mode") != "auto"
+                or channel != "telegram"
+                or conversation.channel != channel
+                or actor != f"telegram:{conversation.key}"
+                or channel not in self._policy.settings.approver_channels
+            ):
+                return self._reject(pending, "policy_denied", "invalid automatic authorization")
+            option = request.option("allow_once")
+            if option is None:
+                return self._reject(pending, "policy_denied", "no allow-once option available")
+            # Audit must commit before the allow reaches the agent; no persistent
+            # upstream trust or allow-always decision is granted.
+            return self._finish(
+                pending,
+                option.option_id,
+                "approved",
+                "explicit dialogue execution mode: auto",
+                channel=channel,
+                actor=actor,
+            )
         if not channels:
             return self._reject(pending, "unavailable", "no human approver is connected")
         if not any(self._view(approval, name).request.options for name in channels):

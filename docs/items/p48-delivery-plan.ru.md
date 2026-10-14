@@ -872,3 +872,18 @@ dist/rc6-verification/{linux,windows}-registry-upgrade.log и upgrade.json.
 Production Windows tool проверен read-only: registry rc5, task enabled/state=4;
 VPS/оба ПК владелец обновляет самостоятельно. Коннекторы rc5 совместимы с rc6
 диспетчером (protocol/schema не менялись), поэтому для UI первым обновляется VPS.
+
+### 2026-10-14 — подготовка rc7: Telegram execution mode и Hermes titles
+
+Владелец ещё на rc5; rc6 не проверял. Подтвердил рабочие approvals и прислал
+замечания: сырые Markdown-таблицы, постоянный Dispatcher, слишком частые запросы
+при smart mode. Markdown исправлен в rc6; rc7 сохраняет тот же renderer и добавляет
+локальное именование/снятие upstream title pin и явный per-dialogue `/mode`.
+Контракт и причины решений: [Telegram UI](telegram-ui.ru.md).
+
+Полный source suite **1305 passed / 31 expected skips**, 204.59s. Native Windows
+installed preview wheel: **161 passed**, 33.65s. Ruff/format/diff checks прошли.
+Protocol/schema не менялись. Для `/mode` достаточно нового dispatcher; для
+новых названий нужны новые connectors, старые диалоги сохраняют заголовки.
+Published rc6/tag/assets остаются неизменными, новая поставка получает rc7.
+Данные, production службы и Hermes chats владельца не изменялись.

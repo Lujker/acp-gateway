@@ -497,7 +497,7 @@ class ManagedHermesStream:
                             {
                                 "sessionId": sid,
                                 "cwd": manager._sessions[sid].cwd,
-                                "title": "Dispatcher",
+                                "title": manager._engine.driver.title(sid),
                             }
                             for sid in self.sessions
                             if manager._sessions[sid].cwd == params["cwd"]

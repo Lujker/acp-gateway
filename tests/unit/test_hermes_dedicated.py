@@ -101,7 +101,6 @@ async def test_create_uses_native_cwd_and_handles_not_arbitrary_desktop_ids(dedi
     assert socket.sent[0]["params"] == {
         "profile": "default",
         "source": "acp_gateway",
-        "title": "Dispatcher",
         "cwd": r"C:\Users\vladz\work",
         "cwd_explicit": True,
         "close_on_disconnect": False,

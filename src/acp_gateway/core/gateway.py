@@ -933,6 +933,70 @@ class GatewayCore:
                 error=error,
             )
 
+    def execution_mode(self, conversation: Conversation) -> dict:
+        record = self.store.active_session(conversation)
+        if record is None:
+            raise UnknownSession("Select or create a dialogue first.")
+        saved = self.store.channel_state("execution_mode", str(record.id), {})
+        return {
+            "dialogue_id": record.id,
+            "mode": saved.get("mode", "ask")
+            if saved.get("session") == record.acp_session_id
+            else "ask",
+            "selection_revision": self.store.active_revision(conversation),
+        }
+
+    def set_execution_mode(
+        self,
+        conversation: Conversation,
+        mode: str,
+        *,
+        dialogue_id: int,
+        expected_revision: int,
+        actor: str,
+    ) -> dict:
+        """Explicit human authorization for one dialogue's future permission requests.
+
+        This never changes the host profile or allows requests belonging to other
+        channels/dialogues. New dialogues always use upstream/human approvals.
+        """
+        self._check_admission()
+        channel = self._channels.get(conversation.channel)
+        if (
+            channel is None
+            or not self.policy.can_approve(channel)
+            or conversation.channel != "telegram"
+            or actor != f"telegram:{conversation.key}"
+        ):
+            raise PolicyDenied("Execution mode requires this chat's authenticated approver.")
+        if mode not in {"ask", "auto"}:
+            raise GatewayError("Choose execution mode ask or auto.")
+        state = self.execution_mode(conversation)
+        if (
+            type(dialogue_id) is not int
+            or type(expected_revision) is not int
+            or state["dialogue_id"] != dialogue_id
+            or state["selection_revision"] != expected_revision
+        ):
+            raise SelectionChanged("Dialogue changed; refresh execution settings.")
+        if dialogue_id in self._busy or self._locks[conversation].locked():
+            raise SessionBusy("Finish the current operation before changing execution mode.")
+        self.store.set_channel_state(
+            "execution_mode",
+            str(dialogue_id),
+            {
+                "mode": mode,
+                "session": self.store.active_session(conversation).acp_session_id,
+                "actor": actor,
+                "channel": conversation.channel,
+                "changed_at": utcnow().isoformat(),
+            },
+        )
+        self._log.info(
+            "dialogue execution mode changed", dialogue_id=dialogue_id, mode=mode, actor=actor
+        )
+        return self.execution_mode(conversation)
+
     async def _on_permission(self, alias: str, request: PermissionRequest) -> str | None:
         record = next(
             (
@@ -945,8 +1009,20 @@ class GatewayCore:
         )
         if record is None or record.cancel_requested:
             return None
-        result = await self.approvals.request(record.job.conversation, record.job.id, request)
-        if result.reason:
+        authorization = self.store.channel_state("execution_mode", str(record.job.session_id), {})
+        # Match the originating private chat, never the currently selected dialogue.
+        if not (
+            authorization.get("mode") == "auto"
+            and authorization.get("session") == record.job.acp_session_id
+            and record.job.conversation.channel == "telegram"
+            and authorization.get("channel") == "telegram"
+            and authorization.get("actor") == f"telegram:{record.job.conversation.key}"
+        ):
+            authorization = None
+        result = await self.approvals.request(
+            record.job.conversation, record.job.id, request, automatic=authorization
+        )
+        if result.reason and result.outcome != "approved":
             record.notice = result.reason
         return result.option_id
 

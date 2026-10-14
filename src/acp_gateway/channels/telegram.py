@@ -56,8 +56,9 @@ HELP = (
     "/model reconcile ID REVISION — inspect retained outcome, no retry\n"
     "/model set PROVIDER MODEL ID REVISION [TOKEN] — select/confirm\n"
     "/model default [PROVIDER MODEL | clear] — new-dialogue default\n"
+    "/mode — execution mode for the selected dialogue\n"
     "/approvals — pending approval buttons\n"
-    "Approvals offer allow once/reject once; permanent approval is unavailable."
+    "Default: upstream/human approvals. /mode can explicitly authorize this dialogue."
 )
 
 
@@ -75,6 +76,7 @@ COMMANDS = (
     ("stop", "Stop this chat's jobs", "Остановить задачи этого чата"),
     ("model", "Current model and settings", "Текущая модель и настройки"),
     ("models", "Available models", "Доступные модели"),
+    ("mode", "Dialogue execution mode", "Режим выполнения диалога"),
     ("approvals", "Pending confirmations", "Ожидающие подтверждения"),
 )
 
@@ -556,7 +558,9 @@ class TelegramChannel(Channel):
                 text += f" — {_label(active.title)}"
             rows += [[("💬 Диалоги", "/sessions"), ("➕ Новый диалог", "/new")]]
             if active:
-                rows += [[("🧠 Модель", "/model")]]
+                mode = self.core.execution_mode(conv)["mode"]
+                text += "\nВыполнение: " + ("без подтверждений" if mode == "auto" else "как Hermes")
+                rows += [[("🧠 Модель", "/model"), ("⚙ Выполнение", "/mode")]]
         else:
             text += "\nВыберите агента, затем создайте или выберите диалог."
         rows += [[("✅ Подтверждения", "/approvals"), ("❓ Помощь", "/help")]]
@@ -796,6 +800,50 @@ class TelegramChannel(Channel):
             if command == "/new" and argument
             else self._conversation(chat)
         )
+        if command == "/mode":
+            parts = argument.split()
+            if parts:
+                if (
+                    len(parts) != 4
+                    or parts[0] != "set"
+                    or not all(p.isdecimal() for p in parts[2:])
+                ):
+                    raise GatewayError("Use /mode and its buttons to choose a mode.")
+                self.core.set_execution_mode(
+                    conv,
+                    parts[1],
+                    dialogue_id=int(parts[2]),
+                    expected_revision=int(parts[3]),
+                    actor=f"telegram:{chat}",
+                )
+            state = self.core.execution_mode(conv)
+            dialogue, revision = state["dialogue_id"], state["selection_revision"]
+            automatic = state["mode"] == "auto"
+            label = "Без подтверждений" if automatic else "Как Hermes"
+            await self._panel(
+                chat,
+                f"Выполнение · {conv.agent}\nДиалог: #{dialogue}\nРежим: {label}\n\n"
+                "Как Hermes: запросы разрешений подтверждаете вы.\n"
+                "Без подтверждений: диспетчер разрешает все запросы разрешений этого диалога, "
+                "включая запись и выполнение команд. Решения сохраняются в аудите.\n"
+                "Настройки остальных чатов Hermes не меняются. Новый диалог — Как Hermes.",
+                [
+                    [
+                        (
+                            ("✓ " if not automatic else "") + "Как Hermes",
+                            f"/mode set ask {dialogue} {revision}",
+                        )
+                    ],
+                    [
+                        (
+                            ("✓ " if automatic else "") + "Без подтверждений",
+                            f"/mode set auto {dialogue} {revision}",
+                        )
+                    ],
+                    *self._back_rows(),
+                ],
+            )
+            return
         if command in {"/model", "/models"}:
             route_revision = self.core.store.channel_state(
                 self.namespace, f"route_revision:{chat}", 0

@@ -234,11 +234,12 @@ MCP не имеет инструментов принятия решений.
 
 ### P2.3. Telegram
 
-**Статус:** PARTIAL — rc5 команды/results проверены владельцем на двух ПК.
+**Статус:** PARTIAL — rc5 команды/results и работа подтверждений проверены владельцем на двух ПК.
+Для rc7 проверены названия новых Hermes chats и отдельный режим выполнения /mode.
 В rc6 реализованы inline panel, выбор agents/dialogues/models,
 подтверждение model change, адресные job controls и Markdown→Telegram HTML.
 Доставка сохраняет прежние chunk ACK/unknown fences и продолжает rc5 payload.
-Остаток: выпуск/живая приёмка нового интерфейса и allow/reject подтверждений.
+Остаток: живая приёмка UI и режима выполнения rc7; отдельная проверка deny.
 [UI и результаты проверок](docs/items/telegram-ui.ru.md),
 [надёжность](docs/items/p3.3-reliability.ru.md). Ограничений на данные через Telegram
 нет (решение владельца 2026-10-06); в канал идут запросы, ответы и подтверждения.
@@ -810,20 +811,20 @@ Spikes возможны после базы P4.8; общий пользоват�
 Зафиксированы source/API и durable model state, оставшаяся очередь, ограничения Hermes,
 доказательства проверок и отдельный этап установки/приёмки.
 
-**Следующий этап:** обновление VPS до опубликованного rc6 и живая приёмка Telegram UI (P2.3), затем
+**Следующий этап:** обновление VPS/коннекторов до rc7 и живая приёмка Telegram UI (P2.3), затем
 approvals и host lifecycle P4.8.5. Владелец подтвердил rc5 на VPS и двух Windows
 ПК, ответы и переключение маршрутов работают. P4.8.5 остаётся PARTIAL.
 Inline buttons/Markdown и `update --stable --with-services` опубликованы в rc6;
 registry rc5→rc6 проверен в Linux/Windows без потери настроек/ключей/БД.
 Доказательства: [UI](docs/items/telegram-ui.ru.md),
 [поставка/обновление](docs/items/p48-delivery-plan.ru.md).
-Открыты live allow/reject, изоляция параллельных диалогов, reconnect при работе,
+Работу live approvals владелец подтвердил; открыты отдельная deny-проверка, изоляция параллельных диалогов, reconnect при работе,
 logon/reboot/sleep/network и целевой managed update/rollback. Domain/WSS позже;
 Goose/platform — P4.9, ownership — P4.10.
 Перечень ниже — незакрытые смежные задачи, не prerequisites всего трека.
 
-1. **P2.3/P4.8.5 — Telegram UI и оставшаяся приёмка.** Обновить dispatcher до rc6 с
-   кнопками/форматированием, проверить на двух ПК. Затем approvals/изоляция и lifecycle;
+1. **P2.3/P4.8.5 — Telegram UI и оставшаяся приёмка.** Обновить dispatcher/коннекторы до rc7: кнопки, форматирование,
+   названия и режим выполнения; проверить на двух ПК. Затем approvals/изоляция и lifecycle;
    [UI](docs/items/telegram-ui.ru.md), [порядок проверок](docs/setup/p48-acceptance.md).
 2. **P3.4/P3.5 — установка, настройка и контроль службы.** Основа Linux/WSL
    и самостоятельная Linux-сборка подтверждены чистым контейнерным CI;
@@ -832,7 +833,7 @@ Goose/platform — P4.9, ownership — P4.10.
    Task Scheduler lifecycles уже подтверждены на текущем хосте.
 4. **P2.3/P3.3 — живая приёмка Telegram.** Команды/подтверждения реализованы;
    persistent delivery и status edits включены в опубликованный 0.2.0rc2,
-   [журнал](docs/items/p3.3-reliability.ru.md). Кандидат установки — 0.2.0rc5.
+   [журнал](docs/items/p3.3-reliability.ru.md). Кандидат установки — 0.2.0rc7.
 5. **P4.1 — VPS-диспетчер и собственный WebSocket-коннектор.** Основа для `P4.8`:
    один владелец, ACP-релей. Enrollment и WS/WSS-регистрация
    готовы; инъекция транспорта в AgentClient реализована и проверена на mock ACP
