@@ -201,11 +201,16 @@ def configure_logging(
     stream = stream or sys.stderr
     if fmt == "auto":
         fmt = "console" if stream.isatty() else "json"
-    renderer: Any = (
-        structlog.processors.JSONRenderer()
-        if fmt == "json"
-        else structlog.dev.ConsoleRenderer(colors=stream.isatty())
-    )
+    if fmt == "json":
+        renderer: Any = structlog.processors.JSONRenderer()
+    else:
+        try:
+            renderer = structlog.dev.ConsoleRenderer(colors=stream.isatty())
+        except SystemError as exc:
+            if sys.platform != "win32" or "colorama" not in str(exc):
+                raise
+            # Incomplete source/legacy installs must still start successfully.
+            renderer = structlog.dev.ConsoleRenderer(colors=False)
 
     timestamper = structlog.processors.TimeStamper(fmt="iso", utc=True)
     shared: list[Any] = [

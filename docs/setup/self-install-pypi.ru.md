@@ -127,7 +127,7 @@ powershell -ExecutionPolicy ByPass -c "irm https://astral.sh/uv/install.ps1 | ie
 В новом окне:
 
 ```powershell
-uv tool install --python 3.12 --managed-python 'acp-gateway==0.2.0rc4'
+uv tool install --python 3.12 --managed-python --with 'colorama>=0.4.6' 'acp-gateway==0.2.0rc4'
 uv tool update-shell
 $Acpgw = Join-Path ((uv tool dir --bin).Trim()) 'acpgw.exe'
 & $Acpgw version --json
@@ -135,6 +135,10 @@ $Acpgw = Join-Path ((uv tool dir --bin).Trim()) 'acpgw.exe'
 $Cfg = Join-Path $env:LOCALAPPDATA 'acpgw-connector'
 & $Acpgw setup --config-dir $Cfg --role connector
 ```
+
+В опубликованном rc4 для интерактивного Windows logging нужна дополнительная
+`colorama`, поэтому она включена в команду выше через `--with`. В исходниках
+зависимость уже добавлена для следующих релизов; повторять настройку не требуется.
 
 Hermes должен быть открыт, provider/model настроены; probe ожидает `ready`.
 В меню сначала `base`: создаст приватную конфигурацию без обязательного соединения.
@@ -192,7 +196,7 @@ acpgw config check
 Если служба уже работает, сначала завершить jobs. Для прямого обновления через uv
 на Linux: `acpgw service stop`, команда uv выше, затем `acpgw service start`.
 На Windows: `acpgw --config "$Cfg\config.yaml" service --role connector disable`,
-`uv tool install --upgrade --python 3.12 --managed-python 'acp-gateway==0.2.0rc4'`,
+`uv tool install --upgrade --python 3.12 --managed-python --with 'colorama>=0.4.6' 'acp-gateway==0.2.0rc4'`,
 затем `acpgw --config "$Cfg\config.yaml" service --role connector enable`.
 Указывать фактические config/env пути при нестандартной установке. Не запускать
 второй процесс вручную поверх службы. После обновления: `version --json`,

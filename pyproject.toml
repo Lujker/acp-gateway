@@ -30,6 +30,7 @@ dependencies = [
     "pydantic-settings[yaml]>=2.8",
     "python-dotenv>=1.0",
     "structlog>=25.1",
+    "colorama>=0.4.6; sys_platform == 'win32'",
     "uvicorn>=0.34",
     "websockets>=15",
 ]
