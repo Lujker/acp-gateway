@@ -813,21 +813,19 @@ Spikes возможны после базы P4.8; общий пользоват�
 Зафиксированы source/API и durable model state, оставшаяся очередь, ограничения Hermes,
 доказательства проверок и отдельный этап установки/приёмки.
 
-**Следующий этап:** выпуск актуального 0.2.0rc2 в PyPI и P4.8.5 — установка/приёмка (решение владельца 2026-10-14).
-Кодовые доработки model defaults, CLI/Telegram, exact model recovery,
-bounded session journal и explicit retention готовы; candidate WSL source: 1152/28.
-Отдельный development 0.2.0rc2.dev0 (schema 8): 1198/28 WSL и 62 native source;
-retention, rate limits, durable Telegram delivery/status и update recovery.
-Это сохранённое evidence предыдущих прогонов, не live приёмка новой поставки.
-Владелец устанавливает сам через uv/PyPI по [новой инструкции](docs/setup/self-install-pypi.ru.md).
-Начать с предоставляемого владельцем VPS (IP:port и domain/path), Telegram bot
-и текущего Windows/Hermes, затем второй connector. Проверить native autostart
-Hermes/connector, CLI обеих ролей, реальные model/approval и update/rollback.
-Goose/platform combinations остаются P4.9, cold/shared write recovery не входят
-в выбранный Windows MVP. [Runbook](docs/setup/p48-acceptance.md).
+**Следующий этап:** живая установка опубликованного 0.2.0rc2, P4.8.5.
+GitHub prerelease и PyPI опубликованы 2026-10-14; SHA256 wheel/sdist сверены,
+свежая uv/PyPI установка в Linux и Windows дала version 0.2.0rc2 / source registry.
+Пакетные Linux/Windows update/rollback и 23 native Scheduler cases проверены;
+[подробности выпуска](docs/items/p48-delivery-plan.ru.md).
+Владелец устанавливает сам по [инструкции uv/PyPI](docs/setup/self-install-pypi.ru.md):
+один Ubuntu 24.04 dispatcher по IP:порту, Telegram bot, текущий Windows/Hermes,
+затем второй connector. Живые model/approval, reconnect, logon/reboot/sleep/network
+и target service update/rollback остаются приёмкой; domain/WSS и перенос позже.
+Goose/platform combinations — P4.9, cold/shared write recovery вне Windows MVP.
 Перечень ниже — незакрытые смежные задачи, не prerequisites всего трека.
 
-1. **P4.8.5 — выпуск и живая установка 0.2.0rc2.** Подготовка выпуска IN PROGRESS; Ubuntu 24.04 по IP:порту,
+1. **P4.8.5 — живая установка и приёмка 0.2.0rc2.** Выпуск опубликован; Ubuntu 24.04 по IP:порту,
    бот, текущий Windows/Hermes+connector/автозапуск/CLI, затем второй PC;
    [порядок проверок](docs/setup/p48-acceptance.md).
 2. **P3.4/P3.5 — установка, настройка и контроль службы.** Основа Linux/WSL
@@ -836,8 +834,8 @@ Goose/platform combinations остаются P4.9, cold/shared write recovery н
 3. **P3.1/P3.5 — настоящий Windows reboot.** D-Bus восстановлен; systemd и
    Task Scheduler lifecycles уже подтверждены на текущем хосте.
 4. **P2.3/P3.3 — живая приёмка Telegram.** Команды/подтверждения реализованы;
-   persistent delivery и status edits готовы в development 0.2.0rc2.dev0,
-   [журнал](docs/items/p3.3-reliability.ru.md). Кандидат установки — 0.2.0rc1.
+   persistent delivery и status edits включены в опубликованный 0.2.0rc2,
+   [журнал](docs/items/p3.3-reliability.ru.md). Кандидат установки — 0.2.0rc2.
 5. **P4.1 — VPS-диспетчер и собственный WebSocket-коннектор.** Основа для `P4.8`:
    один владелец, ACP-релей. Enrollment и WS/WSS-регистрация
    готовы; инъекция транспорта в AgentClient реализована и проверена на mock ACP
