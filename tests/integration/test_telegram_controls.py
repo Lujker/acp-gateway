@@ -202,6 +202,7 @@ async def test_model_catalogue_selection_confirmation_and_stale_selection(telegr
     await click(channel, 3, catalogue, button(catalogue, "model-b").callback_data)
     confirm = session.sent[-1]
     assert confirmation not in confirm.text
+    assert "provider-a / model-b" in confirm.text
     data = button(confirm, "Подтвердить").callback_data
     assert confirmation not in data
     await click(channel, 4, confirm, data)

@@ -570,6 +570,8 @@ class TelegramChannel(Channel):
         if dialogue is not None:
             lines.append(f"Диалог: #{dialogue}")
         rows = []
+        if selection:
+            lines.append(f"Выбор: {selection[0]} / {selection[1]}")
         if status == "confirmation_required" and selection:
             lines += ["Требуется подтверждение смены модели.", result.get("message") or ""]
             provider, model = selection
