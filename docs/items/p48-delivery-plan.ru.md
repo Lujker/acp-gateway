@@ -443,7 +443,7 @@ enrollment identity. План account/pairing уже описан в
 авторизации/pairing, переданный connector user_id сам по себе полномочий не даёт.
 Изменения runtime или договорённость о начале реализации пока отсутствуют.
 
-## 2026-10-14 — разделение setup/TUI, rc3: IN PROGRESS
+## 2026-10-14 — разделение setup/TUI, rc3: READY как поставка
 
 Владелец поручил разделить целостные настройки на независимые действия TUI.
 setup открывает список; base не требует agents/Telegram, server/connector connection,
@@ -494,3 +494,25 @@ role guard, idle/stop/start и rollback при restart failure. Ruff и lock cle
 .env после настройки может нормализовать quotes/порядок строк; проверены значения
 секретов, а при самом uv upgrade — byte-identical сохранение всех private files.
 Живая установка/обновление на VPS владельца и реальные model/approvals ещё впереди.
+
+## 2026-10-14 — rc3 опубликован, registry→registry upgrade подтверждён
+
+Source tag v0.2.0rc3 указывает на 19de225. GitHub Release:
+https://github.com/Lujker/acp-gateway/releases/tag/v0.2.0rc3
+PyPI: https://pypi.org/project/acp-gateway/0.2.0rc3/
+Dry-run 38534190332 и Trusted Publishing 38534296489 завершились success.
+SHA256 wheel/sdist в PyPI совпали с финальными локальными artifacts; wheel
+после финальной чистой сборки byte-identical проверенному installed package.
+
+Свежий actual registry rc2→registry rc3 uv tool install --upgrade проверен
+независимо в Linux и Windows. version --json в обоих: 0.2.0rc3 / uv / registry.
+Config/env/setup.json/key byte-identical после upgrade; enrollment registry и
+SQLite sentinel сохранены. Linux terminal setup/base и запуск dispatcher без
+агентов повторно прошли уже на опубликованном пакете. Evidence:
+dist/rc3-verification/{linux,windows}-upgrade.json, pypi-metadata.json,
+source-final.xml, windows-final.xml и windows-race.xml.
+
+Согласованный следующий шаг владельца: выйти из старого мастера, выполнить
+uv tool install --upgrade --python 3.12 "acp-gateway==0.2.0rc3", проверить version,
+затем пройти новый setup начиная с base. Target службы ещё не запускались;
+живые VPS/Telegram/Hermes/два PC и physical lifecycle остаются P4.8.5 PARTIAL.
