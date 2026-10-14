@@ -813,7 +813,8 @@ Spikes возможны после базы P4.8; общий пользоват�
 Зафиксированы source/API и durable model state, оставшаяся очередь, ограничения Hermes,
 доказательства проверок и отдельный этап установки/приёмки.
 
-**Следующий этап:** model/approval, lifecycle и второй ПК; первый Telegram запрос
+**Следующий этап:** выпуск/обновление rc5 с Telegram UX и Windows fixes, затем
+approvals, lifecycle и второй ПК; первый Telegram запрос
 завершился PONG (job cfbd548e43c4), сообщено владельцем; P4.8.5 PARTIAL.
 Windows задача работает без консоли; VPS ACP probe
 подтвердил `home/hermes` ready. GUI автозапуск Hermes настроен, вход/reboot ещё не проверен.
@@ -831,7 +832,7 @@ Installed wheel Linux/Windows update/failed-health/rollback/uninstall и Linux b
 приёмкой; domain/WSS и перенос позже. Goose/platform combinations — P4.9; ownership — P4.10.
 Перечень ниже — незакрытые смежные задачи, не prerequisites всего трека.
 
-1. **P4.8.5 — живая установка и приёмка 0.2.0rc4.** VPS уже работает; текущий Windows connector
+1. **P4.8.5 — обновление до 0.2.0rc5 и живая приёмка.** VPS уже работает; текущий Windows connector
    работает фоном; Hermes Desktop открыт, GUI автозапуск настроен. Далее Telegram
    approvals, вход/reboot и второй PC; первый Telegram prompt завершён PONG;
    [порядок проверок](docs/setup/p48-acceptance.md).

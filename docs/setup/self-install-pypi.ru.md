@@ -1,6 +1,6 @@
 # Установка через uv/PyPI и независимые настройки
 
-Версия инструкции — **0.2.0rc4**. Один пакет `acp-gateway` устанавливается на
+Версия инструкции — **0.2.0rc5**. Один пакет `acp-gateway` устанавливается на
 VPS и ПК; роль выбирается в базовой настройке. Git checkout, Docker и скачивание
 wheel/lock файлов для обычной установки не нужны.
 
@@ -11,13 +11,13 @@ wheel/lock файлов для обычной установки не нужны
 ```bash
 curl -LsSf https://astral.sh/uv/install.sh | sh
 export PATH="$HOME/.local/bin:$PATH"
-uv tool install --python 3.12 "acp-gateway==0.2.0rc4"
+uv tool install --python 3.12 "acp-gateway==0.2.0rc5"
 uv tool update-shell
 export PATH="$(uv tool dir --bin):$PATH"
 acpgw version --json
 ```
 
-Ожидается version `0.2.0rc4`, manager `uv`, source `registry`.
+Ожидается version `0.2.0rc5`, manager `uv`, source `registry`.
 Python и зависимости предоставляет uv. Существующую установку обновляем по
 разделу ниже; повторная установка не означает повторную настройку.
 
@@ -130,7 +130,7 @@ uv не ниже 0.12.4; при старой версии сначала `uv sel
 [официальном changelog](https://github.com/astral-sh/uv/blob/main/changelogs/0.12.x.md).
 
 ```powershell
-uv tool install --python 3.12 --managed-python --with 'colorama>=0.4.6' 'acp-gateway==0.2.0rc4'
+uv tool install --python 3.12 --managed-python 'acp-gateway==0.2.0rc5'
 uv tool update-shell
 $Acpgw = Join-Path ((uv tool dir --bin).Trim()) 'acpgw.exe'
 & $Acpgw version --json
@@ -139,9 +139,8 @@ $Cfg = Join-Path $env:LOCALAPPDATA 'acpgw-connector'
 & $Acpgw setup --config-dir $Cfg --role connector
 ```
 
-В опубликованном rc4 для интерактивного Windows logging нужна дополнительная
-`colorama`, поэтому она включена в команду выше через `--with`. В исходниках
-зависимость уже добавлена для следующих релизов; повторять настройку не требуется.
+В rc5 Windows logging и фоновый запуск задачи исправлены; дополнительные
+зависимости через `--with` не нужны.
 
 Hermes Desktop должен быть открыт как приложение, provider/model настроены;
 probe ожидает `ready`. Автозапуск Desktop настраивается отдельно: ярлык
@@ -149,10 +148,11 @@ probe ожидает `ready`. Автозапуск Desktop настраивае�
 GUI `Hermes.exe`. Запуск `hermes gateway run` не открывает Desktop. Коннектор
 запускается после входа этого же пользователя в Windows и ожидает Hermes.
 
-В опубликованном rc4 задача использует консольный Python. Исправление запуска
-через `pythonw.exe` и логирования без stderr подготовлено для следующего релиза;
-переустановка текущего rc4 из PyPI этого исправления не содержит. На текущем ПК
-владельца применён локальный исправленный код и проверен фоновый запуск.
+Служба использует `pythonw.exe`, пишет приватный журнал и не открывает консоль.
+Для среды, созданной старым uv до 0.12.4, обновить uv до обновления пакета.
+После обновления с rc4 один раз переустановить задачу (`service install`) перед
+`service enable`, чтобы заменить прежний запуск `python.exe` на `pythonw.exe`.
+
 В меню сначала `base`: создаст приватную конфигурацию без обязательного соединения.
 Затем выйти, приватно скопировать ключ с VPS (SSH_USER/SERVER_IP заменить):
 
@@ -178,29 +178,29 @@ Telegram на connector отключён. Входящие порты на Windo
 computer ID/key. Маршрут создаётся автоматически. Reboot/logon/sleep/network, model/approvals и перенос/WSS
 проверяются отдельными этапами.
 
-## 6. Обновление rc2/rc3 до rc4 через uv
+## 6. Обновление rc2/rc3/rc4 до rc5 через uv
 
 Сначала обновить диспетчер, затем коннекторы. Коннектор rc4 объявляет metadata
 через hello v2; старый диспетчер его не примет. Диспетчер rc4 принимает старые
 коннекторы через hello v1 с прежними ручными маршрутами. Адреса агентов и
 история сохраняются; повторно выпускать ключ `home` не нужно.
 
-Для текущей установки владельца, пока служба ещё не запущена:
+Для установки без работающей службы:
 
 ```bash
-uv tool install --upgrade --python 3.12 "acp-gateway==0.2.0rc4"
+uv tool install --upgrade --python 3.12 "acp-gateway==0.2.0rc5"
 acpgw version --json
 acpgw config check
 ```
 
 Сначала выйти из старого мастера через Ctrl+C. Настройка хранится вне uv tool,
 повторный setup не требуется для самого обновления. Команда выше намеренно
-заменяет исходное `==0.2.0rc2` или `==0.2.0rc3`: `uv tool upgrade acp-gateway` сохраняет прежнее
+заменяет исходное ограничение версии, включая `==0.2.0rc4`: `uv tool upgrade acp-gateway` сохраняет прежнее
 ограничение и может оставить прежнюю версию.
 
 Для уже работающих служб/активных jobs сначала завершить работу и штатно
 остановить процессы. Управляемое обновление/rollback с сохранением состояния
-службы — `acpgw update --version 0.2.0rc4 --with-services`; подробности в
+службы — `acpgw update --version 0.2.0rc5 --with-services`; подробности в
 [distribution.md](distribution.md). Прямые uv-команды не выполняют lifecycle
 проверки приложения. Не обновлять tool environment во время работы connector.
 
@@ -208,8 +208,9 @@ acpgw config check
 Если служба уже работает, сначала завершить jobs. Для прямого обновления через uv
 на Linux: `acpgw service stop`, команда uv выше, затем `acpgw service start`.
 На Windows: `acpgw --config "$Cfg\config.yaml" service --role connector disable`,
-`uv tool install --upgrade --python 3.12 --managed-python --with 'colorama>=0.4.6' 'acp-gateway==0.2.0rc4'`,
-затем `acpgw --config "$Cfg\config.yaml" service --role connector enable`.
+`uv tool install --upgrade --python 3.12 --managed-python 'acp-gateway==0.2.0rc5'`,
+затем `acpgw --config "$Cfg\config.yaml" service --role connector install` и
+`acpgw --config "$Cfg\config.yaml" service --role connector enable`.
 Указывать фактические config/env пути при нестандартной установке. Не запускать
 второй процесс вручную поверх службы. После обновления: `version --json`,
 `config check`, `service status`; на VPS — `computers status` и `agents list`.

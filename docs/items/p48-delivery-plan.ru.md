@@ -741,3 +741,28 @@ Desktop имеет явное управление restart Gateway; ярлык G
 26 passed. Новые случаи проверяют регистрацию EN/RU menu без сообщений, retry/cancel,
 PC offline/access disabled/unadvertised/not initialized/ready и relay failure;
 локальный /status не делает ACP initialize. Ruff и git diff --check прошли.
+
+
+### 2026-10-14 — подготовка rc5: Telegram диалоги и постоянные Windows fixes
+
+По сообщению владельца /new, /sessions, /switch и /result работают, но строка
+`1 *: C:\Users\vladz\acp-workdir [attached]` непонятна. /sessions теперь выводит
+карточки: ID/title (при отсутствии Untitled dialogue), выбранный ▶, последнее
+использование UTC, человекочитаемое состояние и отдельную рабочую папку.
+По 10 записей на страницу, /sessions PAGE; scope остаётся chat + selected agent.
+/new и /switch подтверждают ID, agent, title/cwd. /agent показывает отдельные
+маршруты с выбранным ▶ и краткими подсказками; /delivery разбит на строки,
+model JSON отформатирован без потери revision/confirmation fields.
+Titles нормализуются в одну ограниченную строку; общий escape/redaction сохранён.
+Новые тесты проверяют pagination, выбранный dialogue, HTML title, отсутствие
+чужих private sessions и отсутствие ACP вызовов при просмотре списка.
+
+Версия поднята до 0.2.0rc5 (schema 8 без миграции). Выпуск включает прежние
+colorama/runtime fallback, pythonw и hidden PowerShell fixes, Telegram menu EN/RU
+и правдивое разделение PC connection/ACP readiness. Обновлены текущие PyPI/
+distribution/acceptance инструкции; frozen rc1 guide и старые tag/assets сохранены.
+При прямом Windows uv обновлении с rc4: disable → uv upgrade explicit version →
+service install → enable, чтобы заменить Action на pythonw; uv >=0.12.4 обязателен.
+Владелец сам обновит VPS/текущий Windows и затем установит второй connector.
+Его рабочие службы, Hermes и диалоги в процессе сборки не изменяются.
+Проверки и публикация будут записаны после завершения.

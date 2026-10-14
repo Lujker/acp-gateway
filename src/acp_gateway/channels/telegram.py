@@ -40,7 +40,7 @@ from acp_gateway.storage import Conversation
 HELP = (
     "Select an agent and create or select a dialogue before sending messages.\n"
     "/start, /help — help\n/agent — list agents\n/agent ALIAS — select agent\n"
-    "/new [ALIAS] — new session\n/sessions — list sessions\n"
+    "/new [ALIAS] — new session\n/sessions [PAGE] — list dialogues\n"
     "/switch ID — activate a session\n/status — connections and jobs\n"
     "/result JOB_ID — saved result\n/delivery JOB_ID — automatic delivery state\n"
     "/stop — cancel this chat's jobs\n"
@@ -69,6 +69,34 @@ COMMANDS = (
     ("models", "Available models", "Доступные модели"),
     ("approvals", "Pending confirmations", "Ожидающие подтверждения"),
 )
+
+
+_SESSION_PAGE_SIZE = 10
+
+
+def _label(text, limit=120):
+    return " ".join(str(text).split())[:limit]
+
+
+def _session_state(session):
+    return {
+        "attached": "connected",
+        "detached": "detached",
+        "restore-unavailable": "cannot resume after restart",
+        "unknown": "not checked",
+        "busy": "running a task",
+        "uncertain": "previous operation needs checking",
+    }.get(session.availability, session.availability)
+
+
+def _dialogue_summary(session):
+    lines = [f"Agent: {session.conversation.agent}"]
+    if session.title:
+        lines.append(f"Title: {_label(session.title)}")
+    lines.append(f"Folder: {_label(session.cwd, 500)}")
+    if session.binding or session.availability == "restore-unavailable":
+        lines.append(f"State: {_session_state(session)}")
+    return "\n".join(lines)
 
 
 class _Updates(BaseMiddleware):
@@ -478,11 +506,16 @@ class TelegramChannel(Channel):
                 await self._send(chat, f"Agent: {self._conversation(chat).agent}")
             else:
                 selected = self.core.store.channel_state(self.namespace, f"agent:{chat}")
-                lines = [
-                    f"{alias}{' *' if alias == selected else ''}: {client.profile.display_name}"
-                    for alias, client in self.core.agents.items()
-                ]
-                await self._send(chat, "\n".join([*lines, "Select with /agent ALIAS."]))
+                if selected is None and len(self.core.agents) == 1:
+                    selected = next(iter(self.core.agents))
+                lines = ["Agents"]
+                for alias, client in self.core.agents.items():
+                    marker = "▶" if alias == selected else "•"
+                    lines.append(f"{marker} {alias} — {_label(client.profile.display_name)}")
+                if not self.core.agents:
+                    lines.append("No agents available. Connect a configured PC first.")
+                lines += ["", "▶ Selected agent", "Select: /agent ALIAS", "New dialogue: /new"]
+                await self._send(chat, "\n".join(lines))
             return
         if command == "/status":
             lines = self._status_lines()
@@ -575,7 +608,7 @@ class TelegramChannel(Channel):
                     raise GatewayError("Use /model set PROVIDER MODEL ID REVISION [TOKEN].")
             if command == "/model":
                 result = {k: v for k, v in result.items() if k != "providers"}
-            encoded = json.dumps({"agent": conv.agent, **result}, ensure_ascii=False)
+            encoded = json.dumps({"agent": conv.agent, **result}, ensure_ascii=False, indent=2)
             if len(encoded) > 10000:
                 encoded = (
                     encoded[:10000] + "\nCatalogue truncated; use CLI model list for the full list."
@@ -585,24 +618,45 @@ class TelegramChannel(Channel):
             session = await self.core.new_session(conv)
             # A failed creation must not silently change the selected route.
             self.core.store.set_channel_state(self.namespace, f"agent:{chat}", conv.agent)
-            await self._send(chat, f"New session: {session.id}")
+            await self._send(
+                chat,
+                f"New dialogue #{session.id}\n{_dialogue_summary(session)}\n\n"
+                "Send a message to begin.",
+            )
         elif command == "/sessions":
+            if argument and (
+                not argument.isascii() or not argument.isdecimal() or len(argument) > 6
+            ):
+                raise GatewayError("Use /sessions [PAGE], starting with page 1.")
+            page = int(argument or "1")
+            sessions = self.core.sessions(conv)
+            pages = max(1, (len(sessions) + _SESSION_PAGE_SIZE - 1) // _SESSION_PAGE_SIZE)
+            if not 1 <= page <= pages:
+                raise GatewayError(f"Choose a page from 1 to {pages}: /sessions PAGE.")
             active = self.core.active_session(conv)
-            lines = [
-                f"{s.id}{' *' if active and s.id == active.id else ''}: {s.title or s.cwd}"
-                + (
-                    f" [{s.availability}]"
-                    if s.binding or s.availability == "restore-unavailable"
-                    else ""
-                )
-                for s in self.core.sessions(conv)
-            ]
-            await self._send(chat, "\n".join(lines) or "No sessions; use /new.")
+            lines = [f"Dialogues · {conv.agent}"]
+            if not sessions:
+                lines += ["", "No dialogues yet. Create one with /new."]
+            else:
+                start = (page - 1) * _SESSION_PAGE_SIZE
+                for session in sessions[start : start + _SESSION_PAGE_SIZE]:
+                    selected = bool(active and session.id == active.id)
+                    marker = "▶" if selected else "•"
+                    title = _label(session.title) if session.title else "Untitled dialogue"
+                    lines += ["", f"{marker} #{session.id} — {title}"]
+                    if session.binding or session.availability == "restore-unavailable":
+                        lines.append(f"State: {_session_state(session)}")
+                    lines.append(f"Last used: {session.last_used_at:%Y-%m-%d %H:%M} UTC")
+                    lines.append(f"Folder: {_label(session.cwd, 500)}")
+                lines += ["", "▶ Selected dialogue", "Switch: /switch ID · New: /new"]
+                if pages > 1:
+                    lines.append(f"Page {page}/{pages} · Open page: /sessions PAGE")
+            await self._send(chat, "\n".join(lines))
         elif command == "/switch":
             if not argument.isascii() or not argument.isdecimal():
                 raise GatewayError("Use /switch SESSION_ID.")
             session = self.core.switch_dialogue(conv, int(argument))
-            await self._send(chat, f"Active session: {session.id}")
+            await self._send(chat, f"Selected dialogue #{session.id}\n{_dialogue_summary(session)}")
         elif command == "/delivery":
             job = self.core.job(argument)
             if job.conversation != conv:
@@ -610,8 +664,9 @@ class TelegramChannel(Channel):
             delivery = self.core.store.deliveries.get(self.namespace, job.id)
             await self._send(
                 chat,
-                f"Delivery {job.id}: {delivery['state']}; "
-                f"acknowledged chunks: {delivery['next_chunk']}. Use /result {job.id}."
+                f"Delivery · {job.id}\nState: {delivery['state']}\n"
+                f"Acknowledged fragments: {delivery['next_chunk']}\n\n"
+                f"Saved answer: /result {job.id}"
                 if delivery
                 else "No automatic delivery record for this job.",
             )
