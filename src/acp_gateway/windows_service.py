@@ -109,11 +109,21 @@ try {
                 throw 'Connector did not exit; inspect logs or explicitly retry with --force'
             }
             if (-not $r.force -and (Test-Path -LiteralPath $runtime)) {
-                Assert-Private $runtime $true
-                if ((Get-Item -LiteralPath $runtime).Length -gt 1024) {
-                    throw 'Invalid connector control record'
+                try {
+                    Assert-Private $runtime $false
+                    if ((Get-Item -LiteralPath $runtime).Length -gt 1024) {
+                        throw 'Invalid connector control record'
+                    }
+                    $record = [IO.File]::ReadAllText($runtime) | ConvertFrom-Json
+                } catch {
+                    # The connector removes its record while exiting. Recheck the task
+                    # within the same bounded deadline; never force-stop on missing IPC.
+                    if (-not (Test-Path -LiteralPath $runtime)) {
+                        Start-Sleep -Milliseconds 200
+                        continue
+                    }
+                    throw
                 }
-                $record = [IO.File]::ReadAllText($runtime) | ConvertFrom-Json
                 if ($record.version -ne 1 -or $record.instance -cnotmatch '^[a-f0-9]{32}$') {
                     throw 'Invalid connector control record'
                 }

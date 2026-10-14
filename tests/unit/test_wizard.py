@@ -32,7 +32,8 @@ class Answers:
 
 
 @pytest.fixture(autouse=True)
-def isolated_services(monkeypatch):
+def isolated_services(monkeypatch, tmp_path):
+    monkeypatch.setattr(w.paths, "data_dir", lambda: tmp_path / "platform-data")
     monkeypatch.setattr(w, "_managed_running", lambda *args: False)
     which = w.shutil.which
     monkeypatch.setattr(
@@ -214,6 +215,7 @@ def test_interactive_commands_require_terminal(capsys):
     assert "requires a terminal" in capsys.readouterr().err
 
 
+@pytest.mark.skipif(os.name != "posix", reason="systemd unit rollback is POSIX-only")
 @pytest.mark.parametrize("cleanup_fails", [False, True])
 def test_service_start_failure_restores_configuration_and_unit(
     tmp_path, monkeypatch, cleanup_fails

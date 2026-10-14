@@ -437,3 +437,44 @@ def test_native_hermes_discovery_acl_before_token_read(disposable_connector, tar
         assert token not in str(exc.value)
     finally:
         win32security.SetFileSecurity(str(path), win32security.DACL_SECURITY_INFORMATION, original)
+
+
+def test_native_graceful_stop_tolerates_record_removed_during_acl_check(
+    disposable_connector, monkeypatch
+):
+    config, launch, _ = disposable_connector
+    directory = config.settings.resolved_data_dir()
+    runtime = directory / "connector-control.json"
+    marker = directory / "race-observed"
+    service.install(config, launch=launch)
+    windows_service._request("enable")
+    deadline = time.monotonic() + 20
+    while not runtime.exists():
+        assert time.monotonic() < deadline, "connector did not publish its activity record"
+        time.sleep(0.1)
+    # Deliver a genuine instance-fenced stop between the existence and ACL checks.
+    # This forces the real connector's cleanup to remove the record in that window.
+    hook = r"""
+                    $testRecord = [IO.File]::ReadAllText($runtime) | ConvertFrom-Json
+                    $testBody = @{version=1; instance=$testRecord.instance} | ConvertTo-Json
+                    [IO.File]::WriteAllText($request, $testBody)
+                    $testDeadline = [DateTime]::UtcNow.AddSeconds(10)
+                    while ((Test-Path -LiteralPath $runtime) -and
+                           [DateTime]::UtcNow -lt $testDeadline) {
+                        Start-Sleep -Milliseconds 50
+                    }
+                    if (-not (Test-Path -LiteralPath $runtime)) {
+                        [IO.File]::WriteAllText(
+                            [IO.Path]::Combine($meta.controlDirectory, 'race-observed'), 'observed')
+                    }
+                    Assert-Private $runtime $false
+"""
+    monkeypatch.setattr(
+        windows_service,
+        "SCRIPT",
+        windows_service.SCRIPT.replace("Assert-Private $runtime $false", hook, 1),
+    )
+    windows_service._request("disable")
+    assert marker.exists() and not runtime.exists()
+    status = windows_service._request("status")
+    assert not status["enabled"] and status["state"] != 4
