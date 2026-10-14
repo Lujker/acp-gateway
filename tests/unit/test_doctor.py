@@ -1,5 +1,6 @@
 import json
 import secrets
+import shutil
 
 import pytest
 from test_wizard import save_answers
@@ -15,7 +16,11 @@ from fakes.fake_goose import FakeGooseServer
 def configured(tmp_path, monkeypatch):
     monkeypatch.setattr("acp_gateway.cli.wizard._managed_running", lambda *args: False)
     monkeypatch.setattr("acp_gateway.cli.wizard._check_ports", lambda *args: None)
-    monkeypatch.setattr("acp_gateway.cli.wizard.shutil.which", lambda *args: None)
+    which = shutil.which
+    monkeypatch.setattr(
+        "acp_gateway.cli.wizard.shutil.which",
+        lambda name: which(name) if name == "powershell.exe" else None,
+    )
     wizard(tmp_path, prompts=save_answers())
     return tmp_path / "config.yaml", tmp_path / ".env"
 
