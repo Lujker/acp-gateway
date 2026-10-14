@@ -941,7 +941,12 @@ class GatewayCore:
         return {
             "dialogue_id": record.id,
             "mode": saved.get("mode", "ask")
-            if saved.get("session") == record.acp_session_id
+            if (
+                saved.get("session") == record.acp_session_id
+                and saved.get("agent") == conversation.agent
+                and saved.get("channel") == conversation.channel
+                and saved.get("actor") == f"{conversation.channel}:{conversation.key}"
+            )
             else "ask",
             "selection_revision": self.store.active_revision(conversation),
         }
@@ -987,6 +992,7 @@ class GatewayCore:
             {
                 "mode": mode,
                 "session": self.store.active_session(conversation).acp_session_id,
+                "agent": conversation.agent,
                 "actor": actor,
                 "channel": conversation.channel,
                 "changed_at": utcnow().isoformat(),
@@ -1014,6 +1020,7 @@ class GatewayCore:
         if not (
             authorization.get("mode") == "auto"
             and authorization.get("session") == record.job.acp_session_id
+            and authorization.get("agent") == record.job.conversation.agent
             and record.job.conversation.channel == "telegram"
             and authorization.get("channel") == "telegram"
             and authorization.get("actor") == f"telegram:{record.job.conversation.key}"
