@@ -897,3 +897,26 @@ Wheel SHA256: 1c569e44ecf4c9ddc45f4722b046b899f4bbf5dcfb514fbea18230beeda063c2.
 Sdist SHA256: 0beefdac6462a9d189ce02ddcea3d4cf83d547217a8e391d987211205cc98ac3.
 Evidence: dist/rc7-verification/source-final.*, windows-final.*, *-wheel-upgrade.log,
 linux-upgrade.json/windows-upgrade.json. Published rc6 не изменялся.
+
+
+### 2026-10-14 — rc7 опубликован и registry upgrade подтверждён
+
+GitHub: https://github.com/Lujker/acp-gateway/releases/tag/v0.2.0rc7.
+PyPI: https://pypi.org/project/acp-gateway/0.2.0rc7/.
+Tag v0.2.0rc7 → f497a02b8a05b1492544667624582cfcad2a9d48.
+Actions dry-run 38601207703 и Trusted Publishing 38601303640 завершились success.
+Скачанные GitHub assets прошли SHA256SUMS; PyPI JSON hashes wheel/sdist совпали
+с финальными локальными файлами (выше). Файлы rc6 и его tag не менялись.
+
+Настоящий registry rc5 → registry rc7 upgrade выполнен в Linux и native Windows:
+version rc7, manager uv, source registry. YAML/env/setup/key bytes, enrollment
+registry и SQLite sentinel сохранены. update --stable --with-services дал no-op
+без изменения файлов; Linux PTY setup и agent-free dispatcher также прошли.
+Первый Linux resolve сразу после публикации ещё не видел rc7 в simple index;
+повтор после обновления индекса прошёл без изменений пакета. Windows resolve
+к этому моменту уже завершился успешно. Это задержка распространения новой версии,
+а не доказательство ошибки установки. Evidence: dist/rc7-verification/
+{linux,windows}-registry-upgrade.log, *-upgrade.json, pypi-metadata.json и github/.
+
+Владелец обновляет production VPS и оба ПК самостоятельно. Живая приёмка /mode,
+новых названий и renderer остаётся открытой; P2.3/P4.8.5 сохраняют PARTIAL.
