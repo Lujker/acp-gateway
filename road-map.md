@@ -701,7 +701,7 @@ known model-loss reconciliation не повторяет mutation, prompt-loss о
 
 **Статус:** PARTIAL — владелец установил PyPI rc3 на Ubuntu 22.04.5 и выполнил
 base/Telegram/enrollment `home`; служба и реальные Windows agents ещё не приняты.
-Готовится rc4: автоматический каталог connector agents, роли setup и диагностика,
+Опубликован rc4: автоматический каталог connector agents, роли setup и диагностика,
 настоящий uv upgrade rc3→rc4 проверен Linux/Windows без потери YAML/env/key/БД.
 Все 24 native Scheduler cases прошли; текущие source/package evidence и выпуск —
 [журнал поставки](docs/items/p48-delivery-plan.ru.md).
@@ -811,16 +811,19 @@ Spikes возможны после базы P4.8; общий пользоват�
 Зафиксированы source/API и durable model state, оставшаяся очередь, ограничения Hermes,
 доказательства проверок и отдельный этап установки/приёмки.
 
-**Следующий этап:** IN PROGRESS — аудит установки и выпуск rc4 с автоматическим каталогом connector agents; затем продолжение живой приёмки P4.8.5 (PARTIAL).
-GitHub prerelease и PyPI опубликованы 2026-10-14; SHA256 wheel/sdist сверены,
-свежая uv/PyPI установка в Linux и Windows дала version 0.2.0rc3 / source registry; registry rc2→rc3 upgrade сохранил настройки/ключи/БД.
-Пакетные Linux/Windows update/rollback и 24 native Scheduler cases проверены;
-[подробности выпуска](docs/items/p48-delivery-plan.ru.md).
+**Следующий этап:** владелец обновляет установленный rc3 до опубликованного rc4,
+запускает VPS service и подключает текущий Windows/Hermes, затем второй ПК; P4.8.5 PARTIAL.
+GitHub prerelease/PyPI 0.2.0rc4 опубликованы 2026-10-14; SHA256 wheel/sdist сверены.
+Финальный Linux source 1233/30; native setup/discovery 80/26, последние protocol/catalog 36,
+все 24 Scheduler и 32/3 native recovery checks прошли. Исправлен Windows rollback при mapped DLL.
+Installed wheel Linux/Windows update/failed-health/rollback/uninstall и Linux bundle/Git install прошли.
+После публикации registry rc3→rc4 uv upgrade в обеих ОС сохранил настройки/ключи/БД;
+[журнал и evidence](docs/items/p48-delivery-plan.ru.md).
 Владелец устанавливает сам по [инструкции uv/PyPI](docs/setup/self-install-pypi.ru.md):
-один Ubuntu 22.04.5 dispatcher по IP:порту, Telegram bot, текущий Windows/Hermes,
-затем второй connector. Живые model/approval, reconnect, logon/reboot/sleep/network
-и target service update/rollback остаются приёмкой; domain/WSS и перенос позже.
-Goose/platform combinations — P4.9, cold/shared write recovery вне Windows MVP.
+один Ubuntu 22.04.5 dispatcher по IP:порту, Telegram, текущий Windows/Hermes, затем второй connector.
+Агенты настраиваются на ПК и появляются на VPS автоматически; enrollment/key transfer остаются явными.
+Живые model/approval, reconnect, logon/reboot/sleep/network и target service update/rollback остаются
+приёмкой; domain/WSS и перенос позже. Goose/platform combinations — P4.9; ownership — P4.10.
 Перечень ниже — незакрытые смежные задачи, не prerequisites всего трека.
 
 1. **P4.8.5 — живая установка и приёмка 0.2.0rc4.** Сначала uv update с rc3; Ubuntu 22.04.5 по IP:порту,

@@ -610,3 +610,29 @@ PyYAML и удерживает общий DLL до выхода. Пакет не
 
 P4.8.5 остаётся PARTIAL: владелец продолжает реальные VPS→Windows/Hermes/Telegram,
 второй ПК, model/approval, reboot/logon/sleep/network после установки rc4.
+
+
+#### 2026-10-14 — rc4 опубликован и проверен из PyPI
+
+Кодовые коммиты `9da1f5f` (discovery/setup) и `5c8db18` (atomic Windows recovery).
+Tag `v0.2.0rc4` указывает на `5c8db18`. GitHub prerelease:
+https://github.com/Lujker/acp-gateway/releases/tag/v0.2.0rc4 ; PyPI:
+https://pypi.org/project/acp-gateway/0.2.0rc4/ .
+
+Релиз собран из чистого checkout; SHA256 wheel совпал с проверенным installed wheel.
+Wheel SHA256 `7345473a1ab8121f43cb5d5cdbb6907cdf1f3b1c2f73024d5c572e31b57407c5`.
+PyPI API подтвердил те же SHA256 для wheel и sdist; metadata сохранена в
+`dist/rc4-verification/pypi-metadata.json`. Actions dry-run `38543303698` и
+Trusted Publishing `38543414849` завершились success. Docker image не публиковался.
+
+После публикации **настоящий uv registry rc3→registry rc4 upgrade** выполнен
+на Linux и native Windows: version `0.2.0rc4`, manager `uv`, source `registry`;
+сохранены YAML/env/setup/key bytes, computer registry и SQLite sentinel.
+Linux снова проверил реальный PTY setup и запуск dispatcher без статических agents.
+Отчёты `linux-registry-upgrade.log`, `windows-registry-upgrade.log` и platform JSON
+в `dist/rc4-verification/`. Это не изменение установленной VPS владельца.
+
+Владелец продолжает с `uv tool install --upgrade --python 3.12 "acp-gateway==0.2.0rc4"`
+на пока остановленном VPS, затем version/config check и отдельный запуск службы.
+Повторно выпускать enrollment `home` или настраивать Windows cwd на VPS не требуется.
+P4.8.5 PARTIAL: реальные provider calls/approvals, второй ПК и host lifecycle ещё открыты.
