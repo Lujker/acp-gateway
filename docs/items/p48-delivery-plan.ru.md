@@ -887,3 +887,13 @@ Protocol/schema не менялись. Для `/mode` достаточно но�
 новых названий нужны новые connectors, старые диалоги сохраняют заголовки.
 Published rc6/tag/assets остаются неизменными, новая поставка получает rc7.
 Данные, production службы и Hermes chats владельца не изменялись.
+
+
+Финальный код 71555b2: source **1309 passed / 31 expected skips**, 201.22s;
+final installed Windows wheel **165 passed**, 36.27s. Изолированные Linux/Windows
+registry rc5 → wheel rc7 upgrades прошли с сохранением YAML/env/setup/key,
+enrollment и SQLite sentinel; Linux PTY setup/agent-free serve также прошли.
+Wheel SHA256: 1c569e44ecf4c9ddc45f4722b046b899f4bbf5dcfb514fbea18230beeda063c2.
+Sdist SHA256: 0beefdac6462a9d189ce02ddcea3d4cf83d547217a8e391d987211205cc98ac3.
+Evidence: dist/rc7-verification/source-final.*, windows-final.*, *-wheel-upgrade.log,
+linux-upgrade.json/windows-upgrade.json. Published rc6 не изменялся.
