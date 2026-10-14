@@ -248,3 +248,57 @@ def test_log_file_does_not_follow_symlink(tmp_path):
     with pytest.raises(OSError):
         configure_logging(file=link)
     assert target.read_text() == "preserved\n"
+
+
+@pytest.mark.parametrize("fmt", ["auto", "console"])
+def test_windows_tty_without_colorama_uses_plain_redacted_console(monkeypatch, fmt):
+    from types import SimpleNamespace
+
+    import structlog
+
+    from acp_gateway import log as module
+
+    stream = io.StringIO()
+    stream.isatty = lambda: True
+    monkeypatch.setattr(module, "sys", SimpleNamespace(platform="win32", stderr=stream))
+    original = structlog.dev.ConsoleRenderer
+    calls = []
+
+    def missing_colorama(*, colors):
+        calls.append(colors)
+        if colors:
+            raise SystemError("ConsoleRenderer on Windows requires the colorama package installed")
+        return original(colors=False)
+
+    monkeypatch.setattr(structlog.dev, "ConsoleRenderer", missing_colorama)
+    configure_logging(fmt=fmt, stream=stream, extra_secrets=[SECRET])
+    get_logger("tty").info("TTY ready", secret=SECRET)
+    logging.getLogger("foreign-tty").warning("Bearer %s", SECRET)
+    assert calls == [True, False]
+    assert "TTY ready" in stream.getvalue()
+    assert SECRET not in stream.getvalue()
+    assert "\x1b" not in stream.getvalue()
+
+
+def test_logging_does_not_hide_unrelated_renderer_system_errors(monkeypatch):
+    import structlog
+
+    def unrelated(**kwargs):
+        raise SystemError("unrelated renderer failure")
+
+    monkeypatch.setattr(structlog.dev, "ConsoleRenderer", unrelated)
+    with pytest.raises(SystemError, match="unrelated renderer failure"):
+        configure_logging(fmt="console", stream=io.StringIO())
+
+
+def test_colorama_is_a_windows_runtime_dependency():
+    import tomllib
+
+    from packaging.requirements import Requirement
+
+    dependencies = tomllib.loads((Path(__file__).parents[2] / "pyproject.toml").read_text())[
+        "project"
+    ]["dependencies"]
+    requirement = next(Requirement(value) for value in dependencies if value.startswith("colorama"))
+    assert requirement.marker.evaluate({"sys_platform": "win32"})
+    assert not requirement.marker.evaluate({"sys_platform": "linux"})

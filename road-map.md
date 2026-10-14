@@ -699,8 +699,8 @@ known model-loss reconciliation не повторяет mutation, prompt-loss о
 
 #### P4.8.5 — Отдельный этап установки и приёмки
 
-**Статус:** PARTIAL — владелец установил PyPI rc3 на Ubuntu 22.04.5 и выполнил
-base/Telegram/enrollment `home`; служба и реальные Windows agents ещё не приняты.
+**Статус:** PARTIAL — VPS rc4 service active/enabled, Windows rc4/Hermes ready;
+настоящий `home` foreground connector подключился к VPS после исправления TTY/colorama.
 Опубликован rc4: автоматический каталог connector agents, роли setup и диагностика,
 настоящий uv upgrade rc3→rc4 проверен Linux/Windows без потери YAML/env/key/БД.
 Все 24 native Scheduler cases прошли; текущие source/package evidence и выпуск —
@@ -811,8 +811,9 @@ Spikes возможны после базы P4.8; общий пользоват�
 Зафиксированы source/API и durable model state, оставшаяся очередь, ограничения Hermes,
 доказательства проверок и отдельный этап установки/приёмки.
 
-**Следующий этап:** владелец обновляет установленный rc3 до опубликованного rc4,
-запускает VPS service и подключает текущий Windows/Hermes, затем второй ПК; P4.8.5 PARTIAL.
+**Следующий этап:** Windows connector service install/enable, проверка `home/hermes`
+на VPS и Telegram, затем реальные model/approval и второй ПК; P4.8.5 PARTIAL.
+TTY/colorama дефект rc4 устранён локально; runtime dependency/fallback/regрессия добавлены для следующего релиза.
 GitHub prerelease/PyPI 0.2.0rc4 опубликованы 2026-10-14; SHA256 wheel/sdist сверены.
 Финальный Linux source 1233/30; native setup/discovery 80/26, последние protocol/catalog 36,
 все 24 Scheduler и 32/3 native recovery checks прошли. Исправлен Windows rollback при mapped DLL.
@@ -826,8 +827,8 @@ Installed wheel Linux/Windows update/failed-health/rollback/uninstall и Linux b
 приёмкой; domain/WSS и перенос позже. Goose/platform combinations — P4.9; ownership — P4.10.
 Перечень ниже — незакрытые смежные задачи, не prerequisites всего трека.
 
-1. **P4.8.5 — живая установка и приёмка 0.2.0rc4.** Сначала uv update с rc3; Ubuntu 22.04.5 по IP:порту,
-   бот, текущий Windows/Hermes+connector/автозапуск/CLI, затем второй PC;
+1. **P4.8.5 — живая установка и приёмка 0.2.0rc4.** VPS уже работает; текущий Windows connector
+   проверен вручную. Далее его автозапуск, бот/CLI и реальные model/approval, затем второй PC;
    [порядок проверок](docs/setup/p48-acceptance.md).
 2. **P3.4/P3.5 — установка, настройка и контроль службы.** Основа Linux/WSL
    и самостоятельная Linux-сборка подтверждены чистым контейнерным CI;

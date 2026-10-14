@@ -636,3 +636,30 @@ Linux снова проверил реальный PTY setup и запуск dis
 на пока остановленном VPS, затем version/config check и отдельный запуск службы.
 Повторно выпускать enrollment `home` или настраивать Windows cwd на VPS не требуется.
 P4.8.5 PARTIAL: реальные provider calls/approvals, второй ПК и host lifecycle ещё открыты.
+
+
+### 2026-10-14 — живая Windows установка: SystemError в TTY logging
+
+Владелец подтвердил VPS service active/running/enabled, rc4/schema 8 и enrollment
+`home`; Windows PyPI rc4, Hermes Desktop 0.21.6/default ready, рабочая папка
+`C:\Users\vladz\acp-workdir`. Ошибка foreground start воспроизведена по traceback:
+`ConsoleRenderer(colors=True)` на Windows требует colorama, отсутствующей в runtime
+metadata. Перенаправленные smoke logs выбирали JSON и пропускали этот путь.
+
+По поручению владельца проверено на его ПК: запуск без TTY подключался к настоящему
+VPS; отдельно синтетический TTY детерминированно воспроизвёл тот же SystemError.
+Диагностический процесс штатно остановлен через instance-fenced IPC, lock освобождён.
+В его установленный uv tool rc4 добавлена `colorama>=0.4.6` через `uv tool install
+--upgrade --python 3.12 --managed-python --with ...`; конфигурация/ключи не редактировались.
+Настоящий PTY start затем дал цветной `computer connected` для `home` от VPS.
+Модель/новые диалоги/approvals не вызывались. Проверочный PTY остановлен перед
+возвратом владельцу: дальнейший шаг — реальный Windows Task Scheduler install/enable.
+
+Для будущих релизов: colorama добавлена как Windows runtime dependency; при её
+отсутствии logging безопасно переключается на plain console, redaction сохраняется.
+Не связанные с colorama SystemError не подавляются. Packaging marker и оба TTY режима
+покрыты регрессией: Linux `test_log.py` 39 passed, native Windows новые cases 4 passed.
+Installed-wheel Windows smoke теперь явно импортирует colorama и проверяет TTY logging.
+Инструкция текущего rc4 дополнена --with colorama. Опубликованные rc4/tag не заменялись;
+новый релиз сейчас не выпускается, согласно указанию владельца продолжать установку.
+P4.8.5 остаётся PARTIAL: service/Telegram/provider/второй ПК и host lifecycle впереди.

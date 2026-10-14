@@ -15,6 +15,7 @@ source = { editable = "." }
 dependencies = [
     { name = "agent-client-protocol", extra = ["http"] },
     { name = "aiogram" },
+    { name = "colorama", marker = "sys_platform == 'win32'" },
     { name = "fastapi" },
     { name = "filelock" },
     { name = "httpx" },
@@ -44,6 +45,7 @@ dev = [
 requires-dist = [
     { name = "agent-client-protocol", extras = ["http"], specifier = ">=0.12" },
     { name = "aiogram", specifier = ">=3.22,<4" },
+    { name = "colorama", marker = "sys_platform == 'win32'", specifier = ">=0.4.6" },
     { name = "fastapi", specifier = ">=0.115" },
     { name = "filelock", specifier = ">=3.16" },
     { name = "httpx", specifier = ">=0.28" },

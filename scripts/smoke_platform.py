@@ -103,6 +103,16 @@ def smoke(wheel: Path, binary: Path | None = None):
             install_command = ["sh", str(installer / "install.sh"), "--config-dir", str(config_dir)]
 
         run([uv, "tool", "install", "--python", "3.12", str(wheel.resolve())])
+        if os.name == "nt":
+            run(
+                [
+                    str(root / "tools/acp-gateway/Scripts/python.exe"),
+                    "-c",
+                    "import io,colorama; from acp_gateway.log import configure_logging,get_logger; "
+                    "s=io.StringIO(); s.isatty=lambda:True; configure_logging(stream=s); "
+                    "get_logger('tty-check').info('TTY ready'); assert 'TTY ready' in s.getvalue()",
+                ]
+            )
         command("setup", "--config-dir", str(config_dir))
         settings = yaml.safe_load(config.read_text())
         with socket.socket() as listener:
