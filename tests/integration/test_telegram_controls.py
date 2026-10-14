@@ -379,3 +379,31 @@ async def test_reused_storage_id_cannot_inherit_another_dialogues_authorization(
         "UPDATE sessions SET acp_session_id = 'replacement' WHERE id = ?", (first.id,)
     )
     assert core.execution_mode(conv)["mode"] == "ask"
+
+
+@pytest.mark.parametrize(
+    "field,value",
+    [
+        ("session", "other-session"),
+        ("agent", "other-route"),
+        ("actor", "telegram:999"),
+        ("channel", "mcp"),
+    ],
+)
+async def test_mode_display_never_claims_another_scopes_authorization(telegram, field, value):
+    core, channel, _, _ = telegram
+    await feed(channel, 1, "/start")
+    await feed(channel, 2, "/new")
+    conv = Conversation("telegram", str(OWNER), "work")
+    state = core.execution_mode(conv)
+    core.set_execution_mode(
+        conv,
+        "auto",
+        dialogue_id=state["dialogue_id"],
+        expected_revision=state["selection_revision"],
+        actor=f"telegram:{OWNER}",
+    )
+    saved = core.store.channel_state("execution_mode", str(state["dialogue_id"]))
+    saved[field] = value
+    core.store.set_channel_state("execution_mode", str(state["dialogue_id"]), saved)
+    assert core.execution_mode(conv)["mode"] == "ask"
