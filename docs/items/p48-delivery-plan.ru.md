@@ -400,3 +400,25 @@ cases прошли, после прогона временных ACP Gateway Tes
 Evidence хранится в dist/rc2-verification. Живая установка Ubuntu 24.04,
 Telegram/model/approvals, два PC, reboot/logon/sleep/network и перенос/WSS остаются
 отдельным P4.8.5; выпуск rc2 не закрывает эти проверки.
+
+## 2026-10-14 — 0.2.0rc2 опубликован; живая установка ожидает владельца
+
+Подготовка выпуска завершена. Source ref/tag:
+9562713 / v0.2.0rc2. Финальный wheel byte-identical проверенному до публикации.
+GitHub Release: https://github.com/Lujker/acp-gateway/releases/tag/v0.2.0rc2
+PyPI: https://pypi.org/project/acp-gateway/0.2.0rc2/
+Опубликованы wheel, sdist, bundle, standalone requirements.lock.txt и SHA256SUMS.
+Docker image для rc2 не публиковался.
+
+Ручной PyPI dry-run 38524586857 и Trusted Publishing 38524649241 завершились success.
+SHA256 wheel/sdist в PyPI API совпали с проверенной локальной сборкой; скачанные
+GitHub assets прошли SHA256SUMS. Свежие независимые uv tool окружения в Linux
+и native Windows установили acp-gateway==0.2.0rc2 именно из PyPI с runtime lock.
+Обе version --json: version=0.2.0rc2, manager=uv, source=registry.
+Hermes probe опубликованного Windows пакета: ready, 0.21.6, прежний endpoint,
+observe, без model prompt. Это не установка на целевом VPS/пользовательском tool.
+
+Новая инструкция: docs/setup/self-install-pypi.ru.md. Первый совместный шаг —
+проверить ОС, пользователя, наличие uv/acpgw и systemd user в SSH-сеансе владельца.
+P4.8.5 остаётся PARTIAL: target Ubuntu 24.04 + Telegram + текущий/второй Windows,
+реальные model/approvals и физические lifecycle проверки ещё не выполнены.
