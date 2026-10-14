@@ -1,7 +1,8 @@
 # ACP Gateway
 
 Release candidate 0.2.0rc7 (schema 8), with independent setup sections: [PyPI installation, Ubuntu + Windows/Hermes (Russian)](docs/setup/self-install-pypi.ru.md).
-Unreleased source `0.2.0rc8.dev0` contains security-review fixes; published rc7
+Unreleased source `0.2.0rc8.dev0` contains security-review fixes and Telegram
+computer/job dashboards with editable navigation; published rc7
 artifacts are unchanged. Check PyPI availability before installing.
 This candidate includes persistent Telegram
 delivery/status, rate limits, history retention and update recovery.

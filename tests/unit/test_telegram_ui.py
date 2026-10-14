@@ -55,3 +55,19 @@ def test_execution_controls_are_scoped_to_route_and_selection(context):
     panels.bind(tokens, 100)
     with pytest.raises(GatewayError):
         panels.take(markup.inline_keyboard[0][0].callback_data, 10, 100, context)
+
+
+def test_editor_revisions_and_cache_eviction_suppress_stale_results():
+    from types import SimpleNamespace
+
+    panels = Panels()
+    message = SimpleNamespace(chat=SimpleNamespace(id=10), message_id=1)
+    old = panels.begin_edit(message)
+    current = panels.begin_edit(message)
+    assert not panels.current_edit(old) and panels.current_edit(current)
+    for i in range(2, 260):
+        panels.begin_edit(SimpleNamespace(chat=message.chat, message_id=i))
+    assert len(panels.editors) == 256
+    assert not panels.current_edit(current)
+    panels.clear()
+    assert not panels.editors

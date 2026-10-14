@@ -264,3 +264,26 @@ async def test_websocket_scope_cannot_bypass_owner_checks():
     await app({"type": "websocket", "path": "/ws", "headers": []}, receive, send)
     assert not reached
     assert sent == [{"type": "websocket.close", "code": 1008}]
+
+
+async def test_job_history_is_cli_thread_scoped_and_bounded(api):
+    client, core, _ = api
+    for channel, key in [("cli", "default"), ("cli", "other"), ("telegram", "default")]:
+        record = core.store.add_session(
+            Conversation(channel, key, "removed"), f"{channel}-{key}", "/work"
+        )
+        for i in range(3):
+            job = core.store.add_job(f"{channel}-{key}-{i}", record.id)
+            core.store.finish_job(job.id, JobStatus.COMPLETED, answer="PRIVATE HEAVY ANSWER")
+    response = await client.get("/jobs", params={"limit": 2})
+    assert response.status_code == 200
+    result = response.json()
+    assert len(result["jobs"]) == 2 and result["next_before"]
+    assert "PRIVATE" not in response.text and "answer" not in response.text
+    assert all(j["conversation"]["key"] == "default" for j in result["jobs"])
+    more = await client.get("/jobs", params={"before": result["next_before"], "limit": 2})
+    assert len(more.json()["jobs"]) == 1
+    assert (await client.get("/jobs", params={"before": "cli-other-0"})).status_code == 404
+    assert (await client.get("/jobs", params={"limit": 51})).status_code == 422
+    assert (await client.get("/jobs", params={"active": True})).json()["jobs"] == []
+    assert (await client.get("/jobs", headers={"Authorization": "Bearer wrong"})).status_code == 401

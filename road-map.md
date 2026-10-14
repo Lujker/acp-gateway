@@ -234,7 +234,9 @@ MCP не имеет инструментов принятия решений.
 
 ### P2.3. Telegram
 
-**Статус:** PARTIAL — rc5 команды/results и работа подтверждений проверены владельцем на двух ПК.
+**Статус:** PARTIAL — development dashboard реализован: компьютеры, история задач и навигация.
+rc8.dev0: 1337 source tests / 79 native Windows checks; живой dashboard ещё не принят.
+rc5 команды/results и работа подтверждений проверены владельцем на двух ПК.
 В опубликованном rc7 проверены названия новых Hermes chats и отдельный режим выполнения /mode.
 В rc6 реализованы inline panel, выбор agents/dialogues/models,
 подтверждение model change, адресные job controls и Markdown→Telegram HTML.
@@ -851,7 +853,9 @@ Goose/platform — P4.9, ownership — P4.10.
 в rc8.dev0; 1325 source tests и 142 native Windows checks прошли; [журнал](docs/items/project-review-2026-10-14.ru.md).
 Перечень ниже — незакрытые смежные задачи, не prerequisites всего трека.
 
-1. **P2.3/P4.8.5 — Telegram UI и оставшаяся приёмка.** Обновить dispatcher/коннекторы до rc7: кнопки, форматирование,
+1. **P2.3/P4.8.5 — Telegram dashboard и приёмка.** Компьютеры/история задач/навигация
+   реализованы и автоматически проверены в rc8.dev0; нового релиза нет по решению владельца.
+   Дальше — живая приёмка dashboard после решения о поставке. Published rc7: кнопки, форматирование,
    названия и режим выполнения; проверить на двух ПК. Затем approvals/изоляция и lifecycle;
    [UI](docs/items/telegram-ui.ru.md), [порядок проверок](docs/setup/p48-acceptance.md).
 2. **P3.4/P3.5 — установка, настройка и контроль службы.** Основа Linux/WSL

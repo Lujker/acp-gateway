@@ -34,8 +34,9 @@ from pydantic import SecretStr
 
 from acp_gateway.agents import AgentError
 from acp_gateway.channels.base import Channel
+from acp_gateway.channels.telegram_dashboard import Dashboard
 from acp_gateway.channels.telegram_format import FORMAT_VERSION, answer_chunks, plain_html
-from acp_gateway.channels.telegram_ui import Panels
+from acp_gateway.channels.telegram_ui import PANEL_CONTEXT, Panels
 from acp_gateway.config import TelegramSettings
 from acp_gateway.connectors.diagnostics import computer_diagnostics
 from acp_gateway.core import GatewayError
@@ -45,6 +46,7 @@ from acp_gateway.storage import Conversation, Job
 
 HELP = (
     "Select an agent and create or select a dialogue before sending messages.\n"
+    "/computers — компьютеры и подключения\n/jobs — задачи этого чата\n/job ID — карточка задачи\n"
     "/menu — control panel\n/start, /help — help\n"
     "/agent — list agents\n/agent ALIAS — select agent\n"
     "/new [ALIAS] — new session\n/sessions [PAGE] — list dialogues\n"
@@ -66,6 +68,9 @@ COMMANDS = (
     ("start", "Getting started", "Начало работы"),
     ("help", "Commands and usage", "Команды и подсказки"),
     ("menu", "Control panel", "Панель управления"),
+    ("computers", "Computers", "Компьютеры и подключения"),
+    ("jobs", "Job history", "История задач этого чата"),
+    ("job", "Job details", "Подробности: /job JOB_ID"),
     ("agent", "List or select an agent", "Список и выбор агента"),
     ("new", "Create a dialogue", "Создать диалог"),
     ("sessions", "List dialogues", "Список диалогов"),
@@ -85,7 +90,7 @@ _SESSION_PAGE_SIZE = 10
 
 
 def _label(text, limit=120):
-    return " ".join(str(text).split())[:limit]
+    return " ".join(redact_text(str(text)).split())[:limit]
 
 
 def _session_state(session):
@@ -126,7 +131,7 @@ class _Updates(BaseMiddleware):
         return await handler(event, data)
 
 
-class TelegramChannel(Channel):
+class TelegramChannel(Dashboard, Channel):
     name = "telegram"
     can_approve = True
 
@@ -533,22 +538,74 @@ class TelegramChannel(Channel):
             [(f"🖥 {job.conversation.agent} · #{job.session_id}", f"details:{job.id}")],
             [("📄 Результат", f"result:{job.id}")],
         ]
-        if not job.status.finished and getattr(
-            self.core.agent(job.conversation.agent), "supports_cancel", True
-        ):
+        try:
+            client = self.core.agent(job.conversation.agent)
+        except GatewayError:
+            client = None
+        if not job.status.finished and client and getattr(client, "supports_cancel", True):
             rows.insert(0, [("⏹ Остановить задачу", f"cancel:{job.id}")])
         return rows + TelegramChannel._back_rows()
 
-    async def _panel(self, chat, text, rows):
-        markup, tokens = self._panels.create(chat, rows, self._ui_context(chat))
-        message = await self._send(chat, text, markup=markup)
+    async def _panel(self, chat, text, rows, *, editable=True):
+        context = PANEL_CONTEXT.get() if editable else None
+        chunks = self._chunks(text)
+        if context is not None and context[0].chat.id == chat and len(chunks) == 1:
+            message, editor, _ = context
+            async with editor.lock:
+                if not self._panels.current_edit(context):
+                    return message
+                markup, tokens = self._panels.create(chat, rows, self._ui_context(chat), panel=True)
+                try:
+                    await self.bot.edit_message_text(
+                        chat_id=chat,
+                        message_id=message.message_id,
+                        text=html.escape(chunks[0], quote=False),
+                        parse_mode="HTML",
+                        reply_markup=markup,
+                        link_preview_options=LinkPreviewOptions(is_disabled=True),
+                    )
+                except TelegramBadRequest as exc:
+                    self._panels.discard(tokens)
+                    if "message is not modified" in exc.message.lower():
+                        return message
+                    if not any(
+                        reason in exc.message.lower()
+                        for reason in (
+                            "message to edit not found",
+                            "message can't be edited",
+                            "message cannot be edited",
+                        )
+                    ):
+                        raise
+                    # An explicit rejection permits a fresh navigation message.
+                    self._panels.retire_message(chat, message.message_id)
+                except BaseException:
+                    self._panels.discard(tokens)
+                    raise  # An ambiguous edit is never resent automatically.
+                else:
+                    self._panels.retire_message(chat, message.message_id)
+                    self._panels.bind(tokens, message.message_id)
+                    return message
+        if context is not None and not self._panels.current_edit(context):
+            return context[0]
+        markup, tokens = self._panels.create(chat, rows, self._ui_context(chat), panel=editable)
+        try:
+            message = await self._send(chat, text, markup=markup)
+        except BaseException:
+            self._panels.discard(tokens)
+            raise
+        if context is not None:
+            self._panels.retire_message(chat, context[0].message_id)
         self._panels.bind(tokens, message.message_id)
         return message
 
     async def _home(self, chat):
         context = self._ui_context(chat)
         text = "Управление ACP Gateway"
-        rows = [[("🖥 Агенты", "/agent"), ("📊 Статус", "/status")]]
+        rows = [
+            [("💻 Компьютеры", "/computers"), ("📋 Задачи", "/jobs")],
+            [("🖥 Агенты", "/agent"), ("📊 Статус", "/status")],
+        ]
         if context[0]:
             conv = self._conversation(chat)
             active = self.core.active_session(conv)
@@ -653,13 +710,23 @@ class TelegramChannel(Channel):
     async def _ui_callback(self, query):
         chat = query.message.chat.id
         try:
-            command = self._panels.take(
+            action = self._panels.consume(
                 query.data, chat, query.message.message_id, self._ui_context(chat)
             )
             await self._admit_ui(chat)
         except GatewayError as exc:
             await self.bot.answer_callback_query(query.id, text=str(exc)[:180], show_alert=True)
             return
+        command = action.command
+        context = self._panels.begin_edit(query.message) if action.panel else None
+        token = PANEL_CONTEXT.set(context)
+        try:
+            await self._execute_ui_callback(query, command)
+        finally:
+            PANEL_CONTEXT.reset(token)
+
+    async def _execute_ui_callback(self, query, command):
+        chat = query.message.chat.id
         # Consume one-shot controls and dismiss the spinner before any host RPC.
         await self.bot.answer_callback_query(query.id)
         try:
@@ -672,19 +739,14 @@ class TelegramChannel(Channel):
                     if job.status.finished:
                         raise GatewayError("Задача уже завершена.")
                     await self.core.cancel_job(job.id)
-                    await self._panel(chat, f"Задача {job.id} остановлена.", self._back_rows())
+                    await self._job_panel(chat, job.id)
                 elif action == "result":
                     if not self._queue_delivery(
                         chat, job.answer or job.error or job.status.value, job
                     ):
                         raise GatewayError("Доставка занята. Повторите позже.")
                 else:
-                    await self._panel(
-                        chat,
-                        f"Задача {job.id}\nАгент: {job.conversation.agent}\n"
-                        f"Диалог: #{job.session_id}\nСостояние: {job.status.value}",
-                        self._job_rows(job),
-                    )
+                    await self._job_panel(chat, job.id)
             else:
                 await self._command(chat, command)
         except (AgentError, GatewayError) as exc:
@@ -740,6 +802,8 @@ class TelegramChannel(Channel):
         command, _, argument = text.partition(" ")
         command = command.split("@", 1)[0]
         argument = argument.strip()
+        if await self._dashboard(chat, command, argument):
+            return
         if command in {"/start", "/menu"}:
             await self._home(chat)
             return
@@ -1019,28 +1083,11 @@ class TelegramChannel(Channel):
             if not argument.isascii() or not argument.isdecimal():
                 raise GatewayError("Use /switch SESSION_ID.")
             session = self.core.switch_dialogue(conv, int(argument))
-            await self._send(chat, f"Selected dialogue #{session.id}\n{_dialogue_summary(session)}")
-        elif command == "/delivery":
-            job = self.core.job(argument)
-            if job.conversation != conv:
-                raise GatewayError("This chat does not own that job.")
-            delivery = self.core.store.deliveries.get(self.namespace, job.id)
-            await self._send(
+            await self._panel(
                 chat,
-                f"Delivery · {job.id}\nState: {delivery['state']}\n"
-                f"Acknowledged fragments: {delivery['next_chunk']}\n\n"
-                f"Saved answer: /result {job.id}"
-                if delivery
-                else "No automatic delivery record for this job.",
+                f"Selected dialogue #{session.id}\n{_dialogue_summary(session)}",
+                [[("💬 Диалоги", "/sessions")], *self._back_rows()],
             )
-        elif command == "/result":
-            job = self.core.job(argument)
-            if job.conversation != conv:
-                raise GatewayError("This chat does not own that job.")
-            if not self._queue_delivery(
-                chat, job.answer or job.error or f"Job {job.id}: {job.status.value}", job
-            ):
-                await self._send(chat, "Delivery is busy; try /result again shortly.")
         elif command == "/stop":
             jobs = await self.core.cancel(conv)
             await self._send(chat, f"Stopped jobs: {len(jobs)}")
@@ -1049,7 +1096,7 @@ class TelegramChannel(Channel):
         else:
             job = await self.core.submit_selected(conv, text, delivery_namespace=self.namespace)
             status_text = f"Working: {job.id}\nUse /stop to cancel."
-            message = await self._panel(chat, status_text, self._job_rows(job))
+            message = await self._panel(chat, status_text, self._job_rows(job), editable=False)
             if self.settings.status_enabled:
                 if len(self._statuses) >= 32:
                     self._statuses.pop(next(iter(self._statuses)))

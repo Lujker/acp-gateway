@@ -85,6 +85,18 @@ class Job:
 
 
 @dataclass(frozen=True)
+class JobSummary:
+    """Bounded history metadata; answer and tool data are retrieved separately."""
+
+    id: str
+    session_id: int
+    conversation: Conversation
+    status: JobStatus
+    created_at: datetime
+    finished_at: datetime | None
+
+
+@dataclass(frozen=True)
 class ApprovalAudit:
     id: str
     job_id: str | None

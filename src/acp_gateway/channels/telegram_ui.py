@@ -1,13 +1,23 @@
 """Bound, short-lived inline controls; callback data never contains a target."""
 
+import asyncio
 import secrets
 import time
 from collections import OrderedDict
-from dataclasses import dataclass, replace
+from contextvars import ContextVar
+from dataclasses import dataclass, field, replace
 
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 
 from acp_gateway.core import GatewayError
+
+PANEL_CONTEXT = ContextVar("telegram_navigation_panel", default=None)
+
+
+@dataclass
+class _Editor:
+    revision: int = 0
+    lock: asyncio.Lock = field(default_factory=asyncio.Lock)
 
 
 @dataclass(frozen=True)
@@ -19,13 +29,15 @@ class _Action:
     once: bool
     expires: float
     message_id: int | None = None
+    panel: bool = False
 
 
 class Panels:
     def __init__(self):
         self.actions = OrderedDict()
+        self.editors = OrderedDict()
 
-    def create(self, chat, rows, context):
+    def create(self, chat, rows, context, *, panel=False):
         tokens, keyboard = [], []
         for row in rows:
             buttons = []
@@ -37,7 +49,6 @@ class Panels:
                     "/switch",
                     "/model",
                     "/models",
-                    "/result",
                     "/mode",
                 }
                 selected = verb in {"/new", "/switch", "/model", "/models", "/mode"}
@@ -52,6 +63,7 @@ class Panels:
                     context[2] if selected else None,
                     once,
                     time.monotonic() + 3600,
+                    panel=panel,
                 )
                 tokens.append(token)
                 buttons.append(InlineKeyboardButton(text=label[:60], callback_data=f"u:{token}"))
@@ -66,6 +78,9 @@ class Panels:
                 self.actions[token] = replace(self.actions[token], message_id=message_id)
 
     def take(self, data, chat, message_id, context):
+        return self.consume(data, chat, message_id, context).command
+
+    def consume(self, data, chat, message_id, context):
         token = data.removeprefix("u:")
         action = self.actions.get(token)
         if (
@@ -81,7 +96,33 @@ class Panels:
             raise GatewayError("Диалог изменился. Откройте /menu заново.")
         if action.once:
             del self.actions[token]
-        return action.command
+        return action
+
+    def begin_edit(self, message):
+        key = (message.chat.id, message.message_id)
+        editor = self.editors.setdefault(key, _Editor())
+        self.editors.move_to_end(key)
+        editor.revision += 1
+        while len(self.editors) > 256:
+            self.editors.popitem(last=False)
+        return message, editor, editor.revision
+
+    def current_edit(self, context):
+        message, editor, revision = context
+        return (
+            self.editors.get((message.chat.id, message.message_id)) is editor
+            and editor.revision == revision
+        )
+
+    def retire_message(self, chat, message_id):
+        for token, action in list(self.actions.items()):
+            if action.chat == chat and action.message_id == message_id:
+                del self.actions[token]
+
+    def discard(self, tokens):
+        for token in tokens:
+            self.actions.pop(token, None)
 
     def clear(self):
         self.actions.clear()
+        self.editors.clear()
