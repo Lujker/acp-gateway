@@ -2,9 +2,28 @@
 
 Linux/WSL is the verified first target. Manual native runner checks also cover
 Windows/macOS and Linux ARM; their results are recorded in the roadmap.
-Native Windows/macOS service adapters remain separate milestones.
+Native Windows connectors support a per-user Task Scheduler logon task.
+Native Windows gateway and macOS service adapters remain separate milestones.
 All modes keep configuration, enrollment keys, pins and SQLite outside the
 installed program. Stop jobs and processes before replacing an installation.
+
+## Simple PyPI installation
+
+For a new installation, install uv and run:
+
+```bash
+uv tool install --python 3.12 "acp-gateway==0.2.0rc4"
+acpgw setup
+```
+
+On native Windows add `--managed-python` to the uv command. Setup first configures
+the role; each further section is independent. Servers discover agent profiles
+from authenticated rc4 connectors. Configure the executor and its project folder
+on the PC; enroll its key on the server. See the [Ubuntu/Windows walkthrough](self-install-pypi.ru.md).
+For an existing pinned tool use `uv tool install --upgrade --python 3.12
+"acp-gateway==0.2.0rc4"` after stopping jobs/services, then restart the service.
+Upgrade servers before connectors. Package replacement keeps config/keys/data;
+it does not start or reconfigure services automatically.
 
 ## Release bundle: no checkout required
 

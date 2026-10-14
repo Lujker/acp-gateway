@@ -119,6 +119,7 @@ def test_dry_run_does_not_remove_units(uv_tool, monkeypatch):
     assert main(["uninstall", "--dry-run"]) == 0
 
 
+@pytest.mark.skipif(os.name == "nt", reason="systemd preflight is Linux-only")
 def test_services_are_all_preflighted_before_uninstall(monkeypatch, tmp_path):
     from acp_gateway import service
 

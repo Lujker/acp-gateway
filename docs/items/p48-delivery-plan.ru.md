@@ -570,3 +570,43 @@ MCP-клиенту с кешем инструментов может потре�
 registry rc3 на rc4 wheel выполнен в обеих ОС; конфигурация/ключи/registry/SQLite сохранены.
 Linux PTY setup и запуск пустого dispatcher проверены. Итоговый source и installed-wheel
 update/rollback прогон и публикация фиксируются ниже после завершения.
+
+
+#### Найден Windows rollback дефект при hardlinked DLL
+
+Installed-wheel negative SQL health-check выявил частичное удаление среды при
+rollback: `shutil.rmtree(prefix)` останавливался на PyYAML `.pyd`, удерживаемой
+другим Python через общий uv cache hardlink. `fsutil hardlink list` подтвердил общий
+файл; переименование родительской директории при занятой DLL проверено успешно.
+Restore заменён на retire/promotion: полная recovery copy готовится заранее,
+исходная среда переименовывается; при ошибке promotion возвращается обратно.
+Занятые файлы удаляются только из retired среды и не блокируют готовое восстановление.
+Recovery snapshot сохраняется; служебный путь deferred cleanup выводится явно.
+Добавлены проверки занятого cleanup, promotion failure и настоящий Windows hardlink/mapped DLL.
+Smoke harness допускает отложенную очистку Windows temp: сам harness импортирует
+PyYAML и удерживает общий DLL до выхода. Пакет не импортирует third-party DLL в worker.
+
+
+#### Итоговые проверки rc4 перед публикацией
+
+- Финальный Linux source: **1233 passed / 30 expected skips**, 199.76s;
+  `dist/rc4-verification/source-rc4-final.xml` и `.log`.
+- Native Windows recovery: **32 passed / 3 POSIX-only skips**, включая настоящую
+  DLL, отображённую через другой hardlink. Последние protocol/catalog/doctor: 36 passed;
+  предыдущий setup/discovery профиль: 80 passed / 26 platform/opt-in skips.
+- **Все 24 native Scheduler cases passed**; временных `ACP Gateway Test-*` не осталось.
+- Исправленный installed wheel прошёл Linux и Windows `smoke_platform`: реальное
+  обновление, отрицательный SQL health-check с восстановлением, rollback,
+  active-runtime guard, data-preserving uninstall и Windows installer.
+- Linux `smoke_installation --bundle --git-ref HEAD --verify-delivery-state`:
+  wheel/API/ACP/MCP/approval, bundle вне repo, clone/direct Git install и
+  outbound cursor fence при rollback прошли. Это synthetic acceptance, без реального provider.
+- Первые cold-home smoke остановились на uv download timeout; повтор использовал
+  существующие shared Python/download cache при отдельных tool/config/data.
+- Изолированные uv registry rc3→rc4 wheel upgrades в Linux/Windows сохранили
+  YAML/env/setup/key bytes, registry и SQLite. Linux PTY и пустой server стартовали.
+- Ruff check/format и secrets pre-commit прошли. Failed/native debug и завершённая
+  native smoke среды удалены после проверки путей/процессов. Production Hermes не изменялся.
+
+P4.8.5 остаётся PARTIAL: владелец продолжает реальные VPS→Windows/Hermes/Telegram,
+второй ПК, model/approval, reboot/logon/sleep/network после установки rc4.
