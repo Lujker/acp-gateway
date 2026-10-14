@@ -77,24 +77,7 @@ def menu(config_file=None, env_file=None, *, prompts=None, execute=None):
             elif action == "check":
                 run(["config", "check"])
             elif action == "settings":
-                section = prompts.choice(
-                    "Settings section",
-                    (
-                        "base",
-                        "agents",
-                        "gateway",
-                        "telegram",
-                        "hermes",
-                        "connection",
-                        "policy",
-                        "rate-limits",
-                        "retention",
-                        "logging",
-                        "all",
-                    ),
-                    "agents",
-                )
-                run(["config", "edit", "--section", section])
+                run(["setup", "--interactive"])
             elif action == "doctor":
                 run(
                     ["doctor", "--live"]
@@ -122,8 +105,22 @@ def menu(config_file=None, env_file=None, *, prompts=None, execute=None):
             elif action == "conversation":
                 cfg = load_config(config_file, env_file)
                 addresses = tuple(a.address for a in cfg.settings.agents)
+                if cfg.settings.connector.enabled:
+                    from acp_gateway.cli.client import api_url, check_response
+                    from acp_gateway.daemon import owner_token
+
+                    response = httpx.get(
+                        api_url(cfg) + "/health",
+                        headers={"Authorization": "Bearer " + owner_token(cfg).get_secret_value()},
+                        timeout=5,
+                        trust_env=False,
+                    )
+                    check_response(response)
+                    addresses = tuple(a["alias"] for a in response.json()["agents"])
                 if not addresses:
-                    raise ValueError("Configure an agent through setup first")
+                    raise ValueError(
+                        "No agents yet; configure a local agent or connect an enrolled PC"
+                    )
                 agent = prompts.choice("Agent", addresses, addresses[0])
                 thread = prompts.ask("Conversation", "default", _required)
                 operation = prompts.choice(
@@ -158,7 +155,9 @@ def service_menu(prompts, run, config_file):
         f"{operation} the {role} service? Active work may be interrupted."
     ):
         return 0
-    run(["service", "--role", role, operation])
+    result = run(["service", "--role", role, operation])
+    if not result and operation == "install":
+        print("Installed without starting. Choose service -> enable to start and enable autostart.")
 
 
 def computers_menu(prompts, run, config_file):
@@ -195,7 +194,7 @@ def computers_menu(prompts, run, config_file):
     if operation == "enroll" and not result:
         print(
             "Copy the key privately to the computer and run acpgw setup there. "
-            "Add its agent route through setup on this server."
+            "Its agents will appear automatically here after the rc4 connector connects."
         )
 
 

@@ -128,3 +128,66 @@ def test_relay_has_separate_control_and_data_limits_and_rejects_nonfinite_json()
     payload["message"]["params"]["number"] = float("nan")
     with pytest.raises(ProtocolError):
         decode_frame(json.dumps(payload))
+
+
+@pytest.mark.parametrize("cwd", ["relative", "/work/../secret", "C:relative"])
+def test_v2_rejects_unsafe_cwd(cwd):
+    with pytest.raises(ValueError):
+        Hello(
+            version=2,
+            computer_id="work",
+            agents=[
+                AgentManifest(
+                    alias="hermes",
+                    display_name="Hermes",
+                    kind="hermes",
+                    default_cwd=cwd,
+                )
+            ],
+        )
+
+
+def test_legacy_hello_has_no_new_fields_on_wire():
+    hello = Hello(computer_id="work", agents=[AgentManifest(alias="hermes", display_name="H")])
+    assert "default_cwd" not in encode_frame(hello)
+    assert "kind" not in encode_frame(hello)
+    assert decode_frame(encode_frame(hello)) == hello
+
+
+def test_v2_requires_complete_metadata_and_roundtrips():
+    with pytest.raises(ValueError):
+        Hello(version=2, computer_id="work", agents=[AgentManifest(alias="h", display_name="H")])
+    hello = Hello(
+        version=2,
+        computer_id="work",
+        agents=[
+            AgentManifest(
+                alias="hermes",
+                display_name="H",
+                kind="hermes",
+                default_cwd=r"C:\Projects",
+            )
+        ],
+    )
+    assert decode_frame(encode_frame(hello)) == hello
+
+
+async def test_mcp_catalog_cannot_confuse_computer_and_alias_components():
+    from types import SimpleNamespace
+
+    from pydantic import SecretStr
+
+    from acp_gateway.channels.mcp import McpChannel
+    from acp_gateway.config import PolicySettings
+
+    addresses = ("a/b__c", "a__b/c", "a__b__c", "work/goose")
+    core = SimpleNamespace(
+        agents=dict.fromkeys(addresses),
+        policy=SimpleNamespace(settings=PolicySettings()),
+    )
+    channel = McpChannel(core, SecretStr("mock-catalog-mcp"))
+    tools = await channel.server.list_tools()
+    assert len(tools) == len(addresses) * 6
+    assert "work__goose_ask" in {tool.name for tool in tools}
+    channel.agent_removed("a/b__c")
+    assert len(await channel.server.list_tools()) == 18

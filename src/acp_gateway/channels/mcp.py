@@ -21,6 +21,12 @@ SessionId = Annotated[int, Field(gt=0, strict=True)]
 Cwd = Annotated[str, Field(min_length=1, max_length=4096, strict=True)]
 
 
+def tool_prefix(alias):
+    # Escape underscores inside each component so computer/alias boundaries
+    # cannot collide (a/b__c and a__b/c must address different tools).
+    return "__".join(part.replace("_", "_u") for part in alias.split("/"))
+
+
 class _SafeMCP(FastMCP):
     async def call_tool(self, name, arguments):
         tools = {tool.name: tool for tool in await self.list_tools()}
@@ -82,6 +88,13 @@ class McpChannel(Channel):
 
     async def stop(self):
         self._started = False
+
+    def agent_added(self, alias):
+        self._register(alias)
+
+    def agent_removed(self, alias):
+        for suffix in ("status", "sessions", "new_session", "ask", "result", "cancel"):
+            self.server.remove_tool(f"{tool_prefix(alias)}_{suffix}")
 
     def _register(self, alias):
         core = self.core
@@ -190,7 +203,7 @@ class McpChannel(Channel):
         ):
             self.server.add_tool(
                 fn,
-                name=f"{alias.replace('/', '__')}_{suffix}",
+                name=f"{tool_prefix(alias)}_{suffix}",
                 description=description,
                 annotations=ToolAnnotations(readOnlyHint=readonly, openWorldHint=True),
             )

@@ -88,6 +88,13 @@ def _required(value):
     return value
 
 
+def _working_directory(value):
+    path = Path(_required(value)).expanduser()
+    if not path.is_absolute() or not path.is_dir():
+        raise ValueError("Choose an existing absolute directory on this agent computer")
+    return str(path)
+
+
 def _identifier(value):
     if not re.fullmatch(r"[a-z][a-z0-9_-]{0,63}", value):
         raise ValueError("Invalid computer ID")
@@ -232,6 +239,11 @@ def _agent(prompts, values, *, routed=False, old=None):
     if old.get("kind") != kind:
         result.pop("session_mode", None)
     default_alias = "hermes" if kind == "hermes" else "goose"
+    print("Working directory is the real project folder used for agent sessions.")
+    if routed:
+        print("Legacy route: use the exact directory configured on the remote computer.")
+    else:
+        print("Choose an existing folder here; this does not sandbox agent file access.")
     result.update(
         {
             "alias": prompts.ask("Agent alias", old.get("alias", default_alias), _alias),
@@ -240,7 +252,7 @@ def _agent(prompts, values, *, routed=False, old=None):
             "default_cwd": prompts.ask(
                 "Working directory on the agent computer",
                 old.get("default_cwd", str(Path.home())),
-                _required,
+                _required if routed else _working_directory,
             ),
         }
     )
@@ -371,9 +383,11 @@ def _profiles(prompts, raw, values, role, *, allow_empty=False):
 
 def _connection(prompts, state):
     old = state.get("connection", {})
+    print("Dispatcher URL example: ws://YOUR_SERVER_IP:18766/acpgw/connect.")
+    print("Use the enrolled computer ID and its privately copied key file.")
     url = prompts.ask(
         "Server connection URL",
-        old.get("dispatcher_url", "wss://server.example/acpgw/connect"),
+        old.get("dispatcher_url", ""),
         _url,
     )
     if urlsplit(url).scheme == "ws":
@@ -583,6 +597,8 @@ async def _check_agents(cfg):
 
 def check_connections(cfg, state):
     asyncio.run(_check_agents(cfg))
+    if state["role"] == "server":
+        print("Remote agents are discovered automatically; inspect acpgw computers status.")
     if state["role"] == "connector" and not state.get("connection"):
         print("Server connection is not configured; choose connection in acpgw setup.")
     elif state["role"] == "connector":

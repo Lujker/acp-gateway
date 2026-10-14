@@ -1,6 +1,6 @@
 # ACP Gateway
 
-Release candidate 0.2.0rc3 (schema 8), with independent setup sections: [PyPI installation, Ubuntu + Windows/Hermes (Russian)](docs/setup/self-install-pypi.ru.md).
+Release candidate 0.2.0rc4 (schema 8), with independent setup sections: [PyPI installation, Ubuntu + Windows/Hermes (Russian)](docs/setup/self-install-pypi.ru.md).
 Check PyPI availability before installing. This candidate includes persistent Telegram
 delivery/status, rate limits, history retention and update recovery.
 The earlier [frozen 0.2.0rc1 bundle guide](docs/setup/self-install-0.2.0rc1.ru.md)

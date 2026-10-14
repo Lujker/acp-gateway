@@ -1,6 +1,6 @@
 # Установка через uv/PyPI и независимые настройки
 
-Версия инструкции — **0.2.0rc3**. Один пакет `acp-gateway` устанавливается на
+Версия инструкции — **0.2.0rc4**. Один пакет `acp-gateway` устанавливается на
 VPS и ПК; роль выбирается в базовой настройке. Git checkout, Docker и скачивание
 wheel/lock файлов для обычной установки не нужны.
 
@@ -11,13 +11,13 @@ wheel/lock файлов для обычной установки не нужны
 ```bash
 curl -LsSf https://astral.sh/uv/install.sh | sh
 export PATH="$HOME/.local/bin:$PATH"
-uv tool install --python 3.12 "acp-gateway==0.2.0rc3"
+uv tool install --python 3.12 "acp-gateway==0.2.0rc4"
 uv tool update-shell
 export PATH="$(uv tool dir --bin):$PATH"
 acpgw version --json
 ```
 
-Ожидается version `0.2.0rc3`, manager `uv`, source `registry`.
+Ожидается version `0.2.0rc4`, manager `uv`, source `registry`.
 Python и зависимости предоставляет uv. Существующую установку обновляем по
 разделу ниже; повторная установка не означает повторную настройку.
 
@@ -27,6 +27,7 @@ Python и зависимости предоставляет uv. Существу
 acpgw setup
 ```
 
+Меню показывает разделы для выбранной роли. На чистой установке доступны `base` и `exit`.
 Выбрать номер или название раздела. Изменения сохраняются только после
 подтверждения выбранного раздела. После завершения или отмены вернётся меню.
 Открытие меню и `exit` сами по себе ничего не создают.
@@ -35,7 +36,7 @@ acpgw setup
 | --- | --- |
 | base | Первичная настройка роли и сети; не требует агентов или Telegram |
 | gateway | API/connector listener; без повторной настройки других разделов |
-| agents | Локальные профили или маршруты к агентам на компьютерах |
+| agents | Профили на ПК агента; диспетчеру передаются автоматически |
 | connection | Исходящее подключение ПК к диспетчеру |
 | telegram | Bot token, разрешённые user IDs и progress status |
 | hermes | Подключение gateway MCP к локальному Hermes Agent |
@@ -93,15 +94,17 @@ Owner API 8765 остаётся на loopback. Для постоянного WSS
 - `computers` → `enroll`: ID первого ПК `home`, display name по желанию.
   Default ключ — `~/.config/acp-gateway/enrollment/home.key`; файл создаётся
   приватно, в чат его не присылать. Для второго ПК отдельный ID и ключ.
-- `agents`: тип **hermes** (ввести явно), alias `hermes`, computer ID `home`,
-  точный существующий Windows cwd. Это маршрут `home/hermes`; Hermes на VPS не нужен.
 - `service` → `install`, затем `enable`. Это отдельное действие, настройка
   Telegram/агентов сама по себе автозапуск не устанавливает.
 - `check`: проверить конфигурацию и по желанию подключения.
 
-Можно запустить сервер без агентов и подключать их позже. Текущий rc3 всё ещё
-требует отдельного key enrollment и server route; автоматический pairing и
-user/workspace ownership не заявляются реализованными.
+Можно запустить сервер без агентов. После подключения коннектора rc4 маршрут
+`home/hermes` появится автоматически, включая Telegram, CLI и MCP. Профиль и
+Windows cwd вводятся только на ПК. Каталог сохраняется после отключения ПК
+и перезапуска диспетчера; это не означает доступность отключённого агента.
+
+Регистрация компьютера по ключу остаётся отдельной операцией. Автоматический
+pairing и user/workspace ownership относятся к следующему этапу.
 
 Для systemd user после выхода из SSH/reboot:
 
@@ -124,7 +127,7 @@ powershell -ExecutionPolicy ByPass -c "irm https://astral.sh/uv/install.ps1 | ie
 В новом окне:
 
 ```powershell
-uv tool install --python 3.12 --managed-python 'acp-gateway==0.2.0rc3'
+uv tool install --python 3.12 --managed-python 'acp-gateway==0.2.0rc4'
 uv tool update-shell
 $Acpgw = Join-Path ((uv tool dir --bin).Trim()) 'acpgw.exe'
 & $Acpgw version --json
@@ -142,7 +145,8 @@ scp SSH_USER@SERVER_IP:.config/acp-gateway/enrollment/home.key (Join-Path $Cfg '
 & $Acpgw setup --config-dir $Cfg
 ```
 
-- `agents`: тип Hermes, alias `hermes`, тот же cwd, discovery directory из probe,
+- `agents`: тип Hermes, alias `hermes`, реальная существующая папка проекта на этом ПК,
+  discovery directory из probe,
   existing instance `desktop-serve`, фактический profile.
 - `connection`: `ws://SERVER_IP:18766/acpgw/connect`, test yes, ID `home`,
   key file — полный `$Cfg\home.key`. Эти два раздела можно проходить в любом порядке.
@@ -155,26 +159,54 @@ Telegram на connector отключён. Входящие порты на Windo
 На VPS: `acpgw computers status`. Затем в Telegram `/start`, `/agent`,
 `/agent home/hermes`, `/new` и текст «Ответь одним словом PONG».
 Это реальный вызов модели. Второй ПК подключаем после первого, с отдельным
-computer ID/key/route. Reboot/logon/sleep/network, model/approvals и перенос/WSS
+computer ID/key. Маршрут создаётся автоматически. Reboot/logon/sleep/network, model/approvals и перенос/WSS
 проверяются отдельными этапами.
 
-## 6. Обновление установленного rc2 через uv
+## 6. Обновление rc2/rc3 до rc4 через uv
 
-Для текущей начальной установки, пока daemon/service ещё не запущены:
+Сначала обновить диспетчер, затем коннекторы. Коннектор rc4 объявляет metadata
+через hello v2; старый диспетчер его не примет. Диспетчер rc4 принимает старые
+коннекторы через hello v1 с прежними ручными маршрутами. Адреса агентов и
+история сохраняются; повторно выпускать ключ `home` не нужно.
+
+Для текущей установки владельца, пока служба ещё не запущена:
 
 ```bash
-uv tool install --upgrade --python 3.12 "acp-gateway==0.2.0rc3"
+uv tool install --upgrade --python 3.12 "acp-gateway==0.2.0rc4"
 acpgw version --json
-acpgw setup
+acpgw config check
 ```
 
 Сначала выйти из старого мастера через Ctrl+C. Настройка хранится вне uv tool,
 повторный setup не требуется для самого обновления. Команда выше намеренно
-заменяет исходное `==0.2.0rc2`: `uv tool upgrade acp-gateway` сохраняет прежнее
-ограничение и может оставить rc2.
+заменяет исходное `==0.2.0rc2` или `==0.2.0rc3`: `uv tool upgrade acp-gateway` сохраняет прежнее
+ограничение и может оставить прежнюю версию.
 
 Для уже работающих служб/активных jobs сначала завершить работу и штатно
 остановить процессы. Управляемое обновление/rollback с сохранением состояния
-службы — `acpgw update --version 0.2.0rc3 --with-services`; подробности в
+службы — `acpgw update --version 0.2.0rc4 --with-services`; подробности в
 [distribution.md](distribution.md). Прямые uv-команды не выполняют lifecycle
 проверки приложения. Не обновлять tool environment во время работы connector.
+
+
+Если служба уже работает, сначала завершить jobs. Для прямого обновления через uv
+на Linux: `acpgw service stop`, команда uv выше, затем `acpgw service start`.
+На Windows: `acpgw --config "$Cfg\config.yaml" service --role connector disable`,
+`uv tool install --upgrade --python 3.12 --managed-python 'acp-gateway==0.2.0rc4'`,
+затем `acpgw --config "$Cfg\config.yaml" service --role connector enable`.
+Указывать фактические config/env пути при нестандартной установке. Не запускать
+второй процесс вручную поверх службы. После обновления: `version --json`,
+`config check`, `service status`; на VPS — `computers status` и `agents list`.
+
+Рабочая папка является cwd новых сессий, а не песочницей файлового доступа.
+Перед её изменением завершить активную работу. Существующие диалоги хранят
+свой cwd: после смены папки создавать новый диалог, старый не переносится автоматически.
+Смена alias или computer ID создаёт другой адрес; для сохранения привязки истории
+оставлять прежние `home` и `hermes`.
+
+`doctor` проверяет сохранённую настройку без сети. `doctor --live` дополнительно
+проверяет API, Telegram getMe, TCP/TLS диспетчера и observer/initialize агента;
+не создаёт диалоги, не отправляет prompts и не подтверждает действия. TCP/TLS
+доступность сама по себе не подтверждает регистрацию: смотреть `computers status`.
+Для изменения работающего Windows connector сначала выполнить `service disable`,
+изменить нужный раздел setup, затем `service enable`.

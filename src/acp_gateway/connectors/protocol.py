@@ -23,6 +23,9 @@ class _Model(BaseModel):
 class AgentManifest(_Model):
     alias: AgentAlias
     display_name: Annotated[str, Field(min_length=1, max_length=128)]
+    kind: Literal["goose", "generic", "hermes"] | None = None
+    default_cwd: Annotated[str, Field(min_length=1, max_length=4096)] | None = None
+    session_mode: Annotated[str, Field(min_length=1, max_length=256)] | None = None
 
 
 class _Frame(_Model):
@@ -30,6 +33,7 @@ class _Frame(_Model):
 
 
 class Hello(_Frame):
+    version: Literal[1, 2] = 1
     type: Literal["hello"] = "hello"
     computer_id: ComputerId
     agents: Annotated[list[AgentManifest], Field(min_length=1, max_length=100)]
@@ -38,6 +42,21 @@ class Hello(_Frame):
     def unique_aliases(self):
         if len({agent.alias for agent in self.agents}) != len(self.agents):
             raise ValueError("duplicate agent aliases")
+        if self.version == 1 and any(
+            a.kind is not None or a.default_cwd is not None or a.session_mode is not None
+            for a in self.agents
+        ):
+            raise ValueError("agent metadata requires version 2")
+        if self.version == 2:
+            from acp_gateway.connectors.policy import LocalPolicyError, _cwd
+
+            for agent in self.agents:
+                if agent.kind is None or agent.default_cwd is None:
+                    raise ValueError("version 2 requires local agent metadata")
+                try:
+                    _cwd(agent.default_cwd)
+                except LocalPolicyError:
+                    raise ValueError("invalid agent working directory") from None
         return self
 
 
@@ -107,7 +126,7 @@ def decode_frame(payload: str | bytes) -> ControlFrame:
         value = json.loads(encoded, object_pairs_hook=_unique_object)
         if not isinstance(value, dict) or type(value.get("version")) is not int:
             raise ProtocolError("invalid control frame")
-        if value["version"] != 1:
+        if value["version"] != 1 and not (value["version"] == 2 and value.get("type") == "hello"):
             raise ProtocolError("unsupported protocol version")
         if value.get("type") != "data" and len(encoded) > MAX_FRAME_BYTES:
             raise ProtocolError("control frame too large")
@@ -119,4 +138,4 @@ def decode_frame(payload: str | bytes) -> ControlFrame:
 
 
 def encode_frame(frame: ControlFrame) -> str:
-    return decode_frame(frame.model_dump_json()).model_dump_json()
+    return decode_frame(frame.model_dump_json(exclude_none=True)).model_dump_json(exclude_none=True)

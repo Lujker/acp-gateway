@@ -80,6 +80,7 @@ class ControlDispatcher:
         if not 1 <= max_connections <= 1024:
             raise ValueError("ingress connection limit must be between 1 and 1024")
         self.max_connections = max_connections
+        self.on_registration = None
         self.active: dict[str, Registration] = {}
         self._closing: set[asyncio.Task] = set()
         self.registry.subscribe(self._access_changed)
@@ -211,6 +212,8 @@ class ControlDispatcher:
             self.registry.connection_opened(
                 identity, registration.connection_id, [agent.alias for agent in frame.agents]
             )
+            if self.on_registration is not None:
+                await self.on_registration(registration)
             watcher = asyncio.create_task(self._watch_grant(registration))
             await connection.send(
                 encode_frame(
@@ -403,7 +406,10 @@ async def connect_control(
         ):
             raise ConnectorUnavailable("dispatcher registration interrupted") from None
         if isinstance(exc, (ConnectionClosed, ProtocolError)):
-            raise ConnectorAccessError("dispatcher rejected computer registration") from None
+            raise ConnectorAccessError(
+                "dispatcher rejected computer registration; verify computer ID/key "
+                "and upgrade the dispatcher before rc4 connectors"
+            ) from None
         raise
 
 

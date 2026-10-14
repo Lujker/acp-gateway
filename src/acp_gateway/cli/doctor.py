@@ -129,7 +129,20 @@ def collect(config_file=None, env_file=None, *, live=False, timeout=5):
             "acpgw setup; use distinct owner/MCP/agent keys",
         )
     if not cfg.settings.agents:
-        add("agents", "error", "No agent profiles configured", "acpgw agents configure")
+        if role == "server":
+            add(
+                "agents",
+                "info",
+                "Agents are discovered when enrolled computers connect",
+                "acpgw computers status",
+            )
+        else:
+            add(
+                "agents",
+                "error",
+                "No local agent profiles configured",
+                "acpgw setup --section agents",
+            )
     data = cfg.settings.resolved_data_dir()
     parent = data
     while not parent.exists() and parent != parent.parent:
@@ -205,16 +218,21 @@ def collect(config_file=None, env_file=None, *, live=False, timeout=5):
                 "acpgw config edit --section telegram; verify bot token and network",
             )
     if role == "connector":
+        stage = "connection"
         try:
             if not state.get("connection"):
                 raise ValueError("Server connection is not configured")
+            stage = "enrollment"
             launch = ConnectorLaunch(
                 **(state["connection"] | {"token_file": Path(state["connection"]["token_file"])})
             )
-            ConnectorLaunch.from_args(launch, cfg)
+            validate_url(launch.dispatcher_url)
+            if cfg.settings.agents:
+                ConnectorLaunch.from_args(launch, cfg)
             read_credential(launch.token_file)
             add("enrollment", "ok", f"Valid private key for computer {launch.computer_id}")
             if live:
+                stage = "dispatcher"
                 _dispatcher_probe(state["connection"], timeout)
                 add(
                     "dispatcher",
@@ -232,8 +250,12 @@ def collect(config_file=None, env_file=None, *, live=False, timeout=5):
             add(
                 "dispatcher",
                 "error",
-                "Invalid enrollment, unreachable dispatcher or TLS verification failed",
-                "acpgw connect; verify server URL, key file, certificate/pin and firewall",
+                {
+                    "connection": "Server connection is not configured yet",
+                    "enrollment": "Invalid server URL, private key or connector configuration",
+                    "dispatcher": "Dispatcher unreachable or TLS verification failed",
+                }[stage],
+                "acpgw setup --section connection; check the key, URL and server service",
             )
     else:
         if (
@@ -262,6 +284,13 @@ def collect(config_file=None, env_file=None, *, live=False, timeout=5):
                 ):
                     raise ValueError
                 add("gateway", "ok", "Owner API responds with authenticated health")
+            except httpx.ConnectError:
+                add(
+                    "gateway",
+                    "error",
+                    "Owner API is not reachable; the service may be stopped",
+                    "acpgw service status; acpgw start or service enable",
+                )
             except (OSError, ValueError, httpx.HTTPError):
                 add(
                     "gateway",
