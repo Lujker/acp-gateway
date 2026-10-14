@@ -3009,3 +3009,15 @@ Runtime/config/schema/кандидат этой документальной и�
 - **`P2.3/P3.3`** — persistent delivery и partial/final status готовы в
   development 0.2.0rc2.dev0; остаётся живая Telegram-приёмка. Frozen rc1 сохраняет
   прежнее поведение; подробности в docs/items/p3.3-reliability.ru.md.
+
+
+## 2026-10-14 — P2.3: компьютеры, задачи и навигация Telegram
+
+По выбору владельца реализован development dashboard: компьютеры с раздельной
+диагностикой соединения/ACP, chat-scoped история и карточки задач, переходы
+результат/доставка независимо от выбранного агента, редактирование меню на месте.
+Общая metadata history добавлена в core/storage и owner API. Ownership, cursor
+pagination, stale buttons, поздние ответы, Bot API failures и сохранность ответов
+проверяются автоматически; факты и живая очередь — в [журнале UI](docs/items/telegram-ui.ru.md#следующая-итерация-dashboard--2026-10-14).
+Владелец запретил release: остаётся 0.2.0rc8.dev0, GitHub/PyPI не публиковались,
+production dispatcher и коннекторы не обновлялись.

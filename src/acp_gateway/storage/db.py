@@ -26,6 +26,7 @@ from acp_gateway.storage.records import (
     Conversation,
     Job,
     JobStatus,
+    JobSummary,
     SessionRecord,
     utcnow,
 )
@@ -353,6 +354,51 @@ class Store:
             (job_id,),
         ).fetchone()
         return self._job(row) if row else None
+
+    def job_history_cursor(self, job_id, channel, key, agent=None):
+        row = self._conn.execute(
+            "SELECT j.created_at, j.id, s.agent FROM jobs j "
+            "JOIN sessions s ON s.id=j.session_id "
+            "WHERE j.id=? AND s.channel=? AND s.conversation_key=?",
+            (job_id, channel, key),
+        ).fetchone()
+        if row is None or (agent is not None and row["agent"] != agent):
+            return None
+        return (_dt(row["created_at"]), row["id"])
+
+    def job_history(self, channel, key, *, before=None, limit=11, active=False, agent=None):
+        if type(limit) is not int or not 1 <= limit <= 51:
+            raise ValueError("history limit must be between 1 and 51")
+        where = ["s.channel = ?", "s.conversation_key = ?"]
+        values = [channel, key]
+        if agent is not None:
+            where.append("s.agent = ?")
+            values.append(agent)
+        if active:
+            where.append("j.status = 'running'")
+        if before is not None:
+            stamp, identity = before
+            where.append("(j.created_at < ? OR (j.created_at = ? AND j.id < ?))")
+            values += [_ts(stamp), _ts(stamp), identity]
+        rows = self._conn.execute(
+            "SELECT j.id, j.session_id, j.status, j.created_at, j.finished_at, "  # noqa: S608 - fixed clauses
+            "s.channel, s.conversation_key, s.agent FROM jobs j "
+            "JOIN sessions s ON s.id = j.session_id WHERE "
+            + " AND ".join(where)
+            + " ORDER BY j.created_at DESC, j.id DESC LIMIT ?",
+            [*values, limit],
+        )
+        return [
+            JobSummary(
+                row["id"],
+                row["session_id"],
+                Conversation(row["channel"], row["conversation_key"], row["agent"]),
+                JobStatus(row["status"]),
+                _dt(row["created_at"]),
+                _dt(row["finished_at"]),
+            )
+            for row in rows
+        ]
 
     def interrupt_running_jobs(self) -> int:
         """Mark jobs left running by a previous process as interrupted."""

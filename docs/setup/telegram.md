@@ -5,6 +5,13 @@ Markdown rendering and dialogue execution modes. See
 [recovery and status configuration](telegram-recovery.md). Older rc5 installations
 retain their earlier plain-text interface until updated.
 
+Unreleased `0.2.0rc8.dev0` adds **Computers** and **Jobs** to `/menu`.
+Navigation buttons edit their panel; agent answers and approval cards remain
+separate messages. Job history and saved results belong to the requesting chat
+across its agents, including agents removed from configuration. Read-only panels
+use saved metadata and connector snapshots without submitting prompts or probing
+agents. See the [development journal and acceptance checklist](../items/telegram-ui.ru.md).
+
 Use a separate development bot created with BotFather, and put its token in
 `.env` as `TELEGRAM_BOT_TOKEN`. Never put the token in YAML or a command line.
 Enable the channel with an explicit numeric user allowlist:
@@ -51,6 +58,9 @@ is created automatically. Older direct/disabled bindings retain their refusal ru
 | `/new [ALIAS]` | Create and activate a new session |
 | `/sessions [PAGE]` | Dialogue cards for the selected agent, 10 per page; ▶ marks the active one |
 | `/switch ID` | Activate a session owned by this chat and selected agent |
+| `/computers [PAGE]`, `/computers id ID` | Development: enrolled PCs, link/ACP readiness and agent selection |
+| `/jobs [active] [before ID]` | Development: this chat's task history, 10 per page |
+| `/job JOB_ID` | Development: exact task, refresh, saved result and delivery |
 | `/status` | PC link, agent readiness and this chat's running jobs |
 | `/result JOB_ID` | Retrieve a saved answer or status owned by this chat |
 | `/delivery JOB_ID` | Development: inspect saved automatic delivery state |

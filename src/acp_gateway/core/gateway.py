@@ -817,6 +817,31 @@ class GatewayCore:
             raise JobNotFound(f"job {job_id} not found")
         return job
 
+    def owned_job(self, job_id: str, *, channel: str, key: str) -> Job:
+        job = self.job(job_id)
+        if job.conversation.channel != channel or job.conversation.key != key:
+            raise JobNotFound("This chat does not own that job.")
+        return job
+
+    def job_history(
+        self, channel: str, key: str, *, before=None, limit=10, active=False, agent=None
+    ) -> dict:
+        Conversation(channel, key, agent or "history")
+        if type(limit) is not int or not 1 <= limit <= 50 or type(active) is not bool:
+            raise GatewayError("Invalid job history options.")
+        cursor = None
+        if before is not None:
+            cursor = self.store.job_history_cursor(before, channel, key, agent)
+            if cursor is None:
+                raise JobNotFound("History cursor not found in this scope; refresh the list.")
+        rows = self.store.job_history(
+            channel, key, before=cursor, limit=limit + 1, active=active, agent=agent
+        )
+        return {
+            "jobs": rows[:limit],
+            "next_before": rows[limit - 1].id if len(rows) > limit else None,
+        }
+
     def running_jobs(self, conversation: Conversation | None = None) -> list[Job]:
         return [
             run.snapshot()

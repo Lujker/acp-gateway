@@ -4,7 +4,8 @@ import asyncio
 from datetime import UTC, datetime
 
 from aiogram.client.session.base import BaseSession
-from aiogram.methods import GetUpdates, SendMessage
+from aiogram.exceptions import TelegramBadRequest
+from aiogram.methods import EditMessageText, GetUpdates, SendMessage
 from aiogram.types import Chat, Message, User
 
 
@@ -14,6 +15,7 @@ class FakeTelegramSession(BaseSession):
         self.calls = []
         self.sent = []
         self.failures = []
+        self.edit_failures = []
         self.closed = False
 
     async def close(self):
@@ -37,6 +39,17 @@ class FakeTelegramSession(BaseSession):
             )
             self.sent.append(msg)
             return msg
+        if isinstance(method, EditMessageText):
+            if self.edit_failures:
+                raise self.edit_failures.pop(0)(method)
+            for index, old in enumerate(self.sent):
+                if old.message_id == method.message_id and old.chat.id == method.chat_id:
+                    message = old.model_copy(
+                        update={"text": method.text, "reply_markup": method.reply_markup}
+                    )
+                    self.sent[index] = message
+                    return message
+            raise TelegramBadRequest(method, "message to edit not found")
         return True
 
     async def stream_content(self, url, **kwargs):

@@ -327,6 +327,28 @@ def create_app(
     async def session_messages(session_id: int, body: PromptRequest):
         return await prompt(body, session_id)
 
+    @app.get("/jobs")
+    async def jobs(
+        thread: str = "default",
+        agent: str | None = None,
+        before: str | None = None,
+        active: bool = False,
+        limit: Annotated[int, Query(ge=1, le=50)] = 10,
+    ):
+        try:
+            return jsonable_encoder(
+                core.job_history(
+                    "cli",
+                    thread,
+                    before=before,
+                    limit=limit,
+                    active=active,
+                    agent=agent,
+                )
+            )
+        except ValueError:
+            raise HTTPException(422, "invalid history scope") from None
+
     @app.get("/jobs/{job_id}")
     async def job(job_id: str, wait: Wait = 0):
         return jsonable_encoder(await core.wait(job_id, wait))
