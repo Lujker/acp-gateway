@@ -775,3 +775,21 @@ skips (228.99s). Linux installed-wheel smoke update/failed-health/rollback/unins
 sitecustomize bootstrap: только Python внутри временного tools tree заменяет
 Scheduler prefix на уникальный ACP Gateway Smoke. Production package/задача не
 меняются; update/recovery child processes наследуют тот же test namespace.
+
+#### Итоговые проверки rc5 перед публикацией
+
+- Linux source: 1250 passed / 31 platform/opt-in skips; source.xml/source.log.
+- Native Windows Scheduler/service/ACL/Telegram: 98 passed, включая все 25
+  Scheduler cases. Расширенная logging выборка сначала выявила 6 слишком длинных
+  pytest IDs (Windows env limit) и два POSIX предположения (chmod/O_NOFOLLOW).
+  IDs ограничены; POSIX mode проверяется только на POSIX, O_NOFOLLOW test пропущен
+  на Windows (ACL покрываются отдельным suite). Финальный logging: Linux 40 passed,
+  Windows 39 passed / 1 expected skip. Рабочее приложение этими test fixes не менялось.
+- Linux и Windows installed-wheel smoke прошли update, negative SQL health recovery,
+  rollback, active guard и data-preserving uninstall; Windows installer/TTY тоже прошли.
+- Linux bundle/direct Git install, ACP/MCP/approval и delivery rollback fences прошли.
+- Финальный wheel побайтно совпадает с проверенным: SHA256
+  4c851f488a484d9a2d8ca8c22aba174f3e0d6eb91e28f7a38c17803aeb806f47.
+- Артефакты/evidence: dist/0.2.0rc5 и dist/rc5-verification. Публикация из чистого
+  checkout, без rebuild в Actions. Реальный update владельца и второй ПК остаются
+  следующими шагами приёмки; после connector restart нужен новый dialogue (cold resume вне MVP).
