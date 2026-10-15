@@ -17,6 +17,7 @@ DEPLOY_FILES = (
     "compose.yaml",
     "compose.direct.yaml",
     "compose.nginx.yaml",
+    "compose.proxy.yaml",
     "gateway.example.yaml",
     "computer.example.yaml",
     "nginx.conf.example",
