@@ -181,3 +181,8 @@ revision: старая карточка не должна затирать бо�
 `source-final.log`. Отдельные guards/usability — **24 passed**, 9.483s
 (`selection-guards.xml`). Ruff check/format, whitespace и secret guard прошли.
 Кодовая часть P2.4 завершена; PARTIAL сохранён только из-за живой приёмки.
+
+2026-10-15: по новому поручению владельца rc8 опубликован в GitHub/PyPI;
+[поставка и проверки обновления](p48-delivery-plan.ru.md).
+Предыдущий запрет относился к подготовке; текущая публикация явно разрешена.
+P2.4 остаётся PARTIAL до живой Telegram-приёмки на двух ПК.

@@ -1,7 +1,8 @@
 # Дорожная карта ACP Gateway
 
 > Статус: единый действующий план ACP Gateway.
-> Последняя сверка: 2026-10-15 — P2.4 реализован и source-tested без релиза; живая приёмка впереди.
+> Последняя сверка: 2026-10-15 — rc8 опубликован в GitHub/PyPI; 1358 source / 121 Windows tests passed;
+> registry rc7→rc8 проверен в Linux/Windows, живая Telegram-приёмка впереди.
 > Опубликован rc7; независимое ревью завершено, три находки исправлены в rc8.dev0,
 > добавлены будущие P4.15–P4.16 (remote update/host management); P2.4 (Telegram UX) возобновлён 2026-10-15;
 > README сокращён, docs получили оглавление. VPS/Telegram + два Windows/Hermes connectors,
@@ -236,8 +237,9 @@ MCP не имеет инструментов принятия решений.
 
 ### P2.3. Telegram
 
-**Статус:** PARTIAL — development dashboard реализован: компьютеры, история задач и навигация.
-rc8.dev0: 1337 source tests / 79 native Windows checks; живой dashboard ещё не принят.
+**Статус:** PARTIAL — dashboard/P2.4 опубликованы в rc8: компьютеры, история,
+диалоги/названия, approvals и progress. 1358 source / 121 native Windows checks;
+живой dashboard/P2.4 ещё не приняты.
 rc5 команды/results и работа подтверждений проверены владельцем на двух ПК.
 В опубликованном rc7 проверены названия новых Hermes chats и отдельный режим выполнения /mode.
 В rc6 реализованы inline panel, выбор agents/dialogues/models,
@@ -266,7 +268,7 @@ Done из исходного плана (раздел 20), выполненны�
 
 **Статус:** PARTIAL — 2026-10-15 кодовая часть реализована: диалоги/локальные
 названия, полный ввод и итоги approvals, фактический progress, возврат filter/cursor.
-1358 source tests passed / 35 skipped; остаток — живая приёмка на двух ПК. Владелец разрешил публикацию rc8 2026-10-15.
+1358 source tests passed / 35 skipped; остаток — живая приёмка на двух ПК. rc8 опубликован в GitHub/PyPI 2026-10-15.
 **Репозиторий:** `acp-gateway`.
 Осмысленные карточки диалогов/переименование, компактные и полные по смыслу
 подтверждения, фактический progress, единые подписи и возврат с сохранением страницы.
@@ -311,7 +313,7 @@ bounded SQLite retention (audit opt-in), admission limits всех канало�
 persistent Telegram result outbox с chunk ACK/restart/rollback fence.
 Остаток: живая e2e-приёмка Work Goose/Telegram; неопределённые отправки и
 agent prompts автоматически не переигрываются.
-В development rc8.dev0 закрыты три дефекта независимого ревью;
+В rc8 закрыты три дефекта независимого ревью;
 [отчёт/регрессии](docs/items/project-review-2026-10-14.ru.md).
 [Журнал и проверки](docs/items/p3.3-reliability.ru.md),
 [retention](docs/setup/retention.md), [delivery/status](docs/setup/telegram-recovery.md).
@@ -851,7 +853,7 @@ actor/target audit, deadlines и отсутствие replay неизвестн�
 Зафиксированы source/API и durable model state, оставшаяся очередь, ограничения Hermes,
 доказательства проверок и отдельный этап установки/приёмки.
 
-**Следующий этап:** обновление VPS/коннекторов до rc7 и живая приёмка Telegram UI (P2.3), затем
+**Следующий этап:** обновление VPS/коннекторов до rc8 и живая приёмка Telegram UI (P2.3), затем
 approvals и host lifecycle P4.8.5. Владелец подтвердил rc5 на VPS и двух Windows
 ПК, ответы и переключение маршрутов работают. P4.8.5 остаётся PARTIAL.
 Inline buttons/Markdown и `update --stable --with-services` опубликованы в rc6;
@@ -867,13 +869,13 @@ Goose/platform — P4.9, ownership — P4.10.
 Перечень ниже — незакрытые смежные задачи, не prerequisites всего трека.
 
 1. **P2.3/P4.8.5 — Telegram dashboard и приёмка.** Компьютеры/история задач/навигация
-   реализованы и автоматически проверены в rc8.dev0; нового релиза нет по решению владельца.
-   Дальше — живая приёмка dashboard после решения о поставке. Published rc7: кнопки, форматирование,
+   опубликованы в rc8 по разрешению владельца; registry upgrades проверены.
+   Дальше — обновление VPS/коннекторов и живая приёмка dashboard/P2.4. Published rc7: кнопки, форматирование,
    названия и режим выполнения; проверить на двух ПК. Затем approvals/изоляция и lifecycle;
    [UI](docs/items/telegram-ui.ru.md), [порядок проверок](docs/setup/p48-acceptance.md).
 2. **P2.4 — удобство Telegram (PARTIAL).** Кодовая часть готова и проверена;
-   после будущего решения о поставке — живая приёмка имён, approvals/progress,
-   параллельных диалогов и возврата по истории. Владелец разрешил публикацию rc8; [объём и приёмка](docs/items/telegram-usability.ru.md).
+   rc8 опубликован — далее живая приёмка имён, approvals/progress,
+   параллельных диалогов и возврата по истории; [объём и приёмка](docs/items/telegram-usability.ru.md).
 3. **P3.4/P3.5 — установка, настройка и контроль службы.** Основа Linux/WSL
    и самостоятельная Linux-сборка подтверждены чистым контейнерным CI;
    выпускать версии вручную из локальной сборки; Actions только по ручному запуску.

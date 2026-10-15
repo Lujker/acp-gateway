@@ -933,3 +933,41 @@ registry и SQLite sentinel сохранены. update --stable --with-services 
 через существующий manual Trusted Publishing workflow. Production VPS/коннекторы
 в этой сессии не обновляются. Живая Telegram/host lifecycle приёмка не объявляется
 завершённой публикацией пакета.
+
+
+### 2026-10-15 — rc8 опубликован, registry upgrade подтверждён
+
+GitHub prerelease: https://github.com/Lujker/acp-gateway/releases/tag/v0.2.0rc8.
+PyPI: https://pypi.org/project/acp-gateway/0.2.0rc8/.
+Tag v0.2.0rc8 → a97945d75bcb51eb8a1f32e5b34b1a5084f6fdaa.
+Manual workflow dry-run 38695689106 и Trusted Publishing 38695824018 — success.
+Скачанные GitHub assets прошли SHA256SUMS; PyPI JSON hashes wheel/sdist совпали
+с локальной сборкой:
+- wheel: 2ea303bdc782c5e05d49819006507effb2b500e03236e5d425cb19d145bb9e54;
+- sdist: 26995da089c713819915555cc7b01fc2c4914be25387148e60ae7db63247fbee.
+
+Финальный source rc8: **1358 passed / 35 skipped**, 210.963s.
+Native Windows установленный wheel: **121 passed**, 85.423s.
+Linux native wheel smoke прошёл: daemon, active guard, update, failed-health
+recovery, rollback и data-preserving uninstall. Ruff/check/format/secret guard
+и clean release build пройдены.
+
+Isolated registry rc7 → rc8 проверен в Linux и native Windows: version rc8,
+manager uv, source registry. YAML/env/setup/key bytes, enrollment registry и
+SQLite sentinel сохранены; update --stable --with-services вернул no-op.
+Linux PTY setup и пустой dispatcher также прошли.
+Evidence: dist/rc8-verification/{source,windows}.xml, linux-platform.log,
+{linux,windows}-{wheel,registry}-upgrade.log, *-upgrade.json, pypi-metadata.json
+и github/. Сразу после публикации Linux simple index ещё не видел rc8; следующий
+прогон уже установил rc8, но отдельный stable lookup получил TLS timeout.
+Повторный полный registry smoke прошёл; данные не потеряны.
+
+Production VPS/два Windows-коннектора владелец обновляет самостоятельно:
+сначала dispatcher, затем каждый connector. Основной путь — acpgw update
+--version 0.2.0rc8 --with-services с фактическими config/env путями; на Windows
+при необходимости --service-role connector и ожидание завершения handoff по
+update --status. Прямой uv tool install --upgrade --python 3.12
+"acp-gateway==0.2.0rc8" применяется только к остановленной установке.
+RC выбирается явно; --stable и uv tool upgrade с прежним exact pin не заменяют
+выбор rc8. Повторные setup/enrollment/смена computer ID не нужны.
+Живая приёмка Telegram/host lifecycle остаётся открытой.
