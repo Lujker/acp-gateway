@@ -46,13 +46,23 @@ class Panels:
                 bound = verb in {
                     "/new",
                     "/sessions",
+                    "/dialogue",
+                    "/rename_hint",
                     "/switch",
+                    "/open_dialogue",
                     "/model",
                     "/models",
                     "/mode",
                 }
-                selected = verb in {"/new", "/switch", "/model", "/models", "/mode"}
-                once = verb in {"/new", "/switch"} or command.startswith(
+                selected = verb in {
+                    "/new",
+                    "/switch",
+                    "/open_dialogue",
+                    "/model",
+                    "/models",
+                    "/mode",
+                }
+                once = verb in {"/new", "/switch", "/open_dialogue"} or command.startswith(
                     ("/agent ", "cancel:", "/model set ", "/model default ", "/mode set ")
                 )
                 token = secrets.token_hex(12)

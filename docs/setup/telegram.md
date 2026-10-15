@@ -57,7 +57,10 @@ is created automatically. Older direct/disabled bindings retain their refusal ru
 | `/agent`, `/agent ALIAS` | List available routes or select one, e.g. `home/goose` |
 | `/new [ALIAS]` | Create and activate a new session |
 | `/sessions [PAGE]` | Dialogue cards for the selected agent, 10 per page; ▶ marks the active one |
-| `/switch ID` | Activate a session owned by this chat and selected agent |
+| `/dialogue ID [PAGE]` | Development: preview an owned dialogue without changing selection; return to the supplied list page |
+| `/rename ID TITLE` | Development: persistent dispatcher display name; does not rename Hermes |
+| `/approval REQUEST_ID [PAGE]` | Development: complete pending request input by page |
+| `/switch ID [PAGE]` | Activate a session owned by this chat and selected agent |
 | `/computers [PAGE]`, `/computers id ID` | Development: enrolled PCs, link/ACP readiness and agent selection |
 | `/jobs [active] [before ID]` | Development: this chat's task history, 10 per page |
 | `/job JOB_ID` | Development: exact task, refresh, saved result and delivery |
@@ -135,18 +138,27 @@ ready. Optional inactive CLI approvers are omitted; MCP is described as serving,
 since its HTTP interface does not imply a persistent client connection.
 
 
-Dialogue cards show the saved title (or “Untitled dialogue”), last activity in UTC,
+Dialogue cards show the saved title (or “Без названия”), last activity in UTC,
 connection state when known, and the working folder on a separate line. `/new`
 and `/switch` confirm the dialogue ID, agent and folder. The list is scoped to
 this private chat and selected agent; `/sessions 2` opens the next page.
+
+In the development UI, a dialogue list button opens a preview without changing
+the selected dialogue or contacting the agent. The preview shows the saved title,
+agent, folder, last activity and whether messages will go to that dialogue.
+Use **Выбрать диалог** to select it explicitly. **Переименовать** explains the
+explicit `/rename ID TITLE` command; plain text continues to go to the agent. **← Диалоги** returns to the
+original page, including after selection. Text commands `/dialogue ID [PAGE]`
+and `/switch ID [PAGE]` offer the same actions; the default return page is 1.
+Invalid pages and dialogues outside this chat/agent are rejected before selection.
 
 
 ## Inline controls and formatted answers (rc6)
 
 `/start` or `/menu` opens buttons under the message: Agents, Dialogues, New
 dialogue, Status, Model, Approvals and Help. Agent and dialogue lists offer
-selection buttons and dialogue pages. Text commands remain available. No reply
-keyboard is installed and button labels are never submitted as prompts.
+dialogue previews, explicit selection buttons and dialogue pages. Text commands
+remain available. No reply keyboard is installed and button labels are never submitted as prompts.
 
 Each control is bound to the private user/chat and exact message. Agent/dialogue
 controls also capture the selected route and revision. Changing selection makes
@@ -206,3 +218,37 @@ returns an allow decision. Unsupported host operations remain unsupported.
 New Hermes dialogues no longer receive the pinned title `Dispatcher`: Hermes can
 name them normally. The gateway dialogue list uses a short first-message summary.
 Existing Hermes titles are retained; rename them in Desktop if desired.
+
+
+## Development usability improvements (unreleased)
+
+Dispatcher dialogue names persist separately from agent titles. An explicit
+`/rename ID TITLE` accepts 1–120 printable characters, checks this chat and
+selected agent, and leaves dialogue selection unchanged. Later agent title
+updates remain stored as the host title; the dispatcher display name wins in
+its own views. Hermes Desktop titles are not synchronized.
+
+Approval cards show the originating channel, agent/PC, job, dialogue and UTC
+deadline. A shortened input is clearly marked; **Полный ввод** opens the complete
+redacted JSON in numbered pages. Decisions remain once-only and bound to the
+private user, chat, message and request, independent of the currently selected
+agent. Every displayed copy gets the recorded outcome and loses its controls
+after resolution or expiry. If an edit fails, the durable decision remains
+authoritative; callbacks refuse already settled requests. Job links are offered
+only for approvals originating in the same Telegram chat.
+
+The advisory working card shows the actual job state, route, dialogue, elapsed
+time and approval wait. It contains only an outward answer preview, no internal
+reasoning or raw tool stream. Each task has its own controls. Status edits use
+the existing interval and retry-after backoff in a separate task; durable result
+delivery and approval processing stay independent. Cancellation is offered only
+when supported, and the UI shows the actual state returned by the core.
+
+History → job → delivery → job → history preserves the active filter and cursor.
+**Выбрать диалог AGENT · #ID** explicitly selects the owned job's exact route and
+dialogue without an ACP prompt. Retired agents keep their saved results but do
+not offer a dialogue selection action.
+
+These changes have not been released or installed on production. Live acceptance
+must check concurrent dialogues on both PCs, allow/deny/expiry, names after
+reconnect, and status/result delivery independently.

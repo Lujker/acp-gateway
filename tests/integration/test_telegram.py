@@ -266,9 +266,9 @@ async def test_chat_approval_stays_private_to_its_owner(telegram):
     assert {chat for chat, _ in channel._buttons} == {OTHER}
     assert not any(approval_message(m) and m.chat.id == OWNER for m in session.sent)
     await feed(channel, 5, "/approvals", user=OWNER)
-    assert session.sent[-1].text == "No pending approvals."
+    assert session.sent[-1].text == "Ожидающих подтверждений нет."
     button_message = next(m for m in session.sent if approval_message(m) and m.chat.id == OTHER)
-    assert "From: this chat" in button_message.text
+    assert "Источник: этот чат" in button_message.text
     await click(
         channel,
         6,
@@ -300,14 +300,16 @@ async def test_blocked_chat_does_not_starve_other_approvers(telegram):
     await eventually(lambda: bool(channel._buttons))
     assert {chat for chat, _ in channel._buttons} == {OTHER}
     button_message = next(m for m in session.sent if approval_message(m))
-    assert "From: mcp:test" in button_message.text
+    assert "Источник: mcp:test" in button_message.text
     await core.cancel(job.conversation)
 
 
 async def test_secret_is_redacted_before_truncation_and_blank_text_is_sent(telegram):
     from acp_gateway.log import register_secret
 
-    _, channel, session, _ = telegram
+    core, channel, session, _ = telegram
+    record = core.store.add_session(Conversation("mcp", "t", "work"), "redaction", "/work")
+    core.store.add_job("job", record.id)
     leaked = "S3CRETVALUE-" + "abcdefghijklmnop"
     register_secret(leaked)
     approval = type(
@@ -324,6 +326,7 @@ async def test_secret_is_redacted_before_truncation_and_blank_text_is_sent(teleg
                 {
                     "title": "x" * 1760 + leaked,
                     "raw_input": {},
+                    "kind": None,
                     "options": [
                         type("O", (), {"kind": "allow_once", "name": "Allow", "option_id": "o"})()
                     ],
@@ -524,16 +527,16 @@ async def test_dialogue_cards_titles_selection_pagination_and_private_scope(tele
     core.store.set_session_title(foreign.id, "PRIVATE OTHER CHAT")
     await channel._command(OWNER, "/sessions")
     text = "\n".join(m.text for m in session.sent)
-    assert "Dialogues · work" in text and "Page 1/2" in text
+    assert "Диалоги · work" in text and "Страница 1/2" in text
     assert f"▶ #{records[-1].id} — Research &lt;draft&gt; Next line" in text
-    assert "Last used:" in text and "UTC" in text and "Folder: C:" in text
+    assert "Последняя активность:" in text and "UTC" in text and "Папка: C:" in text
     assert "PRIVATE OTHER CHAT" not in text and "/private" not in text
-    assert text.count("Folder:") == 10
+    assert text.count("Папка:") == 10
     session.sent.clear()
     await channel._command(OWNER, "/sessions 2")
     text = "\n".join(m.text for m in session.sent)
-    assert "Page 2/2" in text and text.count("Folder:") == 2
-    assert "Untitled dialogue" in text and "Switch: /switch ID" in text
+    assert "Страница 2/2" in text and text.count("Папка:") == 2
+    assert "Без названия" in text and "Выбрать: /switch ID" in text
     with pytest.raises(GatewayError, match="Choose a page"):
         await channel._command(OWNER, "/sessions 3")
     assert not server.log
@@ -543,8 +546,9 @@ async def test_new_and_selected_dialogue_include_agent_and_folder(telegram):
     _, channel, session, _ = telegram
     await channel._command(OWNER, "/new")
     text = session.sent[-1].text
-    assert "New dialogue #" in text and "Agent: work" in text and "Folder: /work" in text
+    assert "Новый диалог #" in text and "Агент / ПК: work" in text and "Папка: /work" in text
     dialogue_id = text.split("#", 1)[1].splitlines()[0]
     await channel._command(OWNER, f"/switch {dialogue_id}")
-    assert f"Selected dialogue #{dialogue_id}" in session.sent[-1].text
-    assert "Agent: work" in session.sent[-1].text and "Folder: /work" in session.sent[-1].text
+    assert f"Диалог #{dialogue_id}" in session.sent[-1].text
+    assert "Выбран для сообщений" in session.sent[-1].text
+    assert "Агент / ПК: work" in session.sent[-1].text and "Папка: /work" in session.sent[-1].text

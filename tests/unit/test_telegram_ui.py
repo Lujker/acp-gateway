@@ -5,7 +5,15 @@ from acp_gateway.core import GatewayError
 
 
 @pytest.mark.parametrize(
-    "command", ["/new", "/switch 1", "/agent home2/hermes", "cancel:job", "/mode set auto 1 2"]
+    "command",
+    [
+        "/new",
+        "/switch 1",
+        "/open_dialogue job",
+        "/agent home2/hermes",
+        "cancel:job",
+        "/mode set auto 1 2",
+    ],
 )
 def test_mutating_controls_are_bound_to_message_and_one_shot(command):
     panels = Panels()
@@ -24,9 +32,10 @@ def test_mutating_controls_are_bound_to_message_and_one_shot(command):
 @pytest.mark.parametrize(
     "context", [("home2/hermes", 1, 2), ("home/hermes", 3, 2), ("home/hermes", 1, 4)]
 )
-def test_stale_mutating_controls_refuse_route_and_dialogue_changes(context):
+@pytest.mark.parametrize("command", ["/new", "/open_dialogue job"])
+def test_stale_mutating_controls_refuse_route_and_dialogue_changes(context, command):
     panels = Panels()
-    markup, tokens = panels.create(10, [[("New", "/new")]], ("home/hermes", 1, 2))
+    markup, tokens = panels.create(10, [[("New", command)]], ("home/hermes", 1, 2))
     panels.bind(tokens, 100)
     with pytest.raises(GatewayError):
         panels.take(markup.inline_keyboard[0][0].callback_data, 10, 100, context)
@@ -71,3 +80,12 @@ def test_editor_revisions_and_cache_eviction_suppress_stale_results():
     assert not panels.current_edit(current)
     panels.clear()
     assert not panels.editors
+
+
+@pytest.mark.parametrize("context", [("other", 1, 2), ("home/hermes", 3, 2)])
+def test_dialogue_preview_is_bound_to_the_original_route(context):
+    panels = Panels()
+    markup, tokens = panels.create(10, [[("Preview", "/dialogue 1 2")]], ("home/hermes", 1, 2))
+    panels.bind(tokens, 100)
+    with pytest.raises(GatewayError):
+        panels.take(markup.inline_keyboard[0][0].callback_data, 10, 100, context)

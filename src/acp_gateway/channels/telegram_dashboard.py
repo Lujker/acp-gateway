@@ -27,15 +27,7 @@ def state(job):
 class Dashboard:
     async def _dashboard(self, chat, command, argument):
         if command == "/jobs":
-            parts = argument.split()
-            active = bool(parts and parts[0] == "active")
-            if active:
-                parts.pop(0)
-            before = None
-            if parts:
-                if len(parts) != 2 or parts[0] != "before":
-                    raise GatewayError("Используйте /jobs [active] [before JOB_ID].")
-                before = parts[1]
+            active, before = self._history_arguments(argument)
             result = self.core.job_history("telegram", str(chat), active=active, before=before)
             lines = ["Задачи этого чата" + (" · активные" if active else " · последние")]
             rows = []
@@ -48,7 +40,7 @@ class Dashboard:
                     [
                         (
                             f"{state(job)} · {label(job.conversation.agent, 25)} · {job.id[:8]}",
-                            f"/job {job.id}",
+                            f"/job {job.id} {argument}".rstrip(),
                         )
                     ]
                 )
@@ -66,11 +58,21 @@ class Dashboard:
             ]
             await self._panel(chat, "\n\n".join(lines), rows)
         elif command == "/job":
-            await self._job_panel(chat, argument)
+            job_id, _, history = argument.partition(" ")
+            await self._job_panel(chat, job_id, history=history)
+        elif command == "/open_dialogue":
+            job = self.core.owned_job(argument, channel="telegram", key=str(chat))
+            self.core.switch_dialogue(job.conversation, job.session_id)
+            self._set_route(chat, job.conversation.agent)
+            await self._command(chat, f"/dialogue {job.session_id}")
         elif command == "/computers":
             await self._computers_panel(chat, argument)
         elif command in {"/result", "/delivery"}:
-            job = self.core.owned_job(argument, channel="telegram", key=str(chat))
+            job_id, _, history = (
+                argument.partition(" ") if command == "/delivery" else (argument, "", "")
+            )
+            self._history_arguments(history)
+            job = self.core.owned_job(job_id, channel="telegram", key=str(chat))
             if command == "/result":
                 if not self._queue_delivery(chat, job.answer or job.error or state(job), job):
                     raise GatewayError("Доставка занята. Повторите позже.")
@@ -83,13 +85,27 @@ class Dashboard:
                     else "Записи автоматической доставки нет."
                 )
                 await self._panel(
-                    chat, text, [[("← Задача", f"/job {job.id}")], *self._back_rows()]
+                    chat,
+                    text,
+                    [[("← Задача", f"/job {job.id} {history}".rstrip())], *self._back_rows()],
                 )
         else:
             return False
         return True
 
-    async def _job_panel(self, chat, job_id):
+    @staticmethod
+    def _history_arguments(argument):
+        parts = argument.split()
+        active = bool(parts and parts[0] == "active")
+        if active:
+            parts.pop(0)
+        if parts and (len(parts) != 2 or parts[0] != "before"):
+            raise GatewayError("Используйте /jobs [active] [before JOB_ID].")
+        return active, parts[1] if parts else None
+
+    async def _job_panel(self, chat, job_id, *, history=""):
+        self._history_arguments(history)
+        suffix = f" {history}" if history else ""
         job = self.core.owned_job(job_id, channel="telegram", key=str(chat))
         lines = [
             f"Задача {job.id}",
@@ -103,16 +119,26 @@ class Dashboard:
         if job.error:
             lines.append(f"Ошибка: {label(job.error, 300)}")
         rows = [
-            [("↻ Обновить", f"/job {job.id}"), ("📄 Результат", f"result:{job.id}")],
-            [("Доставка", f"/delivery {job.id}")],
+            [("↻ Обновить", f"/job {job.id}{suffix}"), ("📄 Результат", f"result:{job.id}")],
+            [("Доставка", f"/delivery {job.id}{suffix}")],
         ]
         try:
             client = self.core.agent(job.conversation.agent)
         except GatewayError:
             client = None
+        if client:
+            rows.append(
+                [
+                    (
+                        f"💬 Выбрать диалог {label(job.conversation.agent, 30)} "
+                        f"· #{job.session_id}",
+                        f"/open_dialogue {job.id}",
+                    )
+                ]
+            )
         if not job.status.finished and client and getattr(client, "supports_cancel", True):
             rows.append([("⏹ Остановить задачу", f"cancel:{job.id}")])
-        rows += [[("← Задачи", "/jobs")], *self._back_rows()]
+        rows += [[("← Задачи", f"/jobs{suffix}")], *self._back_rows()]
         await self._panel(chat, "\n".join(lines), rows)
 
     async def _computers_panel(self, chat, argument):

@@ -24,8 +24,6 @@ from aiogram.types import (
     BotCommand,
     BotCommandScopeAllPrivateChats,
     CallbackQuery,
-    InlineKeyboardButton,
-    InlineKeyboardMarkup,
     LinkPreviewOptions,
     MenuButtonCommands,
     Message,
@@ -37,11 +35,12 @@ from acp_gateway.channels.base import Channel
 from acp_gateway.channels.telegram_dashboard import Dashboard
 from acp_gateway.channels.telegram_format import FORMAT_VERSION, answer_chunks, plain_html
 from acp_gateway.channels.telegram_ui import PANEL_CONTEXT, Panels
+from acp_gateway.channels.telegram_work import WorkCards
 from acp_gateway.config import TelegramSettings
 from acp_gateway.connectors.diagnostics import computer_diagnostics
 from acp_gateway.core import GatewayError
 from acp_gateway.core.bus import ApprovalRequested, ApprovalResolved, JobFinished
-from acp_gateway.log import get_logger, redact_text, redact_value, register_secret
+from acp_gateway.log import get_logger, redact_text, register_secret
 from acp_gateway.storage import Conversation, Job
 
 HELP = (
@@ -50,6 +49,8 @@ HELP = (
     "/menu — control panel\n/start, /help — help\n"
     "/agent — list agents\n/agent ALIAS — select agent\n"
     "/new [ALIAS] — new session\n/sessions [PAGE] — list dialogues\n"
+    "/dialogue ID [PAGE] — preview a dialogue\n"
+    "/rename ID TITLE — dispatcher display name (Hermes title unchanged)\n"
     "/switch ID — activate a session\n/status — connections and jobs\n"
     "/result JOB_ID — saved result\n/delivery JOB_ID — automatic delivery state\n"
     "/stop — cancel this chat's jobs\n"
@@ -95,22 +96,22 @@ def _label(text, limit=120):
 
 def _session_state(session):
     return {
-        "attached": "connected",
-        "detached": "detached",
-        "restore-unavailable": "cannot resume after restart",
-        "unknown": "not checked",
-        "busy": "running a task",
-        "uncertain": "previous operation needs checking",
+        "attached": "подключён",
+        "detached": "отсоединён",
+        "restore-unavailable": "нельзя восстановить после перезапуска",
+        "unknown": "не проверен",
+        "busy": "выполняет задачу",
+        "uncertain": "предыдущая операция требует проверки",
     }.get(session.availability, session.availability)
 
 
 def _dialogue_summary(session):
-    lines = [f"Agent: {session.conversation.agent}"]
+    lines = [f"Агент / ПК: {_label(session.conversation.agent)}"]
     if session.title:
-        lines.append(f"Title: {_label(session.title)}")
-    lines.append(f"Folder: {_label(session.cwd, 500)}")
+        lines.append(f"Название: {_label(session.title)}")
+    lines.append(f"Папка: {_label(session.cwd, 500)}")
     if session.binding or session.availability == "restore-unavailable":
-        lines.append(f"State: {_session_state(session)}")
+        lines.append(f"Состояние: {_session_state(session)}")
     return "\n".join(lines)
 
 
@@ -131,7 +132,7 @@ class _Updates(BaseMiddleware):
         return await handler(event, data)
 
 
-class TelegramChannel(Dashboard, Channel):
+class TelegramChannel(WorkCards, Dashboard, Channel):
     name = "telegram"
     can_approve = True
 
@@ -152,6 +153,7 @@ class TelegramChannel(Dashboard, Channel):
         self._chats: set[int] = set()
         self._panels = Panels()
         self._buttons: dict[tuple[int, int], tuple[str, tuple[str, ...]]] = {}
+        self._approval_texts: dict[tuple[int, int], str] = {}
         self._recent: dict[int, deque[float]] = {}
         self._throttled: dict[int, float] = {}
         self._tasks: list[asyncio.Task] = []
@@ -313,6 +315,7 @@ class TelegramChannel(Dashboard, Channel):
         if self._subscription is not None:
             self._subscription.close()
         self._buttons.clear()
+        self._approval_texts.clear()
         self._panels.clear()
         self._statuses.clear()
         while not self._deliveries.empty():
@@ -410,26 +413,12 @@ class TelegramChannel(Dashboard, Channel):
                     continue
                 try:
                     job = self.core.job(job_id)
-                    if job.status.finished:
-                        text = f"Job {job.id}: {job.status.value}. Use /result {job.id}."
-                    else:
-                        preview = redact_text(job.answer)[:1500]
-                        text = f"Working: {job.id}\nUse /stop to cancel."
-                        if preview:
-                            text += "\n" + preview
+                    text = self._work_text(job)
                     rendered = html.escape(text, quote=False)
-                    if not job.status.finished and preview:
-                        header = f"Working: {job.id}\nUse /stop to cancel."
-                        rendered = (
-                            html.escape(header, quote=False)
-                            + "\n"
-                            + answer_chunks(preview, already_redacted=True)[0]
-                        )
                     if text != previous:
                         markup, tokens = self._panels.create(
                             chat, self._job_rows(job), self._ui_context(chat)
                         )
-                        self._panels.bind(tokens, message_id)
                         await self.bot.edit_message_text(
                             chat_id=chat,
                             message_id=message_id,
@@ -438,6 +427,8 @@ class TelegramChannel(Dashboard, Channel):
                             reply_markup=markup,
                             link_preview_options=LinkPreviewOptions(is_disabled=True),
                         )
+                        self._panels.retire_message(chat, message_id)
+                        self._panels.bind(tokens, message_id)
                     if job.status.finished:
                         self._statuses.pop(job_id, None)
                     else:
@@ -802,6 +793,9 @@ class TelegramChannel(Dashboard, Channel):
         command, _, argument = text.partition(" ")
         command = command.split("@", 1)[0]
         argument = argument.strip()
+        if command == "/approval":
+            await self._approval_details(chat, argument)
+            return
         if await self._dashboard(chat, command, argument):
             return
         if command in {"/start", "/menu"}:
@@ -857,7 +851,7 @@ class TelegramChannel(Dashboard, Channel):
             for approval in pending:
                 await self._approval(chat, approval)
             if not pending:
-                await self._panel(chat, "No pending approvals.", self._back_rows())
+                await self._panel(chat, "Ожидающих подтверждений нет.", self._back_rows())
             return
         conv = (
             Conversation(self.name, str(chat), argument)
@@ -1028,8 +1022,8 @@ class TelegramChannel(Dashboard, Channel):
                 self._set_route(chat, conv.agent)
             await self._panel(
                 chat,
-                f"New dialogue #{session.id}\n{_dialogue_summary(session)}\n\n"
-                "Send a message to begin.",
+                f"Новый диалог #{session.id}\n{_dialogue_summary(session)}\n\n"
+                "Отправьте сообщение, чтобы начать.",
                 [[("💬 Диалоги", "/sessions")], *self._back_rows()],
             )
         elif command == "/sessions":
@@ -1043,29 +1037,29 @@ class TelegramChannel(Dashboard, Channel):
             if not 1 <= page <= pages:
                 raise GatewayError(f"Choose a page from 1 to {pages}: /sessions PAGE.")
             active = self.core.active_session(conv)
-            lines = [f"Dialogues · {conv.agent}"]
+            lines = [f"Диалоги · {_label(conv.agent)}"]
             if not sessions:
-                lines += ["", "No dialogues yet. Create one with /new."]
+                lines += ["", "Диалогов пока нет. Создайте: /new."]
             else:
                 start = (page - 1) * _SESSION_PAGE_SIZE
                 for session in sessions[start : start + _SESSION_PAGE_SIZE]:
                     selected = bool(active and session.id == active.id)
                     marker = "▶" if selected else "•"
-                    title = _label(session.title) if session.title else "Untitled dialogue"
+                    title = _label(session.title) if session.title else "Без названия"
                     lines += ["", f"{marker} #{session.id} — {title}"]
                     if session.binding or session.availability == "restore-unavailable":
-                        lines.append(f"State: {_session_state(session)}")
-                    lines.append(f"Last used: {session.last_used_at:%Y-%m-%d %H:%M} UTC")
-                    lines.append(f"Folder: {_label(session.cwd, 500)}")
-                lines += ["", "▶ Selected dialogue", "Switch: /switch ID · New: /new"]
+                        lines.append(f"Состояние: {_session_state(session)}")
+                    lines.append(f"Последняя активность: {session.last_used_at:%Y-%m-%d %H:%M} UTC")
+                    lines.append(f"Папка: {_label(session.cwd, 500)}")
+                lines += ["", "▶ Выбранный диалог", "Выбрать: /switch ID · Создать: /new"]
                 if pages > 1:
-                    lines.append(f"Page {page}/{pages} · Open page: /sessions PAGE")
+                    lines.append(f"Страница {page}/{pages} · Открыть: /sessions PAGE")
             rows = [
                 [
                     (
                         f"{'▶ ' if active and item.id == active.id else ''}#{item.id} · "
                         f"{_label(item.title or 'Без названия', 35)}",
-                        f"/switch {item.id}",
+                        f"/dialogue {item.id} {page}",
                     )
                 ]
                 for item in sessions[(page - 1) * _SESSION_PAGE_SIZE : page * _SESSION_PAGE_SIZE]
@@ -1079,14 +1073,67 @@ class TelegramChannel(Dashboard, Channel):
                 rows.append(navigation)
             rows += [[("➕ Новый диалог", "/new")], *self._back_rows()]
             await self._panel(chat, "\n".join(lines), rows)
-        elif command == "/switch":
-            if not argument.isascii() or not argument.isdecimal():
-                raise GatewayError("Use /switch SESSION_ID.")
-            session = self.core.switch_dialogue(conv, int(argument))
+        elif command in {"/dialogue", "/switch", "/rename_hint"}:
+            parts = argument.split()
+            if not 1 <= len(parts) <= 2 or any(
+                not part.isascii() or not part.isdecimal() or len(part) > 10 for part in parts
+            ):
+                raise GatewayError(f"Use {command} SESSION_ID [PAGE].")
+            page = int(parts[1]) if len(parts) == 2 else 1
+            sessions = self.core.sessions(conv)
+            pages = max(1, (len(sessions) + _SESSION_PAGE_SIZE - 1) // _SESSION_PAGE_SIZE)
+            if not 1 <= page <= pages:
+                raise GatewayError(f"Choose a page from 1 to {pages}: /sessions PAGE.")
+            session = next((item for item in sessions if item.id == int(parts[0])), None)
+            if session is None:
+                raise GatewayError("This conversation does not own that dialogue.")
+            if command == "/rename_hint":
+                await self._panel(
+                    chat,
+                    f"Название диспетчера · #{session.id}\n"
+                    f"Сейчас: {_label(session.title or 'Без названия')}\n\n"
+                    "Чтобы переименовать, отправьте команду:\n"
+                    f"/rename {session.id} НОВОЕ НАЗВАНИЕ\n"
+                    "Название Hermes не меняется. Обычный текст отправляется агенту.",
+                    [[("← Диалог", f"/dialogue {session.id} {page}")], *self._back_rows()],
+                )
+                return
+            if command == "/switch":
+                session = self.core.switch_dialogue(conv, session.id)
+            active = self.core.active_session(conv)
+            selected = bool(active and active.id == session.id)
+            lines = [
+                f"Диалог #{session.id} · {_label(session.title or 'Без названия')}",
+                "▶ Выбран для сообщений" if selected else "Не выбран для сообщений",
+                _dialogue_summary(session),
+                f"Последняя активность: {session.last_used_at:%Y-%m-%d %H:%M} UTC",
+            ]
+            rows = []
+            if not selected:
+                rows.append([("▶ Выбрать диалог", f"/switch {session.id} {page}")])
+            else:
+                lines += ["", "Отправьте сообщение, чтобы продолжить этот диалог."]
+            lines += [
+                "",
+                f"Название диспетчера: /rename {session.id} НОВОЕ НАЗВАНИЕ",
+                "Название Hermes не меняется.",
+            ]
+            rows += [
+                [("✏ Переименовать", f"/rename_hint {session.id} {page}")],
+                [("← Диалоги", f"/sessions {page}")],
+                *self._back_rows(),
+            ]
+            await self._panel(chat, "\n".join(lines), rows)
+        elif command == "/rename":
+            identifier, _, title = argument.partition(" ")
+            if not identifier.isascii() or not identifier.isdecimal() or len(identifier) > 19:
+                raise GatewayError("Use /rename ID TITLE.")
+            session = self.core.rename_dialogue(conv, int(identifier), title)
             await self._panel(
                 chat,
-                f"Selected dialogue #{session.id}\n{_dialogue_summary(session)}",
-                [[("💬 Диалоги", "/sessions")], *self._back_rows()],
+                f"Название диспетчера сохранено: #{session.id} · {_label(session.title)}\n"
+                "Название Hermes не менялось.",
+                [[("💬 Открыть диалог", f"/dialogue {session.id}")], *self._back_rows()],
             )
         elif command == "/stop":
             jobs = await self.core.cancel(conv)
@@ -1095,7 +1142,7 @@ class TelegramChannel(Dashboard, Channel):
             await self._send(chat, "Unknown command. Use /help.")
         else:
             job = await self.core.submit_selected(conv, text, delivery_namespace=self.namespace)
-            status_text = f"Working: {job.id}\nUse /stop to cancel."
+            status_text = self._work_text(job)
             message = await self._panel(chat, status_text, self._job_rows(job), editable=False)
             if self.settings.status_enabled:
                 if len(self._statuses) >= 32:
@@ -1109,41 +1156,6 @@ class TelegramChannel(Dashboard, Channel):
             chat = int(conversation.key)
             return (chat,) if chat in self._chats else ()
         return tuple(self._chats)
-
-    async def _approval(self, chat, approval):
-        options = tuple(
-            o for o in approval.request.options if o.kind in {"allow_once", "reject_once"}
-        )
-        if not options:
-            return
-        markup = InlineKeyboardMarkup(
-            inline_keyboard=[
-                [
-                    InlineKeyboardButton(
-                        text=redact_text(o.name)[:50], callback_data=f"a:{approval.id}:{i}"
-                    )
-                    for i, o in enumerate(options)
-                ]
-            ]
-        )
-        conversation = approval.conversation
-        origin = (
-            "this chat"
-            if conversation.channel == self.name
-            else f"{conversation.channel}:{conversation.key}"
-        )
-        # Redact before truncating: a cut-off secret no longer matches the registry.
-        body = redact_text(
-            f"Approval: {conversation.agent}\nFrom: {origin}\nJob: {approval.job_id}\n"
-            f"{approval.request.title}\n"
-            f"{json.dumps(redact_value(approval.request.raw_input), ensure_ascii=False)}\n"
-            f"Expires: {approval.expires_at.isoformat()}"
-        )[:1800]
-        message = await self._send(chat, body, markup=markup)
-        self._buttons[(chat, message.message_id)] = (
-            approval.id,
-            tuple(o.option_id for o in options),
-        )
 
     async def _callback(self, query: CallbackQuery):
         message = query.message
@@ -1160,7 +1172,9 @@ class TelegramChannel(Dashboard, Channel):
                 or len(parts) != 3
                 or parts[0] != "a"
                 or parts[1] != binding[0]
-                or not parts[2].isdigit()
+                or not parts[2].isascii()
+                or not parts[2].isdecimal()
+                or len(parts[2]) > 3
             ):
                 raise GatewayError("Approval is stale or does not belong to this message.")
             index = int(parts[2])
@@ -1172,7 +1186,7 @@ class TelegramChannel(Dashboard, Channel):
                 channel=self.name,
                 actor=f"telegram:{query.from_user.id}",
             )
-            await self.bot.answer_callback_query(query.id, text="Decision recorded.")
+            await self.bot.answer_callback_query(query.id, text="Решение записано.")
         except GatewayError as exc:
             await self.bot.answer_callback_query(
                 query.id, text=redact_text(str(exc))[:180], show_alert=True
@@ -1205,10 +1219,7 @@ class TelegramChannel(Dashboard, Channel):
                     for key, binding in list(self._buttons.items()):
                         if binding[0] == event.approval_id:
                             del self._buttons[key]
-                            with contextlib.suppress(TelegramAPIError):
-                                await self.bot.edit_message_reply_markup(
-                                    chat_id=key[0], message_id=key[1], reply_markup=None
-                                )
+                            await self._settle_approval_card(key, event.outcome)
             except Exception:
                 self._log.exception(
                     "Telegram event could not be delivered; use /result or /approvals"
