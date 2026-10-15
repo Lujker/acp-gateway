@@ -4,8 +4,9 @@
 
 Use a source checkout for development. For deployment, use the
 [uv/PyPI installation guide](setup/self-install-pypi.ru.md).
-The current development version is `0.2.0rc8.dev0`; published rc7 artifacts
-are separate and are not rebuilt when development changes.
+The source version is `0.2.0`. Changes on a working branch are separate from
+published artifacts; see the [current Telegram journal](items/telegram-recovery.ru.md).
+Development does not rebuild or publish an installed version.
 
 ## Checkout and environment
 

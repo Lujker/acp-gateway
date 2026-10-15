@@ -158,7 +158,7 @@ async def test_private_job_session_ownership_and_rate_limit(telegram):
     assert "does not own" in session.sent[-1].text
     for number in range(3, 9):
         await feed(channel, number, "/help")
-    assert sum("Too many" in m.text for m in session.sent) == 1
+    assert sum("Слишком много" in m.text for m in session.sent) == 1
     assert core.active_session(Conversation("telegram", str(OWNER), "work")) is None
 
 
@@ -371,7 +371,7 @@ async def test_agent_command_lists_available_routes_without_selection(telegram):
     _, channel, session, _ = telegram
     await feed(channel, 1, "/agent")
     assert "work — work" in session.sent[-1].text
-    assert "Select: /agent ALIAS" in session.sent[-1].text
+    assert "Выбрать: /agent ALIAS" in session.sent[-1].text
 
 
 async def test_message_without_selected_dialogue_requires_explicit_new(telegram):
@@ -537,7 +537,7 @@ async def test_dialogue_cards_titles_selection_pagination_and_private_scope(tele
     text = "\n".join(m.text for m in session.sent)
     assert "Страница 2/2" in text and text.count("Папка:") == 2
     assert "Без названия" in text and "Выбрать: /switch ID" in text
-    with pytest.raises(GatewayError, match="Choose a page"):
+    with pytest.raises(GatewayError, match="Выберите страницу"):
         await channel._command(OWNER, "/sessions 3")
     assert not server.log
 

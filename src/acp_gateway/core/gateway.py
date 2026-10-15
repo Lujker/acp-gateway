@@ -282,6 +282,32 @@ class GatewayCore:
         self.agent(conversation.agent)
         return [self._session_view(record) for record in self.store.sessions(conversation)]
 
+    def _recent_view(self, record: SessionRecord) -> SessionRecord:
+        if record.conversation.agent in self.agents:
+            return self._session_view(record)
+        title = self.store.channel_state(
+            "dialogue_display_titles", self._dialogue_title_key(record), record.title
+        )
+        return replace(record, availability="agent-unavailable", title=title)
+
+    def recent_dialogues(self, channel: str, key: str, *, limit: int = 10) -> list[SessionRecord]:
+        Conversation(channel, key, "recent")
+        if type(limit) is not int or not 1 <= limit <= 50:
+            raise GatewayError("Invalid recent dialogue limit.")
+        return [
+            self._recent_view(record) for record in self.store.recent_sessions(channel, key, limit)
+        ]
+
+    def owned_dialogue(self, dialogue_id: int, *, channel: str, key: str) -> SessionRecord:
+        record = self.store.session(dialogue_id) if type(dialogue_id) is int else None
+        if (
+            record is None
+            or record.conversation.channel != channel
+            or record.conversation.key != key
+        ):
+            raise UnknownSession("This chat does not own that dialogue.")
+        return self._recent_view(record)
+
     def _session_view(self, record: SessionRecord) -> SessionRecord:
         client = self.agent(record.conversation.agent)
         remember = getattr(client, "remember_session_binding", None)

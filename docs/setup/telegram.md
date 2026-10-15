@@ -1,11 +1,11 @@
 # Telegram channel
 
-Published 0.2.0rc7 includes durable result delivery, status edits, inline controls,
-Markdown rendering and dialogue execution modes. See
-[recovery and status configuration](telegram-recovery.md). Older rc5 installations
-retain their earlier plain-text interface until updated.
+Published 0.2.0 includes durable result delivery, status edits, inline controls,
+Markdown rendering, dialogue execution modes, **Computers** and **Jobs**.
+See [recovery and status configuration](telegram-recovery.md).
+Current working-branch recovery, button-driven renaming and actionable error
+cards are not published; see the [P2.5 journal](../items/telegram-recovery.ru.md).
 
-Unreleased `0.2.0rc8.dev0` adds **Computers** and **Jobs** to `/menu`.
 Navigation buttons edit their panel; agent answers and approval cards remain
 separate messages. Job history and saved results belong to the requesting chat
 across its agents, including agents removed from configuration. Read-only panels
@@ -54,19 +54,23 @@ is created automatically. Older direct/disabled bindings retain their refusal ru
 | Plain text | Send to the selected dialogue; refuse if none is selected |
 | `/start`, `/menu` | Open the inline control panel (rc6) |
 | `/help` | Show commands |
+| `/context` | Working branch: enable or explicitly refresh one durable context card for this chat |
+| `/recent` | Working branch: preview the 10 most recently used dialogues across this chat’s agents |
+| `/favorites [PAGE]` | Working branch: saved route shortcuts with current availability |
 | `/agent`, `/agent ALIAS` | List available routes or select one, e.g. `home/goose` |
 | `/new [ALIAS]` | Create and activate a new session |
 | `/sessions [PAGE]` | Dialogue cards for the selected agent, 10 per page; ▶ marks the active one |
-| `/dialogue ID [PAGE]` | Development: preview an owned dialogue without changing selection; return to the supplied list page |
-| `/rename ID TITLE` | Development: persistent dispatcher display name; does not rename Hermes |
-| `/approval REQUEST_ID [PAGE]` | Development: complete pending request input by page |
+| `/dialogue ID [PAGE]` | Preview an owned dialogue without changing selection; return to the supplied list page |
+| `/cancel` | Working branch: cancel name input begun by the dialogue rename button; other commands cancel it too |
+| `/rename ID TITLE` | Persistent dispatcher display name; does not rename Hermes |
+| `/approval REQUEST_ID [PAGE]` | Complete pending request input by page |
 | `/switch ID [PAGE]` | Activate a session owned by this chat and selected agent |
-| `/computers [PAGE]`, `/computers id ID` | Development: enrolled PCs, link/ACP readiness and agent selection |
-| `/jobs [active] [before ID]` | Development: this chat's task history, 10 per page |
-| `/job JOB_ID` | Development: exact task, refresh, saved result and delivery |
+| `/computers [PAGE]`, `/computers id ID` | Enrolled PCs, link/ACP readiness and agent selection |
+| `/jobs [active] [before ID]` | This chat's task history, 10 per page |
+| `/job JOB_ID` | Exact task, refresh, saved result and delivery |
 | `/status` | PC link, agent readiness and this chat's running jobs |
 | `/result JOB_ID` | Retrieve a saved answer or status owned by this chat |
-| `/delivery JOB_ID` | Development: inspect saved automatic delivery state |
+| `/delivery JOB_ID` | Inspect saved automatic delivery state |
 | `/stop` | Cancel this chat's selected agent jobs |
 | `/approvals` | Redisplay pending human approval buttons |
 | `/model`, `/models [PAGE]` | Observe the model and choose from paginated model buttons |
@@ -82,9 +86,8 @@ channel still has no approval tools.
 
 Messages are escaped for HTML and split into chunks of at most 2000 Unicode
 codepoints (at most 4000 UTF-16 units). Registered credentials and sensitive
-approval fields are redacted. Tool progress/reasoning is not forwarded;
-0.2.0rc1 sends working status and the final answer. Development 0.2.0rc2.dev0
-edits the working message with a bounded partial answer and final job status.
+approval fields are redacted. Tool progress/reasoning is not forwarded. Version 0.2.0 edits the working
+message with a bounded partial answer and final job status.
 Human approval requests include the tool title/input needed for a decision.
 
 The adapter limits commands to five messages per user per ten seconds,
@@ -95,8 +98,8 @@ use `/result` or `/approvals` after recovery. Polling failure removes approval
 eligibility until the connection recovers. An unreachable human is never
 replaced by an automatic allow decision.
 
-In 0.2.0rc1, final answers and saved `/result` replies use a separate bounded
-in-memory queue (32 replies). Development 0.2.0rc2.dev0 persists automatic
+Saved `/result` replies use a separate bounded in-memory queue (32 replies).
+Version 0.2.0 persists automatic
 plain-text submission results with a chunk ACK cursor; /result retains its
 explicit bounded queue. Long replies and status edits do not block approval
 events or button clicks. See [delivery states and restart/rollback rules](telegram-recovery.md).
@@ -220,7 +223,7 @@ name them normally. The gateway dialogue list uses a short first-message summary
 Existing Hermes titles are retained; rename them in Desktop if desired.
 
 
-## Development usability improvements (unreleased)
+## Dialogue names, approvals and work status (0.2.0)
 
 Dispatcher dialogue names persist separately from agent titles. An explicit
 `/rename ID TITLE` accepts 1–120 printable characters, checks this chat and
@@ -249,6 +252,98 @@ History → job → delivery → job → history preserves the active filter and
 dialogue without an ACP prompt. Retired agents keep their saved results but do
 not offer a dialogue selection action.
 
-These changes have not been released or installed on production. Live acceptance
-must check concurrent dialogues on both PCs, allow/deny/expiry, names after
-reconnect, and status/result delivery independently.
+These capabilities are included in 0.2.0. Live acceptance must still check
+concurrent dialogues on both PCs, allow/deny/expiry, names after reconnect,
+and status/result delivery independently.
+
+## Current working branch (unpublished)
+
+P2.5 adds Russian delivery explanations and a saved-result button, actions for
+a dialogue that cannot be restored, name input from the rename button with a
+five-minute deadline, and actionable Russian error cards. While name input is
+active, the next plain message sets the dispatcher name instead of submitting
+a prompt. Use the Cancel button or `/cancel`; another command cancels input too.
+Input is checked against chat, route, dialogue selection and record identity,
+and survives a dispatcher restart without converting a name into a prompt.
+
+Errors offer explicit navigation, never an automatic retry of agent work.
+Connection loss directs the user to task history to inspect the outcome before
+resubmitting. Diagnostics remain redacted. These branch changes have not been
+released, installed or checked against live Telegram; see the
+[implementation evidence and remaining UX](../items/telegram-recovery.ru.md).
+
+
+### Context card (current working branch, unpublished)
+
+Use `/menu` → **Текущий контекст**, or `/context`, to enable a separate message
+showing the computer/route, agent, selected dialogue, dispatcher name, cwd and
+availability. The main menu also shows the full snapshot. Direct agents do not
+advertise a computer name; the card says so instead of guessing the host.
+Without a selected dialogue, cwd is explicitly the default for new dialogues.
+Active name input is marked because the next text will set a name instead of
+submitting a prompt. Another command, including `/context`, cancels name input.
+
+Once enabled, the card edits the same message after choices change and checks
+saved state/connector snapshots every five seconds without probing an agent.
+You can pin that message manually in Telegram. The dispatcher keeps the message
+reference across restart and rebinds controls without sending another card.
+This is independent of answer delivery and approval processing.
+
+An explicit missing-message response permits replacement. An ambiguous send/edit
+is not replayed automatically; an independent warning says the snapshot may be
+stale. Use `/context` to request recovery explicitly. After an unknown send, this
+can create a new card while an earlier copy may already exist. Explicit 429 edit
+rejections back off; unknown delivery of results retains its separate fences.
+Live Telegram acceptance and release remain outstanding.
+
+
+### Dialogue actions on results (current working branch, unpublished)
+
+The last result fragment offers **Продолжить диалог** and **Новый диалог**.
+Continue selects that task's exact owned route and dialogue without sending a
+prompt. New creates a dialogue on the task's route and in its original cwd;
+conversation history is not replayed. Send the next message explicitly.
+These controls also appear on a finished work card. Removed routes retain their
+saved-result controls but offer no dialogue actions. A dialogue known to be
+unrestorable offers only New.
+
+Actions are bound to user/chat/message and route/selection revisions and are
+one-shot. Selection is rechecked after callback acknowledgement as well. A
+selection change during creation keeps the new dialogue recorded without
+silently replacing a newer choice; there is no automatic new-session retry.
+The result message is never edited into a navigation panel or confirmation.
+
+
+### Recent dialogues and favorite routes (current working branch, unpublished)
+
+Use `/menu` → **Недавние** or `/recent` for the ten most recently used dialogues
+across all agents in this private chat. Opening a row previews its title, route,
+cwd and last activity without changing selection. **Выбрать диалог** explicitly
+selects the exact owned route/dialogue; it does not reconnect or submit a prompt.
+Removed routes retain metadata and saved local names but have no select button.
+A route known to be offline, disabled or unadvertised is unavailable until refreshed.
+Known unrestorable dialogues cannot be selected for continuation here.
+
+In **Агенты**, use **☆ Добавить** to save a favorite route. `/favorites` shows
+up to twenty saved routes, ten per page, with select/remove controls. Removing a
+favorite does not remove an agent or dialogue. Selecting a route keeps that
+route's existing active dialogue; use New explicitly if needed. Direct agents
+that have not been connected are marked as unchecked rather than offline.
+Favorite routes are stored per bot/private chat and survive dispatcher restart.
+Old mutation controls check the favorite list revision; select controls also
+check route/selection revisions and cannot replace a newer choice. No fallback
+to a different route and no automatic prompt or session creation occurs.
+
+
+### Final stage/model hints and VPS preview
+
+The initial work card acknowledges admission as **Принято диспетчером**; subsequent
+edits show real execution/approval/final states. Model intent, pending/deferred,
+refusal and unknown outcome have Russian explanations. Saved evidence is separate
+from confirmed application; an explicit reconciliation inspects the retained
+operation without replaying the model setter. Queue/other questions are not shown
+without real adapter capabilities.
+
+Use the [Docker preview instructions](telegram-preview-docker.ru.md) to try the
+unpublished branch on an existing VPS. Publication and live acceptance remain
+separate from source verification.

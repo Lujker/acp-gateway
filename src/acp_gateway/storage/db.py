@@ -274,6 +274,15 @@ class Store:
         ).fetchall()
         return [self._session(row) for row in rows]
 
+    def recent_sessions(self, channel: str, key: str, limit: int) -> list[SessionRecord]:
+        rows = self._conn.execute(
+            f"SELECT {_SESSION_COLUMNS} FROM sessions s"  # noqa: S608
+            " WHERE s.channel = ? AND s.conversation_key = ?"
+            " ORDER BY s.last_used_at DESC, s.id DESC LIMIT ?",
+            (channel, key, limit),
+        ).fetchall()
+        return [self._session(row) for row in rows]
+
     def active_session(self, conversation: Conversation) -> SessionRecord | None:
         row = self._conn.execute(
             f"SELECT {_SESSION_COLUMNS} FROM conversations c"  # noqa: S608

@@ -50,20 +50,42 @@ class Panels:
                     "/rename_hint",
                     "/switch",
                     "/open_dialogue",
+                    "/new_from_job",
+                    "/select_recent",
+                    "/select_favorite",
                     "/model",
                     "/models",
                     "/mode",
                 }
                 selected = verb in {
+                    "/rename_hint",
                     "/new",
                     "/switch",
                     "/open_dialogue",
+                    "/new_from_job",
+                    "/select_recent",
+                    "/select_favorite",
                     "/model",
                     "/models",
                     "/mode",
                 }
-                once = verb in {"/new", "/switch", "/open_dialogue"} or command.startswith(
-                    ("/agent ", "cancel:", "/model set ", "/model default ", "/mode set ")
+                once = verb in {
+                    "/new",
+                    "/switch",
+                    "/open_dialogue",
+                    "/new_from_job",
+                    "/select_recent",
+                    "/select_favorite",
+                    "/rename_hint",
+                } or command.startswith(
+                    (
+                        "/agent ",
+                        "/favorite ",
+                        "cancel:",
+                        "/model set ",
+                        "/model default ",
+                        "/mode set ",
+                    )
                 )
                 token = secrets.token_hex(12)
                 self.actions[token] = _Action(

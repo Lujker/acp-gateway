@@ -26,7 +26,9 @@ connectors (owner acceptance 2026-10-15). See
   The owner has confirmed basic Telegram prompts/results on two Windows PCs.
 - **Telegram:** private user allowlist, command menu, agent/dialogue/model controls,
   human approval buttons, formatted answers and restart-aware delivery.
-  The new development dashboard adds computer cards and scoped task history.
+  Stable 0.2.0 includes computer cards and scoped task history. Current branch
+  improvements to recovery, renaming and error hints remain unpublished; see
+  the [Telegram journal](items/telegram-recovery.ru.md).
 - **CLI, local HTTP/SSE API and MCP:** additional interfaces to the same core.
   MCP does not receive human approval controls.
 - **Direct Goose:** ACP connection, TLS pinning, sessions and approvals;
@@ -34,10 +36,10 @@ connectors (owner acceptance 2026-10-15). See
 
 ## Limits and acceptance still ahead
 
-The project remains in release-candidate acceptance. Existing two-PC success
+Acceptance remains incomplete after the 0.2.0 publication. Existing two-PC success
 is not proof of every disconnect, concurrent dialogue or reboot scenario.
 
-- New development Telegram dashboards still need live owner acceptance.
+- Dashboard and current Telegram improvements still need live owner acceptance.
 - Managed Hermes conversations do not gain cold resume merely because a
   connector restarted. Shared Desktop observation does not imply shared write,
   cancellation or approval authority; see the [Hermes adapter evidence](items/hermes-shared-control.ru.md).
