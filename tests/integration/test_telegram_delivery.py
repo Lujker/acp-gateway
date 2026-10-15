@@ -107,10 +107,10 @@ async def test_working_message_is_edited_to_final_status(telegram):
     await eventually(lambda: any(isinstance(c, EditMessageText) for c in session.calls))
     edit = next(c for c in session.calls if isinstance(c, EditMessageText))
     sends = [c for c in session.calls if isinstance(c, SendMessage)]
-    working_id = next(i + 1 for i, c in enumerate(sends) if c.text.startswith("Working:"))
+    working_id = next(i + 1 for i, c in enumerate(sends) if c.text.startswith("Задача:"))
     assert edit.message_id == working_id and edit.chat_id == OWNER
     assert next(m for m in session.sent if m.message_id == working_id).text == edit.text
-    assert "completed" in edit.text and "/result" in edit.text
+    assert "Завершена" in edit.text and "/result" in edit.text
     assert any(m.text == "pong" for m in session.sent)
     assert not channel._statuses
 
@@ -233,7 +233,7 @@ async def test_partial_status_redacts_before_truncation_and_escapes_html(telegra
     assert len(edit.text) < 2000
     core.store.finish_job(job.id, JobStatus.CANCELLED)
     await eventually(lambda: not channel._statuses)
-    assert any("cancelled" in c.text for c in session.calls if isinstance(c, EditMessageText))
+    assert any("Отменена" in c.text for c in session.calls if isinstance(c, EditMessageText))
 
 
 async def test_status_429_defers_edit_without_duplicate_message(telegram):
@@ -256,7 +256,6 @@ async def test_status_429_defers_edit_without_duplicate_message(telegram):
     await eventually(lambda: len(edits) >= 2)
     assert len({edit.message_id for edit in edits}) == 1
     assert (
-        sum(isinstance(c, SendMessage) and c.text.startswith("Working:") for c in session.calls)
-        == 1
+        sum(isinstance(c, SendMessage) and c.text.startswith("Задача:") for c in session.calls) == 1
     )
     assert sum(m.message_id == edits[0].message_id for m in session.sent) == 1

@@ -411,7 +411,7 @@ async def test_telegram_selects_computers_and_decides_relay_approvals(nodes):
         message = next(
             m
             for m in reversed(session.sent)
-            if m.reply_markup and f"Approval: {name}/goose" in m.text
+            if m.reply_markup and f"Подтверждение · {name}/goose" in m.text
         )
         await channel.dispatcher.feed_update(
             channel.bot,

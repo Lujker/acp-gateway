@@ -1,3 +1,4 @@
+# ruff: noqa: RUF001
 """Inline user controls use the same private conversation and operation guards."""
 
 import pytest
@@ -24,7 +25,7 @@ async def test_panel_selects_agent_and_creates_one_dialogue_for_double_click(tel
     selected = session.sent[-1]
     action = button(selected, "Новый диалог").callback_data
     await click(channel, 4, selected, action)
-    assert "New dialogue #" in session.sent[-1].text
+    assert "Новый диалог #" in session.sent[-1].text
     await click(channel, 5, selected, action)
     assert len(core.sessions(Conversation("telegram", str(OWNER), "work"))) == 1
     assert any(isinstance(call, AnswerCallbackQuery) and call.show_alert for call in session.calls)
@@ -52,12 +53,18 @@ async def test_dialogue_buttons_and_navigation_do_not_make_prompts(telegram):
     await feed(channel, 1, "/sessions")
     page = session.sent[-1]
     await click(channel, 2, page, button(page, "Далее").callback_data)
-    assert "Page 2/2" in session.sent[-1].text
+    assert "Страница 2/2" in session.sent[-1].text
     old = core.sessions(conv)[-1]
     await click(
         channel, 3, session.sent[-1], button(session.sent[-1], f"#{old.id} ·").callback_data
     )
+    assert core.active_session(conv).id != old.id
+    preview = session.sent[-1]
+    await click(channel, 4, preview, button(preview, "Выбрать диалог").callback_data)
     assert core.active_session(conv).id == old.id
+    channel._recent.clear()
+    await click(channel, 5, session.sent[-1], button(session.sent[-1], "← Диалоги").callback_data)
+    assert "Страница 2/2" in session.sent[-1].text
     assert not server.log
 
 
@@ -407,3 +414,85 @@ async def test_mode_display_never_claims_another_scopes_authorization(telegram, 
     saved[field] = value
     core.store.set_channel_state("execution_mode", str(state["dialogue_id"]), saved)
     assert core.execution_mode(conv)["mode"] == "ask"
+
+
+async def test_dialogue_preview_is_private_read_only_and_keeps_the_page(telegram):
+    core, channel, session, server = telegram
+    conv = Conversation("telegram", str(OWNER), "work")
+    records = [core.store.add_session(conv, f"saved-{i}", "/work") for i in range(12)]
+    old = records[0]
+    core.store.set_session_title(old.id, "Research <draft>")
+    revision = core.store.active_revision(conv)
+    active = core.active_session(conv).id
+    await feed(channel, 1, "/sessions 2")
+    page = session.sent[-1]
+    stale = button(page, f"#{old.id} ·").callback_data
+    await click(channel, 2, page, stale)
+    preview = session.sent[-1]
+    assert "Research &lt;draft&gt;" in preview.text
+    assert "Агент / ПК: work" in preview.text and "Последняя активность:" in preview.text
+    assert "Не выбран" in preview.text
+    assert core.active_session(conv).id == active
+    assert core.store.active_revision(conv) == revision
+    await click(channel, 3, preview, button(preview, "← Диалоги").callback_data)
+    assert "Страница 2/2" in session.sent[-1].text
+    await click(channel, 4, page, stale)
+    assert "Страница 2/2" in session.sent[-1].text
+    assert any(isinstance(call, AnswerCallbackQuery) and call.show_alert for call in session.calls)
+    assert core.store.active_revision(conv) == revision
+    assert not server.log
+
+
+async def test_dialogue_preview_and_selection_reject_foreign_scope(telegram):
+    from acp_gateway.core import GatewayError
+
+    core, channel, session, server = telegram
+    conv = Conversation("telegram", str(OWNER), "work")
+    own = core.store.add_session(conv, "own", "/work")
+    for foreign_conv in [
+        Conversation("telegram", str(OTHER), "work"),
+        Conversation("cli", str(OWNER), "work"),
+        Conversation("telegram", str(OWNER), "other"),
+    ]:
+        foreign = core.store.add_session(
+            foreign_conv,
+            f"foreign-{foreign_conv.agent}-{foreign_conv.channel}-{foreign_conv.key}",
+            "/private",
+        )
+        core.store.set_session_title(foreign.id, "PRIVATE DIALOGUE")
+        for command in ["/dialogue", "/switch"]:
+            with pytest.raises(GatewayError, match="does not own"):
+                await channel._command(OWNER, f"{command} {foreign.id}")
+    assert core.active_session(conv).id == own.id
+    assert not session.sent
+    assert not server.log
+
+
+@pytest.mark.parametrize("argument", ["1 0", "1 999", "1 -2", "1 1 extra", "\u0661", "9" * 11])
+async def test_invalid_dialogue_navigation_does_not_change_selection(telegram, argument):
+    from acp_gateway.core import GatewayError
+
+    core, channel, _, server = telegram
+    conv = Conversation("telegram", str(OWNER), "work")
+    core.store.add_session(conv, "own", "/work")
+    revision = core.store.active_revision(conv)
+    for command in ["/dialogue", "/switch"]:
+        with pytest.raises(GatewayError):
+            await channel._command(OWNER, f"{command} {argument}")
+    assert core.store.active_revision(conv) == revision
+    assert not server.log
+
+
+async def test_dialogue_selection_button_rejects_changed_active_dialogue(telegram):
+    core, channel, session, _ = telegram
+    conv = Conversation("telegram", str(OWNER), "work")
+    first = core.store.add_session(conv, "first", "/work")
+    second = core.store.add_session(conv, "second", "/work")
+    await channel._command(OWNER, f"/dialogue {first.id}")
+    preview = session.sent[-1]
+    data = button(preview, "Выбрать диалог").callback_data
+    core.store.set_active(conv, first.id)
+    core.store.set_active(conv, second.id)
+    await click(channel, 1, preview, data)
+    assert core.active_session(conv).id == second.id
+    assert any(isinstance(call, AnswerCallbackQuery) and call.show_alert for call in session.calls)

@@ -294,7 +294,10 @@ class GatewayCore:
             state = "uncertain"
         if record.id in self._busy and state in {"unknown", "attached"}:
             state = "busy"
-        return replace(record, availability=state)
+        title = self.store.channel_state(
+            "dialogue_display_titles", self._dialogue_title_key(record), record.title
+        )
+        return replace(record, availability=state, title=title)
 
     def active_session(self, conversation: Conversation) -> SessionRecord | None:
         self.agent(conversation.agent)
@@ -333,6 +336,27 @@ class GatewayCore:
         if record is None or record.conversation != conversation:
             raise UnknownSession("This conversation does not own that dialogue.")
         self.store.set_active(conversation, record.id)
+        return self._session_view(record)
+
+    @staticmethod
+    def _dialogue_title_key(record: SessionRecord) -> str:
+        return json.dumps([str(record.conversation), record.id, record.created_at.isoformat()])
+
+    def rename_dialogue(
+        self, conversation: Conversation, dialogue_id: int, title: str
+    ) -> SessionRecord:
+        """Set a dispatcher display name without changing the agent's title."""
+        self._check_admission()
+        self.agent(conversation.agent)
+        record = self.store.session(dialogue_id) if type(dialogue_id) is int else None
+        if record is None or record.conversation != conversation:
+            raise UnknownSession("This conversation does not own that dialogue.")
+        title = " ".join(title.split())
+        if not title or len(title) > 120 or not title.isprintable():
+            raise GatewayError("Use a title of 1-120 printable characters.")
+        self.store.set_channel_state(
+            "dialogue_display_titles", self._dialogue_title_key(record), title
+        )
         return self._session_view(record)
 
     async def _create_session(

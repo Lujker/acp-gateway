@@ -920,3 +920,16 @@ registry и SQLite sentinel сохранены. update --stable --with-services 
 
 Владелец обновляет production VPS и оба ПК самостоятельно. Живая приёмка /mode,
 новых названий и renderer остаётся открытой; P2.3/P4.8.5 сохраняют PARTIAL.
+
+
+### 2026-10-15 — подготовка rc8 по разрешению владельца
+
+Владелец разрешил GitHub и PyPI release с dashboard/P2.4 улучшениями и попросил
+команды обновления диспетчера и коннекторов через uv. Версия поднята с
+0.2.0rc8.dev0 до 0.2.0rc8; schema/protocol не изменены. Предыдущая проверка
+реализации: 1358 source tests passed / 35 skipped; для финальной версии выполняется
+повторный source suite, затем installed wheel и isolated upgrade.
+Релиз собирается локально из clean commit; PyPI получает те же GitHub assets
+через существующий manual Trusted Publishing workflow. Production VPS/коннекторы
+в этой сессии не обновляются. Живая Telegram/host lifecycle приёмка не объявляется
+завершённой публикацией пакета.
