@@ -53,11 +53,17 @@ Follow the [Ubuntu dispatcher + Windows/Hermes guide (Russian)](docs/setup/self-
 for enrollment, connection, Telegram and autostart. For an existing installation,
 use the [update and recovery guide](docs/setup/maintenance.md).
 
+To run the dispatcher in Docker on your VPS — behind the reverse proxy you
+already have, with your own nginx, or by moving a native dispatcher into Docker
+without re-enrolling computers — see the
+[Docker dispatcher guide (Russian)](docs/setup/vps-docker.ru.md).
+
 ## Explore
 
 | I want to… | Start here |
 | --- | --- |
 | Set up Telegram | [Bot setup and commands](docs/setup/telegram.md) |
+| Run the dispatcher in Docker on a VPS | [Docker dispatcher (Russian)](docs/setup/vps-docker.ru.md) |
 | Understand support and limitations | [Project status](docs/project-status.md) |
 | Configure a different deployment | [Documentation index](docs/README.md) |
 | Develop or build from source | [Development guide](docs/development.md) |
