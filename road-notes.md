@@ -3082,3 +3082,15 @@ smoke `scripts/smoke_docker.py` вариант с внешней сетью не
 
 Ветка влита в `main`, опубликован первый стабильный 0.2.0 на GitHub и PyPI;
 проверки и хеши — в [журнале поставки](docs/items/p48-delivery-plan.ru.md).
+
+
+## 2026-10-15 — Обновление ПК rc8 → 0.2.0: отказ 409 и его причина
+
+`update --stable --with-services` на Windows-ПК владельца дважды кончился
+`failed`. Первый раз — rc8 без явных путей не нашёл конфиг коннектора
+(исправлено в 0.2.0). Второй — `HTTP 409: Live connector activity is
+unavailable`: файла `connector-activity.json` не было вовсе, watcher
+активности умер молча, коннектор при этом работал. После перезапуска задачи
+файл появился (`running`, `idle_observed: true`), обновление с явными
+`--config/--env-file --service-role connector` прошло: 0.2.0, `succeeded`,
+коннектор подключён. Дефект — пункт 15 очереди road-map.
