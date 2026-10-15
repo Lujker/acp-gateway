@@ -8,6 +8,7 @@ import contextlib
 import hashlib
 import html
 import json
+import secrets
 import time
 from collections import deque
 
@@ -30,10 +31,13 @@ from aiogram.types import (
 )
 from pydantic import SecretStr
 
-from acp_gateway.agents import AgentError
+from acp_gateway.agents import AgentError, SessionNotFound
 from acp_gateway.channels.base import Channel
+from acp_gateway.channels.telegram_context import ContextCard
 from acp_gateway.channels.telegram_dashboard import Dashboard
+from acp_gateway.channels.telegram_errors import error_card
 from acp_gateway.channels.telegram_format import FORMAT_VERSION, answer_chunks, plain_html
+from acp_gateway.channels.telegram_shortcuts import Shortcuts
 from acp_gateway.channels.telegram_ui import PANEL_CONTEXT, Panels
 from acp_gateway.channels.telegram_work import WorkCards
 from acp_gateway.config import TelegramSettings
@@ -44,24 +48,27 @@ from acp_gateway.log import get_logger, redact_text, register_secret
 from acp_gateway.storage import Conversation, Job
 
 HELP = (
-    "Select an agent and create or select a dialogue before sending messages.\n"
-    "/computers — компьютеры и подключения\n/jobs — задачи этого чата\n/job ID — карточка задачи\n"
-    "/menu — control panel\n/start, /help — help\n"
-    "/agent — list agents\n/agent ALIAS — select agent\n"
-    "/new [ALIAS] — new session\n/sessions [PAGE] — list dialogues\n"
-    "/dialogue ID [PAGE] — preview a dialogue\n"
-    "/rename ID TITLE — dispatcher display name (Hermes title unchanged)\n"
-    "/switch ID — activate a session\n/status — connections and jobs\n"
-    "/result JOB_ID — saved result\n/delivery JOB_ID — automatic delivery state\n"
-    "/stop — cancel this chat's jobs\n"
-    "/model, /models — observed model and catalogue\n"
-    "/model state — saved evidence without reconnect\n"
-    "/model reconcile ID REVISION — inspect retained outcome, no retry\n"
-    "/model set PROVIDER MODEL ID REVISION [TOKEN] — select/confirm\n"
-    "/model default [PROVIDER MODEL | clear] — new-dialogue default\n"
-    "/mode — execution mode for the selected dialogue\n"
-    "/approvals — pending approval buttons\n"
-    "Default: upstream/human approvals. /mode can explicitly authorize this dialogue."
+    "Выберите агента, затем создайте или выберите диалог. "
+    "Обычные сообщения идут в выбранный диалог.\n"
+    "/context — отдельная обновляемая карточка контекста\n"
+    "/recent — недавние диалоги всех агентов\n/favorites — избранные маршруты\n"
+    "/menu — панель и текущий выбор\n/start, /help — начало работы и подсказки\n"
+    "/computers — компьютеры и подключения\n/agent [ALIAS] — список или выбор агента\n"
+    "/new [ALIAS] — новый диалог\n/sessions [PAGE] — список диалогов\n"
+    "/dialogue ID [PAGE] — предпросмотр диалога\n/switch ID — выбрать диалог\n"
+    "Переименовать: откройте диалог и нажмите «Переименовать», затем отправьте название.\n"
+    "/cancel — отменить ввод названия\n/rename ID TITLE — название диспетчера; Hermes не меняется\n"
+    "/status — подключения и задачи\n/jobs — история задач этого чата\n/job ID — карточка задачи\n"
+    "/result JOB_ID — получить сохранённый результат без запуска агента\n"
+    "/delivery JOB_ID — состояние доставки и действия при сбое\n"
+    "/stop — остановить поддерживающие отмену задачи этого чата\n"
+    "/model, /models — текущая модель и каталог\n"
+    "/model state — сохранённые сведения без подключения к агенту\n"
+    "/model reconcile ID REVISION — проверить сохранённый исход без повтора операции\n"
+    "/model set PROVIDER MODEL ID REVISION [TOKEN] — выбрать или подтвердить модель\n"
+    "/model default [PROVIDER MODEL | clear] — модель новых диалогов\n"
+    "/mode — режим выполнения выбранного диалога\n/approvals — ожидающие подтверждения\n"
+    "По умолчанию разрешения подтверждает человек. /mode явно меняет режим выбранного диалога."
 )
 
 
@@ -69,6 +76,9 @@ COMMANDS = (
     ("start", "Getting started", "Начало работы"),
     ("help", "Commands and usage", "Команды и подсказки"),
     ("menu", "Control panel", "Панель управления"),
+    ("context", "Current context card", "Компьютер, агент, папка и диалог"),
+    ("recent", "Recent dialogues across agents", "Недавние диалоги всех агентов"),
+    ("favorites", "Favorite routes", "Избранные маршруты"),
     ("computers", "Computers", "Компьютеры и подключения"),
     ("jobs", "Job history", "История задач этого чата"),
     ("job", "Job details", "Подробности: /job JOB_ID"),
@@ -105,6 +115,30 @@ def _session_state(session):
     }.get(session.availability, session.availability)
 
 
+def _restore_unavailable(session):
+    return bool(
+        session
+        and (
+            session.availability == "restore-unavailable"
+            or (
+                session.availability == "uncertain"
+                and session.binding
+                and session.binding.get("restore") == "disabled"
+            )
+        )
+    )
+
+
+def _recovery_text(session):
+    return (
+        f"Диалог #{session.id} нельзя безопасно восстановить после потери подключения.\n"
+        "Он остаётся в истории диспетчера. Создайте новый диалог или откройте историю задач "
+        "для получения сохранённых результатов.\n"
+        "Сообщения из прежнего диалога не отправляются повторно. "
+        "После создания нового диалога отправьте нужное сообщение самостоятельно."
+    )
+
+
 def _dialogue_summary(session):
     lines = [f"Агент / ПК: {_label(session.conversation.agent)}"]
     if session.title:
@@ -132,7 +166,7 @@ class _Updates(BaseMiddleware):
         return await handler(event, data)
 
 
-class TelegramChannel(WorkCards, Dashboard, Channel):
+class TelegramChannel(Shortcuts, ContextCard, WorkCards, Dashboard, Channel):
     name = "telegram"
     can_approve = True
 
@@ -160,6 +194,9 @@ class TelegramChannel(WorkCards, Dashboard, Channel):
         self._subscription = None
         self._deliveries: asyncio.Queue[tuple[int, str, Job | None]] = asyncio.Queue(maxsize=32)
         self._outbound_ready = asyncio.Event()
+        self._context_wake = asyncio.Event()
+        self._context_lock = asyncio.Lock()
+        self._context_bound = set()
         self._statuses: dict[str, tuple[int, int, str, float]] = {}
         self._log = get_logger(__name__)
 
@@ -203,6 +240,7 @@ class TelegramChannel(WorkCards, Dashboard, Channel):
         core.store.deliveries.recover(self.namespace)
         self._tasks = [
             asyncio.create_task(self._deliver_results(), name="telegram-outbound"),
+            asyncio.create_task(self._context_updates(), name="telegram-context"),
             asyncio.create_task(self._poll()),
             asyncio.create_task(self._menus(), name="telegram-menu"),
             asyncio.create_task(self._events()),
@@ -317,6 +355,7 @@ class TelegramChannel(WorkCards, Dashboard, Channel):
         self._buttons.clear()
         self._approval_texts.clear()
         self._panels.clear()
+        self._context_bound.clear()
         self._statuses.clear()
         while not self._deliveries.empty():
             self._deliveries.get_nowait()
@@ -388,7 +427,11 @@ class TelegramChannel(WorkCards, Dashboard, Channel):
                 # A changed formatter must not silently restart old content.
                 deliveries.settle(self.namespace, job_id, "unknown")
                 return
-            markup, tokens = self._panels.create(chat, self._job_rows(job), self._ui_context(chat))
+            markup, tokens = self._panels.create(
+                chat,
+                self._job_rows(job, dialogue_actions=index == len(chunks) - 1),
+                self._ui_context(chat),
+            )
             message = await self._send_payload(chat, chunks[index], markup=markup)
             self._panels.bind(tokens, message.message_id)
             deliveries.acknowledge(self.namespace, job_id, last=index == len(chunks) - 1)
@@ -524,7 +567,13 @@ class TelegramChannel(WorkCards, Dashboard, Channel):
     def _back_rows():
         return [[("← Меню", "/menu")]]
 
-    def _job_rows(self, job):
+    def _can_continue_job(self, job):
+        return any(
+            item.id == job.session_id and not _restore_unavailable(item)
+            for item in self.core.sessions(job.conversation)
+        )
+
+    def _job_rows(self, job, *, dialogue_actions=True):
         rows = [
             [(f"🖥 {job.conversation.agent} · #{job.session_id}", f"details:{job.id}")],
             [("📄 Результат", f"result:{job.id}")],
@@ -535,6 +584,12 @@ class TelegramChannel(WorkCards, Dashboard, Channel):
             client = None
         if not job.status.finished and client and getattr(client, "supports_cancel", True):
             rows.insert(0, [("⏹ Остановить задачу", f"cancel:{job.id}")])
+        if job.status.finished and client and dialogue_actions:
+            actions = []
+            if self._can_continue_job(job):
+                actions.append(("💬 Продолжить диалог", f"/open_dialogue {job.id}"))
+            actions.append(("➕ Новый диалог", f"/new_from_job {job.id}"))
+            rows.append(actions)
         return rows + TelegramChannel._back_rows()
 
     async def _panel(self, chat, text, rows, *, editable=True):
@@ -592,7 +647,7 @@ class TelegramChannel(WorkCards, Dashboard, Channel):
 
     async def _home(self, chat):
         context = self._ui_context(chat)
-        text = "Управление ACP Gateway"
+        text = "Управление ACP Gateway\n\n" + self._context_text(chat)
         rows = [
             [("💻 Компьютеры", "/computers"), ("📋 Задачи", "/jobs")],
             [("🖥 Агенты", "/agent"), ("📊 Статус", "/status")],
@@ -605,12 +660,16 @@ class TelegramChannel(WorkCards, Dashboard, Channel):
             if active and active.title:
                 text += f" — {_label(active.title)}"
             rows += [[("💬 Диалоги", "/sessions"), ("➕ Новый диалог", "/new")]]
-            if active:
+            if _restore_unavailable(active):
+                text += "\n\n" + _recovery_text(active)
+            elif active:
                 mode = self.core.execution_mode(conv)["mode"]
                 text += "\nВыполнение: " + ("без подтверждений" if mode == "auto" else "как Hermes")
                 rows += [[("🧠 Модель", "/model"), ("⚙ Выполнение", "/mode")]]
         else:
             text += "\nВыберите агента, затем создайте или выберите диалог."
+        rows += [[("🕘 Недавние", "/recent"), ("⭐ Избранное", "/favorites")]]
+        rows += [[("📍 Текущий контекст", "/context")]]
         rows += [[("✅ Подтверждения", "/approvals"), ("❓ Помощь", "/help")]]
         await self._panel(chat, text, rows)
 
@@ -650,6 +709,7 @@ class TelegramChannel(WorkCards, Dashboard, Channel):
             pending = result.get("pending")
             if pending:
                 lines.append(f"Ожидается: {pending.get('provider')}/{pending.get('model')}")
+        lines += self._model_evidence(result)
         if catalogue:
             choices = [
                 (provider["provider"], model)
@@ -658,7 +718,7 @@ class TelegramChannel(WorkCards, Dashboard, Channel):
             ]
             pages = max(1, (len(choices) + 9) // 10)
             if not 1 <= page <= pages:
-                raise GatewayError(f"Choose a page from 1 to {pages}: /models PAGE.")
+                raise GatewayError(f"Выберите страницу от 1 до {pages}: /models PAGE.")
             if not choices:
                 lines.append("Список моделей недоступен.")
             for provider, model in choices[(page - 1) * 10 : page * 10]:
@@ -712,15 +772,23 @@ class TelegramChannel(WorkCards, Dashboard, Channel):
         context = self._panels.begin_edit(query.message) if action.panel else None
         token = PANEL_CONTEXT.set(context)
         try:
-            await self._execute_ui_callback(query, command)
+            await self._execute_ui_callback(query, command, action=action)
         finally:
             PANEL_CONTEXT.reset(token)
+            self._context_wake.set()
 
-    async def _execute_ui_callback(self, query, command):
+    async def _execute_ui_callback(self, query, command, *, action=None):
         chat = query.message.chat.id
         # Consume one-shot controls and dismiss the spinner before any host RPC.
         await self.bot.answer_callback_query(query.id)
         try:
+            # Dismissing the callback spinner is a network await; recheck its bound selection.
+            if action is not None:
+                current = self._ui_context(chat)
+                if (action.context is not None and action.context != current[:2]) or (
+                    action.selection is not None and action.selection != current[2]
+                ):
+                    raise GatewayError("Диалог или агент изменился. Откройте /menu заново.")
             if command.startswith(("cancel:", "result:", "details:")):
                 action, job_id = command.split(":", 1)
                 job = self.core.job(job_id)
@@ -741,7 +809,7 @@ class TelegramChannel(WorkCards, Dashboard, Channel):
             else:
                 await self._command(chat, command)
         except (AgentError, GatewayError) as exc:
-            await self._panel(chat, str(exc), self._back_rows())
+            await self._error_panel(chat, exc)
         except TelegramAPIError:
             self._log.warning("Telegram control response could not be delivered")
         except Exception:
@@ -770,18 +838,24 @@ class TelegramChannel(WorkCards, Dashboard, Channel):
         if len(recent) >= 5:
             if now - self._throttled.get(user_id, 0) >= 10:
                 self._throttled[user_id] = now
-                await self._send(user_id, "Too many messages; wait a few seconds.")
+                await self._send(user_id, "Слишком много сообщений. Подождите несколько секунд.")
             return
         recent.append(now)
         try:
             await self._command(user_id, message.text)
         except (AgentError, GatewayError) as exc:
-            await self._send(user_id, str(exc))
+            await self._error_panel(user_id, exc)
         except TelegramAPIError:
             self._log.exception("Telegram response could not be delivered")
         except Exception:
             self._log.exception("Telegram command failed")
-            await self._send(user_id, "Internal gateway error.")
+            await self._panel(
+                user_id,
+                "Не удалось обработать сообщение. Откройте панель и проверьте задачи.",
+                [[("История задач", "/jobs")], *self._back_rows()],
+            )
+        finally:
+            self._context_wake.set()
 
     def _set_route(self, chat, alias):
         self.core.agent(alias)
@@ -789,12 +863,76 @@ class TelegramChannel(WorkCards, Dashboard, Channel):
         revision = self.core.store.channel_state(self.namespace, f"route_revision:{chat}", 0)
         self.core.store.set_channel_state(self.namespace, f"route_revision:{chat}", revision + 1)
 
+    async def _error_panel(self, chat, error):
+        text, rows = error_card(error)
+        await self._panel(chat, text, [*rows, *self._back_rows()])
+
+    def _rename_input(self, chat):
+        return self.core.store.channel_state(self.namespace, f"rename_input:{chat}")
+
+    def _clear_rename_input(self, chat):
+        self.core.store.set_channel_state(self.namespace, f"rename_input:{chat}", None)
+
+    async def _accept_rename_input(self, chat, text, pending):
+        record = self.core.store.session(pending["id"])
+        context = self._ui_context(chat)
+        if (
+            time.time() > pending["expires"]
+            or list(context) != pending["context"]
+            or record is None
+            or record.created_at.isoformat() != pending["created_at"]
+            or record.conversation != self._conversation(chat)
+        ):
+            self._clear_rename_input(chat)
+            await self._panel(
+                chat,
+                "Ввод названия отменён: истекло время или изменился диалог/агент. "
+                "Это сообщение не отправлено агенту. "
+                "Откройте диалог и нажмите «Переименовать» снова.",
+                self._back_rows(),
+            )
+            return
+        session = self.core.rename_dialogue(record.conversation, record.id, text)
+        self._clear_rename_input(chat)
+        await self._panel(
+            chat,
+            f"Название диспетчера сохранено: #{session.id} · {_label(session.title)}\n"
+            "Название Hermes не менялось. Следующие сообщения отправляются агенту.",
+            [[("← Диалог", f"/dialogue {session.id} {pending['page']}")], *self._back_rows()],
+        )
+
     async def _command(self, chat: int, text: str):
         command, _, argument = text.partition(" ")
         command = command.split("@", 1)[0]
         argument = argument.strip()
+        pending = self._rename_input(chat)
+        if command in {"/cancel", "/rename_cancel"}:
+            if command == "/rename_cancel" and (not pending or argument != pending["token"]):
+                raise GatewayError("Этот ввод названия уже закрыт. Откройте /menu.")
+            self._clear_rename_input(chat)
+            await self._panel(
+                chat,
+                "Ввод названия отменён. Следующие сообщения отправляются агенту.",
+                self._back_rows(),
+            )
+            return
+        if pending and not command.startswith("/"):
+            await self._accept_rename_input(chat, text, pending)
+            return
+        if pending and command != "/rename_hint":
+            await self._send(
+                chat, "Ввод названия отменён командой. Следующие сообщения отправляются агенту."
+            )
+            if self._rename_input(chat) != pending:
+                raise GatewayError("Ввод названия изменился. Повторите команду.")
+            self._clear_rename_input(chat)
+        if command == "/context":
+            await self._show_context(chat, explicit=True)
+            return
         if command == "/approval":
             await self._approval_details(chat, argument)
+            return
+        if await self._shortcuts(chat, command, argument):
             return
         if await self._dashboard(chat, command, argument):
             return
@@ -810,7 +948,7 @@ class TelegramChannel(WorkCards, Dashboard, Channel):
             if argument:
                 await self._panel(
                     chat,
-                    f"Agent: {self._conversation(chat).agent}",
+                    f"Агент: {self._conversation(chat).agent}",
                     [
                         [("➕ Новый диалог", "/new"), ("💬 Диалоги", "/sessions")],
                         *self._back_rows(),
@@ -820,15 +958,18 @@ class TelegramChannel(WorkCards, Dashboard, Channel):
                 selected = self.core.store.channel_state(self.namespace, f"agent:{chat}")
                 if selected is None and len(self.core.agents) == 1:
                     selected = next(iter(self.core.agents))
-                lines = ["Agents"]
+                lines = ["Агенты"]
                 for alias, client in self.core.agents.items():
                     marker = "▶" if alias == selected else "•"
                     lines.append(f"{marker} {alias} — {_label(client.profile.display_name)}")
                 if not self.core.agents:
-                    lines.append("No agents available. Connect a configured PC first.")
-                lines += ["", "▶ Selected agent", "Select: /agent ALIAS", "New dialogue: /new"]
+                    lines.append(
+                        "Агенты пока недоступны. "
+                        "Подключите настроенный компьютер и обновите список."
+                    )
+                lines += ["", "▶ Выбранный агент", "Выбрать: /agent ALIAS", "Новый диалог: /new"]
                 rows = [
-                    [(_label(alias, 50), f"/agent {alias}")]
+                    [(_label(alias, 50), f"/agent {alias}"), self._favorite_action(chat, alias)]
                     for alias in list(self.core.agents)[:20]
                 ]
                 await self._panel(chat, "\n".join(lines), rows + self._back_rows())
@@ -866,7 +1007,7 @@ class TelegramChannel(WorkCards, Dashboard, Channel):
                     or parts[0] != "set"
                     or not all(p.isdecimal() for p in parts[2:])
                 ):
-                    raise GatewayError("Use /mode and its buttons to choose a mode.")
+                    raise GatewayError("Откройте /mode и выберите режим его кнопками.")
                 self.core.set_execution_mode(
                     conv,
                     parts[1],
@@ -914,7 +1055,7 @@ class TelegramChannel(WorkCards, Dashboard, Channel):
                     != route_revision
                 ):
                     raise GatewayError(
-                        "Agent route changed; refresh model settings before retrying."
+                        "Агент изменился. Откройте /model заново перед следующим действием."
                     )
 
             parts = argument.split()
@@ -926,7 +1067,7 @@ class TelegramChannel(WorkCards, Dashboard, Channel):
                 and parts[0].isdecimal()
             ):
                 if len(parts[0]) > 6:
-                    raise GatewayError("Use /models [PAGE].")
+                    raise GatewayError("Используйте /models [PAGE].")
                 catalogue_page = int(parts[0])
                 parts = []
             if parts and parts[0] == "default":
@@ -937,7 +1078,7 @@ class TelegramChannel(WorkCards, Dashboard, Channel):
                 elif len(parts) == 3:
                     result = self.core.set_model_default(conv, provider=parts[1], model=parts[2])
                 else:
-                    raise GatewayError("Use /model default [PROVIDER MODEL | clear].")
+                    raise GatewayError("Используйте /model default [PROVIDER MODEL | clear].")
             else:
                 active = self.core.active_session(conv)
                 if active is None:
@@ -978,11 +1119,13 @@ class TelegramChannel(WorkCards, Dashboard, Channel):
                         admission=route_guard,
                     )
                 else:
-                    raise GatewayError("Use /model set PROVIDER MODEL ID REVISION [TOKEN].")
+                    raise GatewayError("Используйте /model set PROVIDER MODEL ID REVISION [TOKEN].")
             if not parts or parts[0] != "default":
                 route_guard()
                 if result.get("selection_changed"):
-                    raise GatewayError("Dialogue changed; refresh model settings before retrying.")
+                    raise GatewayError(
+                        "Диалог изменился. Откройте /model заново перед следующим действием."
+                    )
             if not parts or (
                 parts[0] == "set"
                 and result.get("status") in {"confirmation_required", "accepted", "deferred"}
@@ -1001,9 +1144,28 @@ class TelegramChannel(WorkCards, Dashboard, Channel):
             encoded = json.dumps({"agent": conv.agent, **result}, ensure_ascii=False, indent=2)
             if len(encoded) > 10000:
                 encoded = (
-                    encoded[:10000] + "\nCatalogue truncated; use CLI model list for the full list."
+                    encoded[:10000]
+                    + "\nКаталог сокращён; полный список доступен через CLI model list."
                 )
-            await self._panel(chat, encoded, self._back_rows())
+            lines = self._model_evidence(result)
+            if parts == ["state"]:
+                lines.insert(0, "Сохранённые сведения о модели · без подключения к агенту")
+                if result.get("model_state") is None:
+                    lines.append(
+                        "Сохранённых наблюдений пока нет. Откройте /model для проверки агента."
+                    )
+            elif parts and parts[0] == "default":
+                lines.insert(0, "Модель новых диалогов · настройка диспетчера")
+            rows = [[("Сведения без подключения", "/model state")]]
+            if (result.get("model_state") or {}).get("state") in {"intent", "unknown"}:
+                rows.append(
+                    [("Проверить сохранённый исход", f"/model reconcile {active.id} {revision}")]
+                )
+            await self._panel(
+                chat,
+                "\n".join([*lines, "Диагностические сведения:", encoded]),
+                [*rows, *self._back_rows()],
+            )
         elif command == "/new":
             revision = self.core.store.channel_state(self.namespace, f"route_revision:{chat}", 0)
             session = await self.core.new_session(conv)
@@ -1030,12 +1192,12 @@ class TelegramChannel(WorkCards, Dashboard, Channel):
             if argument and (
                 not argument.isascii() or not argument.isdecimal() or len(argument) > 6
             ):
-                raise GatewayError("Use /sessions [PAGE], starting with page 1.")
+                raise GatewayError("Используйте /sessions [PAGE], начиная со страницы 1.")
             page = int(argument or "1")
             sessions = self.core.sessions(conv)
             pages = max(1, (len(sessions) + _SESSION_PAGE_SIZE - 1) // _SESSION_PAGE_SIZE)
             if not 1 <= page <= pages:
-                raise GatewayError(f"Choose a page from 1 to {pages}: /sessions PAGE.")
+                raise GatewayError(f"Выберите страницу от 1 до {pages}: /sessions PAGE.")
             active = self.core.active_session(conv)
             lines = [f"Диалоги · {_label(conv.agent)}"]
             if not sessions:
@@ -1083,19 +1245,31 @@ class TelegramChannel(WorkCards, Dashboard, Channel):
             sessions = self.core.sessions(conv)
             pages = max(1, (len(sessions) + _SESSION_PAGE_SIZE - 1) // _SESSION_PAGE_SIZE)
             if not 1 <= page <= pages:
-                raise GatewayError(f"Choose a page from 1 to {pages}: /sessions PAGE.")
+                raise GatewayError(f"Выберите страницу от 1 до {pages}: /sessions PAGE.")
             session = next((item for item in sessions if item.id == int(parts[0])), None)
             if session is None:
                 raise GatewayError("This conversation does not own that dialogue.")
             if command == "/rename_hint":
+                pending = {
+                    "id": session.id,
+                    "created_at": session.created_at.isoformat(),
+                    "context": list(self._ui_context(chat)),
+                    "expires": time.time() + 300,
+                    "page": page,
+                    "token": secrets.token_hex(12),
+                }
+                # Persist before sending the UI: a restart must not turn a title into a prompt.
+                self.core.store.set_channel_state(self.namespace, f"rename_input:{chat}", pending)
                 await self._panel(
                     chat,
                     f"Название диспетчера · #{session.id}\n"
+                    f"Агент / ПК: {_label(conv.agent)}\n"
                     f"Сейчас: {_label(session.title or 'Без названия')}\n\n"
-                    "Чтобы переименовать, отправьте команду:\n"
-                    f"/rename {session.id} НОВОЕ НАЗВАНИЕ\n"
-                    "Название Hermes не меняется. Обычный текст отправляется агенту.",
-                    [[("← Диалог", f"/dialogue {session.id} {page}")], *self._back_rows()],
+                    "Отправьте новое название следующим сообщением: 1–120 печатных символов.\n"
+                    "Время ввода — 5 минут. Это сообщение не будет отправлено агенту.\n"
+                    "Название Hermes не меняется. Для отмены нажмите кнопку или отправьте /cancel. "
+                    "Другая команда также отменит ввод.",
+                    [[("Отмена", f"/rename_cancel {pending['token']}")]],
                 )
                 return
             if command == "/switch":
@@ -1109,7 +1283,13 @@ class TelegramChannel(WorkCards, Dashboard, Channel):
                 f"Последняя активность: {session.last_used_at:%Y-%m-%d %H:%M} UTC",
             ]
             rows = []
-            if not selected:
+            if _restore_unavailable(session):
+                lines += ["", _recovery_text(session)]
+                rows += [
+                    [("➕ Новый диалог", "/new")],
+                    [("📋 История задач", "/jobs")],
+                ]
+            elif not selected:
                 rows.append([("▶ Выбрать диалог", f"/switch {session.id} {page}")])
             else:
                 lines += ["", "Отправьте сообщение, чтобы продолжить этот диалог."]
@@ -1139,15 +1319,49 @@ class TelegramChannel(WorkCards, Dashboard, Channel):
             jobs = await self.core.cancel(conv)
             await self._send(chat, f"Stopped jobs: {len(jobs)}")
         elif command.startswith("/"):
-            await self._send(chat, "Unknown command. Use /help.")
+            await self._panel(
+                chat,
+                "Неизвестная команда. Откройте помощь или панель.",
+                [[("Помощь", "/help")], *self._back_rows()],
+            )
         else:
-            job = await self.core.submit_selected(conv, text, delivery_namespace=self.namespace)
-            status_text = self._work_text(job)
+            context = self._ui_context(chat)
+            active = self.core.active_session(conv)
+            if _restore_unavailable(active):
+                await self._recovery_panel(chat, active)
+                return
+            try:
+                job = await self.core.submit_selected(conv, text, delivery_namespace=self.namespace)
+            except SessionNotFound:
+                # A disconnect can invalidate the binding while submit waits for its lock.
+                current = self.core.active_session(conv)
+                if (
+                    context == self._ui_context(chat)
+                    and active
+                    and current
+                    and active.id == current.id
+                    and _restore_unavailable(current)
+                ):
+                    await self._recovery_panel(chat, current)
+                    return
+                raise
+            status_text = self._work_text(job, accepted=True)
             message = await self._panel(chat, status_text, self._job_rows(job), editable=False)
             if self.settings.status_enabled:
                 if len(self._statuses) >= 32:
                     self._statuses.pop(next(iter(self._statuses)))
                 self._statuses[job.id] = (chat, message.message_id, status_text, 0)
+
+    async def _recovery_panel(self, chat, session):
+        await self._panel(
+            chat,
+            _recovery_text(session) + "\n\nЭто сообщение не отправлено агенту.",
+            [
+                [("➕ Новый диалог", "/new")],
+                [("📋 История задач", "/jobs"), ("💬 Диалоги", "/sessions")],
+                *self._back_rows(),
+            ],
+        )
 
     def _approval_chats(self, approval):
         conversation = approval.conversation

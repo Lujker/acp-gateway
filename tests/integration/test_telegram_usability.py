@@ -188,3 +188,133 @@ async def test_job_dialogue_selection_targets_exact_owned_route_and_is_once_only
         await channel._command(OWNER, f"/open_dialogue {other_job.id}")
     assert core.active_session(conv).id == old.id
     assert not server.log
+
+
+def lost_dialogue(core, monkeypatch, availability="restore-unavailable"):
+    conv = Conversation("telegram", str(OWNER), "work")
+    record = core.store.add_session(
+        conv,
+        "lost-dialogue",
+        "/work",
+        binding={
+            "backend": "hermes",
+            "mode": "dedicated",
+            "profile": "default",
+            "runtime_id": "lost-dialogue",
+            "stored_id": "stored-lost-dialogue",
+            "restore": "disabled",
+        },
+    )
+    client = core.agent("work")
+    original = client.session_availability
+    monkeypatch.setattr(
+        client,
+        "session_availability",
+        lambda sid: availability if sid == record.acp_session_id else original(sid),
+    )
+    return conv, record
+
+
+@pytest.mark.parametrize("availability", ["restore-unavailable", "uncertain"])
+async def test_lost_dialogue_offers_explicit_new_without_replaying_message(
+    telegram, monkeypatch, availability
+):
+    core, channel, session, server = telegram
+    conv, record = lost_dialogue(core, monkeypatch, availability)
+    await feed(channel, 1, "do not replay this task")
+    card = session.sent[-1]
+    assert "Это сообщение не отправлено агенту" in card.text
+    assert f"Диалог #{record.id}" in card.text
+    assert core.active_session(conv).id == record.id
+    assert not core.job_history("telegram", str(OWNER))["jobs"]
+    assert not server.log
+    action = button(card, "Новый диалог").callback_data
+    await click(channel, 2, card, action, user=OTHER)
+    await click(channel, 3, card.model_copy(update={"message_id": 999}), action)
+    assert core.active_session(conv).id == record.id
+    await click(channel, 4, card, action)
+    assert core.active_session(conv).id != record.id
+    assert len(core.sessions(conv)) == 2
+    await click(channel, 5, card, action)
+    assert session.calls[-1].show_alert
+    assert len(core.sessions(conv)) == 2
+    assert not core.job_history("telegram", str(OWNER))["jobs"]
+    assert "load_session" not in server.log
+
+
+@pytest.mark.parametrize("change", ["route", "selection"])
+async def test_lost_dialogue_recovery_new_rejects_a_newer_selection(telegram, monkeypatch, change):
+    core, channel, session, server = telegram
+    conv, record = lost_dialogue(core, monkeypatch)
+    await feed(channel, 1, "do not replay")
+    card = session.sent[-1]
+    action = button(card, "Новый диалог").callback_data
+    if change == "route":
+        channel._set_route(OWNER, "work")
+    else:
+        core.switch_dialogue(conv, record.id)
+    await click(channel, 2, card, action)
+    assert session.calls[-1].show_alert
+    assert len(core.sessions(conv)) == 1 and not server.log
+
+
+async def test_lost_dialogue_preview_home_and_history_do_not_suggest_continuing(
+    telegram, monkeypatch
+):
+    core, channel, session, server = telegram
+    conv, record = lost_dialogue(core, monkeypatch)
+    revision = core.store.active_revision(conv)
+    await feed(channel, 1, f"/dialogue {record.id}")
+    card = session.sent[-1]
+    assert "нельзя безопасно восстановить" in card.text
+    assert "Отправьте сообщение, чтобы продолжить" not in card.text
+    assert core.store.active_revision(conv) == revision
+    await click(channel, 2, card, button(card, "История задач").callback_data)
+    assert "Задачи этого чата" in session.sent[-1].text
+    await feed(channel, 3, "/menu")
+    assert "нельзя безопасно восстановить" in session.sent[-1].text
+    assert core.store.active_revision(conv) == revision
+    assert not server.log
+
+
+async def test_disconnect_while_submitting_shows_recovery_without_a_job(telegram, monkeypatch):
+    from acp_gateway.agents import SessionNotFound
+
+    core, channel, session, server = telegram
+    conv, record = lost_dialogue(core, monkeypatch, "attached")
+
+    async def disconnected(*args, **kwargs):
+        monkeypatch.setattr(
+            core.agent("work"), "session_availability", lambda sid: "restore-unavailable"
+        )
+        raise SessionNotFound("lost binding")
+
+    monkeypatch.setattr(core, "submit_selected", disconnected)
+    await feed(channel, 1, "do not replay")
+    assert "Это сообщение не отправлено агенту" in session.sent[-1].text
+    assert core.active_session(conv).id == record.id
+    assert not core.job_history("telegram", str(OWNER))["jobs"] and not server.log
+
+
+async def test_recovery_does_not_offer_new_for_a_changed_route_during_submit(telegram, monkeypatch):
+    from acp_gateway.agents import SessionNotFound
+
+    core, channel, session, server = telegram
+    conv, record = lost_dialogue(core, monkeypatch, "attached")
+
+    async def changed(*args, **kwargs):
+        monkeypatch.setattr(
+            core.agent("work"), "session_availability", lambda sid: "restore-unavailable"
+        )
+        channel._set_route(OWNER, "work")
+        raise SessionNotFound("Selection changed during disconnect; open /menu.")
+
+    monkeypatch.setattr(core, "submit_selected", changed)
+    await feed(channel, 1, "do not replay")
+    assert "Selection changed" in session.sent[-1].text
+    assert not any(
+        "Новый диалог" in item.text
+        for row in session.sent[-1].reply_markup.inline_keyboard
+        for item in row
+    )
+    assert core.active_session(conv).id == record.id and not server.log

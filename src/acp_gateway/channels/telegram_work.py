@@ -15,13 +15,15 @@ from acp_gateway.storage.records import utcnow
 
 
 class WorkCards:
-    def _work_text(self, job):
+    def _work_text(self, job, *, accepted=False):
         elapsed = max(0, int(((job.finished_at or utcnow()) - job.created_at).total_seconds()))
         try:
             pending = any(a.job_id == job.id for a in self.core.pending_approvals(self.name))
         except GatewayError:
             pending = False
         status = "⏸ Ожидает подтверждения" if pending and not job.status.finished else state(job)
+        if accepted and not job.status.finished and not pending:
+            status = "📥 Принято диспетчером"
         lines = [
             f"Задача: {job.id}",
             status,
@@ -38,6 +40,38 @@ class WorkCards:
             if preview:
                 lines += ["", preview]
         return "\n".join(lines)
+
+    @staticmethod
+    def _model_evidence(result):
+        evidence = result.get("model_state") or {}
+        status = evidence.get("state")
+        lines = []
+        hints = {
+            "intent": "Смена модели начата; исход ещё не подтверждён.",
+            "pending": "Смена модели принята, но применение ещё не подтверждено наблюдением.",
+            "unknown": "Исход смены модели неизвестен. Не повторяйте смену автоматически.",
+            "refused": "Смена модели отклонена; это не подтверждение применения.",
+            "confirmation_required": "Смена модели требует вашего явного подтверждения.",
+            "observed": "Модель подтверждена наблюдением агента.",
+        }
+        if status in hints:
+            lines.append(hints[status])
+        if evidence.get("deferred") and status == "pending":
+            lines.append("Изменение отложено до завершения текущей работы.")
+        if evidence.get("observed_model"):
+            lines.append(
+                f"Последнее наблюдение: {label(evidence.get('observed_provider'))}/"
+                f"{label(evidence['observed_model'])} — сохранённые сведения."
+            )
+        if status in {"intent", "unknown"}:
+            lines.append("/model state показывает сохранённый исход без подключения к агенту.")
+        if result.get("reconciliation") in {"unknown", "pending", "unavailable"}:
+            lines.append("Проверка не подтвердила итог. Повторная смена модели не выполнялась.")
+        if result.get("default_required"):
+            lines.append(
+                "Для этого диалога требуется выбрать или подтвердить модель перед отправкой."
+            )
+        return lines
 
     async def _approval_details(self, chat, argument):
         parts = argument.split()

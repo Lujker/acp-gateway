@@ -1,3 +1,4 @@
+# ruff: noqa: RUF001
 """Restart-safe answer delivery and independent Telegram status edits."""
 
 import asyncio
@@ -6,8 +7,9 @@ import secrets
 import pytest
 from aiogram.exceptions import TelegramBadRequest, TelegramNetworkError, TelegramRetryAfter
 from aiogram.methods import EditMessageText, SendMessage
-from test_telegram import OWNER, eventually, feed
+from test_telegram import OTHER, OWNER, click, eventually, feed
 from test_telegram import telegram as telegram
+from test_telegram_controls import button
 
 from acp_gateway.storage import Conversation, JobStatus
 
@@ -67,7 +69,12 @@ async def test_send_failures_never_blindly_replay(telegram, failure, state):
     assert core.store.deliveries.get(channel.namespace, job.id)["state"] == state
     assert core.store.deliveries.due(channel.namespace) is None
     await feed(channel, 2, f"/delivery {job.id}")
-    assert state in session.sent[-1].text
+    expected = {
+        "unknown": "Неизвестно, получен ли ответ",
+        "pending": "Ожидает отправки",
+        "failed": "Отправка отклонена",
+    }
+    assert expected[state] in session.sent[-1].text
     await feed(channel, 3, f"/result {job.id}")
     await eventually(lambda: any(m.text == "private saved answer" for m in session.sent))
 
@@ -259,3 +266,90 @@ async def test_status_429_defers_edit_without_duplicate_message(telegram):
         sum(isinstance(c, SendMessage) and c.text.startswith("Задача:") for c in session.calls) == 1
     )
     assert sum(m.message_id == edits[0].message_id for m in session.sent) == 1
+
+
+@pytest.mark.parametrize(
+    "delivery_state,expected",
+    [
+        ("pending", "Ожидает отправки"),
+        ("sending", "Отправляется"),
+        ("delivered", "Это не отметка о прочтении"),
+        ("failed", "Отправка отклонена"),
+        ("unknown", "Автоматического повтора не будет"),
+        (None, "Записи автоматической доставки нет"),
+    ],
+)
+async def test_delivery_card_explains_state_and_preserves_history(
+    telegram, delivery_state, expected
+):
+    core, channel, session, server = telegram
+    await pause_sender(channel)
+    job = saved(core, channel, "private saved answer")
+    if delivery_state is None:
+        core.store._conn.execute("DELETE FROM outbound_deliveries WHERE job_id = ?", (job.id,))
+    else:
+        core.store._conn.execute(
+            "UPDATE outbound_deliveries SET state = ? WHERE job_id = ?", (delivery_state, job.id)
+        )
+    # Refresh/back carry the history context even for a non-default page/filter.
+    history = f"active before {job.id}"
+    before = core.store.deliveries.get(channel.namespace, job.id)
+    await feed(channel, 1, f"/delivery {job.id} {history}")
+    card = session.sent[-1]
+    assert expected in card.text and "Завершена" in card.text
+    assert "private saved answer" not in card.text
+    refresh = button(card, "Обновить").callback_data
+    assert channel._panels.actions[refresh.removeprefix("u:")].command.endswith(history)
+    await click(channel, 2, card, refresh)
+    assert len(session.sent) == 1
+    card = session.sent[-1]
+    back = button(card, "← Задача").callback_data
+    assert channel._panels.actions[back.removeprefix("u:")].command.endswith(history)
+    await click(channel, 3, card, back)
+    assert "Задача " in session.sent[-1].text
+    assert core.store.deliveries.get(channel.namespace, job.id) == before
+    assert not server.log
+
+
+async def test_unknown_delivery_button_gets_saved_result_without_replay_or_foreign_access(telegram):
+    core, channel, session, server = telegram
+    await pause_sender(channel)
+    job = saved(core, channel, "private recovered answer")
+    core.store._conn.execute(
+        "UPDATE outbound_deliveries SET state = 'unknown', next_chunk = 1 WHERE job_id = ?",
+        (job.id,),
+    )
+    before = core.store.deliveries.get(channel.namespace, job.id)
+    await feed(channel, 1, f"/delivery {job.id}")
+    card = session.sent[-1]
+    assert "могут повториться" in card.text and "без запуска агента" in card.text
+    action = button(card, "Получить сохранённый результат").callback_data
+    await click(channel, 2, card, action, user=OTHER)
+    await click(channel, 3, card.model_copy(update={"message_id": 999}), action)
+    assert not any(m.text == "private recovered answer" for m in session.sent)
+    await feed(channel, 4, f"/delivery {job.id}", user=OTHER)
+    assert not any(m.text == "private recovered answer" for m in session.sent)
+    await click(channel, 5, card, action)
+    await eventually(lambda: any(m.text == "private recovered answer" for m in session.sent))
+    assert core.store.deliveries.get(channel.namespace, job.id) == before
+    assert core.store.deliveries.due(channel.namespace) is None
+    assert not server.log
+
+
+async def test_running_delivery_offers_refresh_without_a_finished_result(telegram):
+    core, channel, session, server = telegram
+    await pause_sender(channel)
+    record = core.store.add_session(
+        Conversation("telegram", str(OWNER), "work"), "running", "/work"
+    )
+    job = core.store.add_job("running", record.id, delivery_namespace=channel.namespace)
+    await feed(channel, 1, f"/delivery {job.id}")
+    card = session.sent[-1]
+    assert "Задача ещё выполняется" in card.text
+    assert button(card, "Обновить")
+    assert not any(
+        "Получить сохранённый результат" in item.text
+        for row in card.reply_markup.inline_keyboard
+        for item in row
+    )
+    assert not server.log

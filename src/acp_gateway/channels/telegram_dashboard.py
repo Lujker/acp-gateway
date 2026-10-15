@@ -62,9 +62,40 @@ class Dashboard:
             await self._job_panel(chat, job_id, history=history)
         elif command == "/open_dialogue":
             job = self.core.owned_job(argument, channel="telegram", key=str(chat))
+            if not self._can_continue_job(job):
+                raise GatewayError(
+                    "Диалог нельзя восстановить. Создайте новый диалог из результата."
+                )
             self.core.switch_dialogue(job.conversation, job.session_id)
             self._set_route(chat, job.conversation.agent)
             await self._command(chat, f"/dialogue {job.session_id}")
+        elif command == "/new_from_job":
+            job = self.core.owned_job(argument, channel="telegram", key=str(chat))
+            record = self.core.store.session(job.session_id)
+            if record is None or record.conversation != job.conversation:
+                raise GatewayError("Исходный диалог недоступен. Откройте историю задач.")
+            context = self._ui_context(chat)
+            session = await self.core.new_session(job.conversation, cwd=record.cwd)
+            current = self._ui_context(chat)
+            if current[:2] != context[:2] or (
+                context[0] != job.conversation.agent and current[2] != context[2]
+            ):
+                await self._panel(
+                    chat,
+                    f"Диалог #{session.id} создан для {label(job.conversation.agent)}. "
+                    "Ваш выбор изменился во время создания; откройте панель. "
+                    "Сообщения не отправлялись.",
+                    self._back_rows(),
+                )
+                return True
+            self._set_route(chat, job.conversation.agent)
+            await self._panel(
+                chat,
+                f"Новый диалог #{session.id}\nАгент / ПК: {label(job.conversation.agent)}\n"
+                f"Папка: {label(session.cwd, 500)}\n\n"
+                "Предыдущий контекст не переносится. Отправьте сообщение, чтобы начать.",
+                [[("💬 Открыть диалог", f"/dialogue {session.id}")], *self._back_rows()],
+            )
         elif command == "/computers":
             await self._computers_panel(chat, argument)
         elif command in {"/result", "/delivery"}:
@@ -78,16 +109,59 @@ class Dashboard:
                     raise GatewayError("Доставка занята. Повторите позже.")
             else:
                 delivery = self.core.store.deliveries.get(self.namespace, job.id)
-                text = (
-                    f"Доставка · {job.id}\nСостояние: {delivery['state']}\n"
-                    f"Подтверждено фрагментов: {delivery['next_chunk']}"
-                    if delivery
-                    else "Записи автоматической доставки нет."
-                )
+                lines = [f"Доставка · {job.id}", f"Задача: {state(job)}"]
+                if delivery:
+                    status, hint = {
+                        "waiting": (
+                            "Ожидает завершения задачи",
+                            "Ответ будет отправлен после завершения задачи.",
+                        ),
+                        "pending": (
+                            "Ожидает отправки",
+                            "Диспетчер продолжит отправку автоматически, когда Telegram доступен.",
+                        ),
+                        "sending": (
+                            "Отправляется",
+                            "Telegram ещё не подтвердил текущий фрагмент.",
+                        ),
+                        "delivered": (
+                            "Отправлена в Telegram",
+                            "Telegram подтвердил все фрагменты. Это не отметка о прочтении.",
+                        ),
+                        "failed": (
+                            "Отправка отклонена",
+                            "Автоматическая отправка остановлена. Проверьте доступность бота.",
+                        ),
+                        "unknown": (
+                            "Неизвестно, получен ли ответ",
+                            "Часть ответа могла прийти. Автоматического повтора не будет, "
+                            "чтобы не дублировать сообщения.",
+                        ),
+                    }[delivery["state"]]
+                    lines += [
+                        f"Состояние: {status}",
+                        f"Подтверждено фрагментов: {delivery['next_chunk']}",
+                        hint,
+                    ]
+                else:
+                    lines.append("Записи автоматической доставки нет.")
+                rows = [[("↻ Обновить", f"/delivery {job.id} {history}".rstrip())]]
+                if job.status.finished:
+                    lines.append(
+                        "«Получить сохранённый результат» отправит его целиком ещё раз "
+                        "без запуска агента. Уже полученные фрагменты могут повториться."
+                    )
+                    rows.append([("📄 Получить сохранённый результат", f"result:{job.id}")])
+                else:
+                    lines.append("Задача ещё выполняется. Обновите карточку после завершения.")
                 await self._panel(
                     chat,
-                    text,
-                    [[("← Задача", f"/job {job.id} {history}".rstrip())], *self._back_rows()],
+                    "\n".join(lines),
+                    [
+                        *rows,
+                        [("← Задача", f"/job {job.id} {history}".rstrip())],
+                        *self._back_rows(),
+                    ],
                 )
         else:
             return False

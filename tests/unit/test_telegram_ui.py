@@ -10,6 +10,11 @@ from acp_gateway.core import GatewayError
         "/new",
         "/switch 1",
         "/open_dialogue job",
+        "/new_from_job job",
+        "/select_recent 1",
+        "/select_favorite home/hermes 0",
+        "/favorite add home/hermes 0",
+        "/rename_hint 1",
         "/agent home2/hermes",
         "cancel:job",
         "/mode set auto 1 2",
@@ -32,7 +37,17 @@ def test_mutating_controls_are_bound_to_message_and_one_shot(command):
 @pytest.mark.parametrize(
     "context", [("home2/hermes", 1, 2), ("home/hermes", 3, 2), ("home/hermes", 1, 4)]
 )
-@pytest.mark.parametrize("command", ["/new", "/open_dialogue job"])
+@pytest.mark.parametrize(
+    "command",
+    [
+        "/new",
+        "/open_dialogue job",
+        "/rename_hint 1",
+        "/new_from_job job",
+        "/select_recent 1",
+        "/select_favorite home/hermes 0",
+    ],
+)
 def test_stale_mutating_controls_refuse_route_and_dialogue_changes(context, command):
     panels = Panels()
     markup, tokens = panels.create(10, [[("New", command)]], ("home/hermes", 1, 2))
