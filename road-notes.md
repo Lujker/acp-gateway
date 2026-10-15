@@ -3042,3 +3042,21 @@ docs/project-status.md (поставка/разработка/ограничен
 битых путей нет; diff whitespace check пройден. Runtime код не менялся,
 полный test suite повторно не запускался. Результаты 1337 source / 79 Windows
 относятся к предыдущей реализации dashboard, не к новой приёмке документов.
+
+
+## 2026-10-15 — Docker-диспетчер за reverse proxy хоста
+
+Владелец переносит работающий диспетчер rc8 (uv tool + systemd user, вход
+`ws://IP:18766` без TLS) с одного своего VPS на другой, где уже работает nginx
+в Docker со своим доменом и сертификатом. Добавлен `deploy/docker/compose.proxy.yaml`:
+диспетчер подключается к внешней Docker-сети прокси (`ACPGW_PROXY_NETWORK`) под
+алиасом `acpgw-dispatcher` и не публикует портов; прокси отдаёт точный путь
+`/acpgw/connect` по образцу `nginx-location.conf.example`. Файл вошёл в релизный
+комплект (`scripts/build_release.py`). Инструкция — [диспетчер на VPS в Docker](docs/setup/vps-docker.ru.md):
+выбор варианта, запуск за прокси, перенос нативного диспетчера без перевыпуска
+ключей (компьютеры в `gateway.db` хранятся хешами), эксплуатация и обновление.
+
+Проверено: перенесённый конфиг проходит `config check`. Сам overlay не
+прогонялся `docker compose config` локально (Docker в этой WSL не подключён);
+smoke `scripts/smoke_docker.py` вариант с внешней сетью не покрывает. Живой
+перенос — за владельцем.
