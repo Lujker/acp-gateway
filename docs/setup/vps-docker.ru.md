@@ -158,10 +158,22 @@ curl -sS -o /dev/null -w '%{http_code}\n' https://ВАШ_ДОМЕН/acpgw/connec
      (`ACPGW_UID`), права `0600`.
 4. Запустите диспетчер в Docker (раздел 3.3) и проверьте, что компьютеры на
    месте: `acpgw computers list` (команды — раздел 5).
-5. На каждом ПК смените адрес диспетчера: остановить службу коннектора
-   (`service --role connector disable` на Windows), в `acpgw setup`
-   раздел `connection` указать `wss://ВАШ_ДОМЕН/acpgw/connect` с тем же
-   computer ID и ключом, затем `service --role connector enable`.
+5. На каждом ПК смените адрес диспетчера. Адрес вшит в аргументы
+   установленной задачи (службы), поэтому после правки раздела `connection`
+   задачу нужно **переустановить** — `disable`/`enable` её не переписывают.
+   На Windows (`$Cfg` — каталог настроек коннектора):
+
+   ```powershell
+   $G = @("--config", "$Cfg\config.yaml", "--env-file", "$Cfg\.env")
+   & $Acpgw @G service --role connector disable
+   & $Acpgw setup --config-dir $Cfg     # connection: wss://ВАШ_ДОМЕН/acpgw/connect, тот же ID и ключ
+   & $Acpgw @G service --role connector install
+   & $Acpgw @G service --role connector enable
+   ```
+
+   `install` без `--env-file` откажет («a persistent .env file is required»).
+   Проверка: в аргументах задачи (`Get-ScheduledTask`) — новый адрес, в
+   журнале коннектора — `computer connected`.
 6. Проверьте `computers status` (оба online) и Telegram: `/start`, `/agent`,
    короткий запрос.
 7. **Откат**, пока старую установку не удалили: остановить Docker-диспетчер
