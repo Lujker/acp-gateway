@@ -9,6 +9,8 @@ import sys
 import time
 from pathlib import Path
 
+HEALTH_TIMEOUT_SECONDS = 60
+
 
 def invoke(command, *, capture=False, timeout=300, pass_fds=()):
     result = subprocess.run(  # noqa: S603 — fixed executables and explicit argument lists
@@ -73,6 +75,8 @@ def admission(plan, service, action):
     if service["role"] == "connector":
         arguments += ["--role", "connector"]
     arguments += [action, "--reservation-file", plan["reservation"]]
+    if action == "prepare" and plan.get("restart_uncertain"):
+        arguments += ["--restart-uncertain"]
     cli(plan, service, *arguments)
 
 
@@ -93,7 +97,7 @@ def restore_state(plan, service):
     control(service, "enable" if service["enabled"] else "disable")
     if service["running"] and not active:
         control(service, "start")
-        deadline = time.monotonic() + 15
+        deadline = time.monotonic() + HEALTH_TIMEOUT_SECONDS
         while time.monotonic() < deadline:
             current = state(service)
             if current.get("ActiveState") == "active":
@@ -121,12 +125,19 @@ def restore_state(plan, service):
         raise ValueError("Updated service did not become healthy; inspect status and logs")
 
 
-def record(plan, status, phase, code=None):
+def record(plan, status, phase, code=None, **details):
+    plan["_phase"] = phase
     result = Path(plan["result"])
     temporary = result.with_suffix(".tmp")
     temporary.write_text(
         json.dumps(
-            {"operation": "service-update", "status": status, "phase": phase, "returncode": code}
+            {
+                "operation": "service-update",
+                "status": status,
+                "phase": phase,
+                "returncode": code,
+                **details,
+            }
         ),
         encoding="utf-8",
     )
@@ -135,6 +146,7 @@ def record(plan, status, phase, code=None):
 
 
 def execute(plan):
+    record(plan, "running", "inspect")
     probe = (
         "import json,sys; from acp_gateway.service_update import inspect_service; "
         "print(json.dumps(inspect_service(*json.loads(sys.argv[1]))))"
@@ -155,6 +167,8 @@ def execute(plan):
             json.dumps(plan["windows_script"]),
         ]
     service = json.loads(invoke(arguments, capture=True, timeout=30))
+    if plan.get("restart_uncertain") and service["role"] != "connector":
+        raise ValueError("--restart-uncertain is only for connector updates")
     if service.get("backend") == "windows":
         return execute_windows(plan, service)
     record(plan, "running", "reserve")
@@ -180,6 +194,7 @@ def execute(plan):
             raise ValueError("Service did not stop; package update refused")
         check_definition(service)
         record(plan, "running", "update")
+        plan["_package_status"] = "running"
         invoke(
             [
                 plan["entry"],
@@ -191,6 +206,10 @@ def execute(plan):
             ],
             pass_fds=(plan["coordinator_fd"],),
         )
+        plan["_package_status"] = "succeeded"
+    except (OSError, ValueError, subprocess.SubprocessError):
+        remember_failure(plan)
+        raise
     finally:
         if touched:
             record(plan, "running", "restore-services")
@@ -255,7 +274,7 @@ def restore_windows(plan, service):
         try:
             windows_request(plan, service, "maintenance-flags", enabled=True)
             windows_request(plan, service, "start")
-            deadline = time.monotonic() + 20
+            deadline = time.monotonic() + HEALTH_TIMEOUT_SECONDS
             while time.monotonic() < deadline:
                 try:
                     current = windows_request(plan, service, "maintenance-state")
@@ -304,6 +323,7 @@ def execute_windows(plan, service):
         if stopped["state"] not in {1, 3} or stopped["enabled"]:
             raise ValueError("Task did not stop; update refused")
         record(plan, "running", "update")
+        plan["_package_status"] = "running"
         handoff = str(Path(plan["reservation"]).parent / "package-handoff.json")
         invoke(
             [
@@ -324,12 +344,40 @@ def execute_windows(plan, service):
         ):
             raise ValueError("Invalid package helper handoff")
         invoke([details["python"], details["worker"], details["manifest"]])
+        plan["_package_status"] = "succeeded"
+    except (OSError, ValueError, subprocess.SubprocessError):
+        remember_failure(plan)
+        raise
     finally:
         if touched:
             record(plan, "running", "restore-services")
             restore_windows(plan, service)
         elif reserved:
             admission(plan, service, "resume")
+
+
+def remember_failure(plan):
+    phase = plan.get("_phase", "inspect")
+    if "_failed_phase" not in plan:
+        plan["_failed_phase"] = phase
+        if plan.get("_package_status") == "running":
+            plan["_package_status"] = "failed"
+
+
+def failure_details(plan):
+    phase = plan.get("_failed_phase", plan.get("_phase", "inspect"))
+    reason = {
+        "inspect": "Service/config inspection failed; specify config/env paths.",
+        "reserve": "Admission refused; inspect active/uncertain work before retrying.",
+        "stop": "Service did not stop safely; package replacement was refused.",
+        "update": "Package update failed; inspect the recovery snapshot.",
+        "restore-services": "Service restore/readiness failed; inspect service health.",
+    }.get(phase, "Service update failed; inspect service health and recovery files.")
+    return {
+        "failed_phase": phase,
+        "reason": reason,
+        "package_status": plan.get("_package_status", "not_started"),
+    }
 
 
 def wait_parent(pid):
@@ -370,13 +418,15 @@ def main():
             execute(plan)
         code = 0
     except (OSError, ValueError, subprocess.SubprocessError):
+        remember_failure(plan)
         print(
             "Service update failed; inspect update --status, service logs and recovery files.",
             file=sys.stderr,
         )
         print(f"Service update recovery plan: {manifest}", file=sys.stderr)
     finally:
-        record(plan, "succeeded" if code == 0 else "failed", "complete", code)
+        details = failure_details(plan) if code else {}
+        record(plan, "succeeded" if code == 0 else "failed", "complete", code, **details)
         # Inner update has its own result; expose the entire service cycle last.
         pointer = Path(plan["pointer"])
         temporary = pointer.with_suffix(".service-tmp")

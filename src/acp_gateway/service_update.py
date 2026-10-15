@@ -5,6 +5,56 @@ import sys
 from pathlib import Path
 
 
+def resolve_selection(config, env_file, role=None):
+    """Explicit CLI/environment paths win; otherwise use the owned Windows task."""
+    import os
+
+    if (
+        sys.platform == "win32"
+        and config is None
+        and env_file is None
+        and not os.environ.get("ACPGW_CONFIG")
+        and not os.environ.get("ACPGW_ENV_FILE")
+    ):
+        from acp_gateway.windows_service import installed_selection
+
+        config, env_file = installed_selection()
+        role = role or "connector"
+    return config, env_file, role
+
+
+def preflight_activity(service, *, restart_uncertain=False):
+    """Observe before handoff; live prepare still reserves admission atomically."""
+    if restart_uncertain and service["role"] != "connector":
+        raise ValueError("--restart-uncertain is only for connector updates")
+    if service["role"] != "connector" or not service["running"]:
+        return
+    from acp_gateway.connectors.maintenance import can_reserve, read_status
+
+    activity = read_status(Path(service["data_dir"]))
+    if activity["state"] != "running":
+        raise ValueError(
+            "Cannot verify connector activity; inspect maintenance --role connector status"
+        )
+    if not can_reserve(activity, restart_uncertain=restart_uncertain):
+        counts = ", ".join(
+            f"{key}={activity.get(key, 0)}"
+            for key in (
+                "pending_requests",
+                "pending_approvals",
+                "running_sessions",
+                "uncertain_sessions",
+                "opening",
+                "unsupported_agents",
+            )
+        )
+        raise ValueError(
+            "Connector maintenance refused: " + counts + ". "
+            "Finish active work first. For uncertain-only state, after verifying no agent turn "
+            "is running, explicitly select update --with-services --restart-uncertain."
+        )
+
+
 def inspect_service(config, env_file, role=None):
     from acp_gateway import service
     from acp_gateway.config import load_config
@@ -85,4 +135,5 @@ def inspect_service(config, env_file, role=None):
         "pid": state.get("MainPID", "0"),
         "config": str(cfg.config_path.resolve()),
         "env_file": str(cfg.env_file.resolve()),
+        "data_dir": str(cfg.settings.resolved_data_dir()),
     }

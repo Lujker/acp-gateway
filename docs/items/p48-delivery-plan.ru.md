@@ -971,3 +971,118 @@ update --status. Прямой uv tool install --upgrade --python 3.12
 RC выбирается явно; --stable и uv tool upgrade с прежним exact pin не заменяют
 выбор rc8. Повторные setup/enrollment/смена computer ID не нужны.
 Живая приёмка Telegram/host lifecycle остаётся открытой.
+
+
+### 2026-10-15 — фактическая попытка обновления владельца: VPS и home
+
+Владелец сообщил: VPS CLI уже rc8, systemd active/running/enabled, но весь
+service-update отмечен failed. Его полный вывод подтверждает успешные package
+install, config check и Maintenance verified; ошибка возникла после включения
+службы, в завершающем restore/health этапе. Точная причина пока не установлена:
+запрошены status/doctor/computers именно из SSH gatewayuser@example-server.
+Присланные затем команды из user@EXAMPLE-DESKTOP относились к отдельной
+старой WSL установке; отсутствие doctor и disabled ingress там не характеризуют
+VPS и не требуют повторного setup.
+
+На текущем Windows home установлен rc5. Task Scheduler использует
+AppData/Local/acpgw-connector/config.yaml и .env, а initial update был запущен
+без config/env: сохранённый plan.selection = [null,null,connector].
+С явными реальными путями config check, ключ enrollment и observer Hermes probe
+прошли без prompts/изменения диалогов. Повторный managed update с путями также
+отказал: maintenance status содержит pending_requests=0, pending_approvals=0,
+running_sessions=0, uncertain_sessions=1, reserved=false, idle_observed=false;
+локальный connector-sessions list пуст. Это блокировка uncertain/lost authority,
+а не разрешение считать агент idle и форсировать update.
+
+Работающий rc5 connector не был остановлен. У владельца запрошено подтверждение
+отсутствия незавершённой Hermes задачи перед явной штатной остановкой только
+connector, обновлением и повторным включением. Никакой uncertain fence не удалён,
+old requests не переигрывались. Дефект диагностики: service-update результат
+содержит только failed/complete/returncode и не сохраняет причины/failed phase;
+нужна отдельная доработка, опубликованный rc8 не меняется.
+
+
+### 2026-10-15 — home обновлён, VPS проверен по SSH
+
+Владелец подтвердил отсутствие незавершённой задачи Hermes и явно разрешил
+штатную остановку только home connector, обновление и включение.
+Первоначальный tool review отклонил неполный цикл stop/update без restore;
+он не выполнялся. Выполнен полный цикл с finally-восстановлением задачи:
+service disable сообщил graceful stop, uv заменил rc5 на registry rc8,
+task install/enable завершились успешно. Версия rc8/uv/registry,
+Task Scheduler state=4/enabled=true; maintenance running, uncertain_sessions=0,
+pending_requests/approvals/running_sessions=0, idle_observed=true.
+Config/env/home.key/setup.json побайтно сохранены (сравнение SHA256 с preflight).
+Hermes проверен observer-only, без новых сессий/prompts/решений.
+На VPS home и work зарегистрированы connected=true; readiness до первого ACP
+initialize закономерно not_initialized, это не отказ соединения.
+Версия второго ПК в этой сессии не проверялась и не изменялась.
+
+По разрешённому SSH-доступу проверен VPS: installed и running gateway rc8,
+schema 8, API health и Telegram getMe прошли, maintenance reserved=false и
+running_jobs=0, systemd active/running/enabled. С неинтерактивным SSH требуется
+явный ~/.local/bin/acpgw и PATH с ~/.local/bin для определения uv manager.
+
+Причина VPS service-update failed установлена по журналу:
+systemd начал процесс в 07:08:39 UTC (10:08:39 МСК), API/application startup
+завершился в 07:09:02 UTC (10:09:02 МСК), то есть через 23 секунды.
+restore_state worker ждёт health только 15 секунд. Package update и восстановление
+службы прошли, но readiness deadline дал ложную ошибку до завершения cold start.
+Исторический failed-result не подменялся, повторное обновление/перезапуск здорового
+VPS не выполнялись. Опубликованные rc8/tag/assets сохранены.
+
+Незакрытая доработка updater: разумный bounded cold-start health budget вместо
+15 секунд, регрессия на готовность после 23 секунд и явные failed phase/reason
+в update --status; отдельно различать managed-update refusal по uncertain state
+и ошибку package update. Эта доработка не реализована и не опубликована.
+
+
+### 2026-10-15 — исправление однострочного managed update (кодовая основа готова)
+
+По просьбе владельца внесены изменения в 0.2.0rc9.dev0; опубликованный rc8
+и production установки не менялись. Linux/Windows readiness budget поднят
+до 60 секунд с реальной проверкой API/maintenance state, а не только process state.
+Windows при отсутствии явных CLI/env путей читает config/env из собственной
+зарегистрированной задачи; чужой executable/principal и неподдерживаемый
+launch отказывают. Явные пути не перезаписываются.
+
+Preflight до фонового handoff показывает причину/counts в терминале и записывает
+новую попытку в update --status без остановки службы. Для отказов helper сохранены
+failed_phase, controlled reason и package_status; config/сырой subprocess output
+в result не сохраняются. Различаются package failure и restore/readiness failure.
+
+Обычная uncertain fence сохранена. Добавлен explicit --restart-uncertain:
+владелец подтверждает, что незавершённой работы нет, и одним вызовом разрешает
+только uncertain-only connector cycle. Live prepare проверяет все остальные
+счётчики и атомарно резервирует admission; busy/approval/opening/unsupported
+состояния по-прежнему отказывают. Quarantine/lost authority не сбрасываются до
+остановки; resume их не очищает, старые prompts/решения не переигрываются.
+Флаг запрещён для gateway, status/check и plain update. Старый rc8 connector,
+не поддерживающий opt-in IPC, при неопределённости продолжает отказывать.
+
+Полный source suite: **1386 passed / 38 skipped**, 228.721s;
+dist/update-fix-verification/source.xml/.log. Focused updater/IPC/CLI/selection
+**95 passed / 2 native parser skips**, 2.910s. Синтетический cold-start 23с проходит;
+не ставший healthy процесс по-прежнему даёт отказ. Дополнительно проверяются
+installed native Windows preview и disposable Task Scheduler, без production задач.
+Поставка нового релиза этой итерацией не выполняется. Для первого перехода с rc8
+остаются требования старого helper; исправления действуют после установки новой
+версии, начиная со следующего запуска update.
+
+Финальная проверка в синхронизированном source окружении 0.2.0rc9.dev0:
+**1386 passed / 38 skipped**, 320.661s
+(dist/update-fix-verification/source-final.xml/.log). Installed preview wheel
+в локальном Windows temp venv: **99 passed**, 290.560s, включая disposable
+Task Scheduler (windows-local.xml/.log). Production task и Hermes не менялись,
+одноразовые ACP Gateway Test-* задачи удалены fixture cleanup.
+
+Первый native прогон из venv на WSL UNC дал 91 passed / 8 failed:
+шесть проверок старта/остановки не дождались процесса из сетевого venv, две
+ожидали только поздний текст ACL guard. Локальный Windows venv устранил
+стартовые отказы. ACL-тесты принимают оба конкретных корректных отказа
+(credential preflight и service guard), сохраняя проверку отсутствия изменений
+задачи; требования приватности не ослаблены. Native parser проверен на пробелах
+и кириллице, настоящий owned task отдаёт config/env, чужой executable отказывает.
+Ruff check/format, diff whitespace и secret guard прошли.
+Остаток: выпуск версии с исправлениями и отдельная live приёмка обновления на
+поставленных VPS/коннекторах. rc8 остаётся опубликованным и не переписывается.

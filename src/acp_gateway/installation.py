@@ -302,8 +302,38 @@ def _service_update_guard(args):
 
 
 def _handoff_service_update(args, descriptor):
-    from acp_gateway import service_update_worker
+    from acp_gateway import service_update, service_update_worker
 
+    try:
+        args.config, args.env_file, args.service_role = service_update.resolve_selection(
+            args.config, args.env_file, args.service_role
+        )
+        inspected = service_update.inspect_service(args.config, args.env_file, args.service_role)
+        service_update.preflight_activity(
+            inspected, restart_uncertain=getattr(args, "restart_uncertain", False)
+        )
+    except (OSError, ValueError, subprocess.SubprocessError) as exc:
+        directory = paths.data_dir() / "updates" / lease_path().stem
+        directory.mkdir(parents=True, exist_ok=True, mode=0o700)
+        result = directory / (uuid.uuid4().hex + ".service-result.json")
+        # Exception text can contain config values. Persist only controlled guidance.
+        service_update_worker.record(
+            {"result": str(result)},
+            "failed",
+            "preflight",
+            1,
+            failed_phase="preflight",
+            package_status="not_started",
+            error_type=type(exc).__name__,
+            reason="Preflight refused. Check selected config/env and connector activity; "
+            "the immediate CLI error gives details. No service was stopped.",
+        )
+        pointer = directory / "last-operation.json"
+        temporary_pointer = pointer.with_suffix(".tmp")
+        temporary_pointer.write_text(json.dumps({"result": str(result)}), encoding="utf-8")
+        temporary_pointer.chmod(0o600)
+        temporary_pointer.replace(pointer)
+        raise
     result = subprocess.run(  # noqa: S603 — resolved uv executable and fixed arguments
         [_uv(), "tool", "dir", "--bin"], capture_output=True, text=True, timeout=10, check=True
     )
@@ -339,6 +369,7 @@ def _handoff_service_update(args, descriptor):
             args.service_role,
         ],
         "coordinator_fd": descriptor,
+        "restart_uncertain": getattr(args, "restart_uncertain", False),
         "coordinator_lock": str(lease_path().with_suffix(".service-update.lock")),
         "pid": os.getpid(),
         "reservation": str(temporary / "reservation.json"),
@@ -449,6 +480,10 @@ def maintenance(args) -> int:
         or (args.handoff_file and sys.platform != "win32")
     ):
         raise ValueError("--with-services requires a Linux or Windows update/rollback operation")
+    if getattr(args, "restart_uncertain", False) and (
+        not with_services or args.service_role == "gateway" or args.check or args.status
+    ):
+        raise ValueError("--restart-uncertain requires a connector update --with-services")
     if getattr(args, "service_role", None) and not with_services:
         raise ValueError("--service-role requires --with-services")
     if with_services and sys.platform == "win32" and args.service_role == "gateway":

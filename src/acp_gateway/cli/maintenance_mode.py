@@ -23,6 +23,9 @@ def _check_file(path):
 
 def run(client, config, args):
     action = args.maintenance_command
+    restart_uncertain = getattr(args, "restart_uncertain", False)
+    if restart_uncertain and getattr(args, "role", "gateway") != "connector":
+        raise ValueError("--restart-uncertain is only for connector maintenance")
     if action == "status":
         show_json(request(client, "GET", "/maintenance"))
         return
@@ -42,7 +45,8 @@ def run(client, config, args):
         try:
             with os.fdopen(descriptor, "w", encoding="utf-8") as stream:
                 _check_file(path)
-                data = request(client, "POST", "/maintenance/prepare")
+                options = {"json": {"restart_uncertain": True}} if restart_uncertain else {}
+                data = request(client, "POST", "/maintenance/prepare", **options)
                 token = data.get("token")
                 if not isinstance(token, str) or not re.fullmatch(r"[a-f0-9]{32}", token):
                     token = None

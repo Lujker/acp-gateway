@@ -21,6 +21,15 @@ FIELDS = (
 )
 
 
+def can_reserve(status, *, restart_uncertain=False):
+    """An explicit restart acknowledges uncertainty, never active or unsupported work."""
+    if status.get("reserved") or status.get("unsupported_agents", 0):
+        return False
+    if any(status.get(key, 0) for key in FIELDS if key != "uncertain_sessions"):
+        return False
+    return not status.get("uncertain_sessions", 0) or restart_uncertain
+
+
 class ConnectorMaintenance:
     def __init__(self, profiles, managers):
         self.profiles, self.managers = profiles, managers
@@ -62,10 +71,10 @@ class ConnectorMaintenance:
             return manager.retire(handle)
         raise ValueError("Unknown local session operation")
 
-    def apply(self, operation, token=None, *, force=False):
+    def apply(self, operation, token=None, *, force=False, restart_uncertain=False):
         if operation == "prepare":
             self.check_admission()
-            if not self.status()["idle_observed"]:
+            if not can_reserve(self.status(), restart_uncertain=restart_uncertain):
                 raise ValueError("Connector busy, uncertain or unsupported; maintenance refused")
             self.token = secrets.token_hex(16)
             for manager in self.managers.values():
@@ -114,6 +123,7 @@ async def watch(directory, instance, controller, *, interval=0.2):
                     and request.get("operation")
                     in {"prepare", "resume", "sessions", "journal", "retire"}
                     and type(request.get("force", False)) is bool
+                    and type(request.get("restart_uncertain", False)) is bool
                 )
                 if valid:
                     last = request["request"]
@@ -128,6 +138,7 @@ async def watch(directory, instance, controller, *, interval=0.2):
                                 request["operation"],
                                 request.get("token"),
                                 force=request.get("force", False),
+                                restart_uncertain=request.get("restart_uncertain", False),
                             )
                         response = {"status": 200, "result": result}
                     except (ValueError, AgentUnavailable, KeyError, TypeError):

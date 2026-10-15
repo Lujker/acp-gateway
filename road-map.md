@@ -2,7 +2,7 @@
 
 > Статус: единый действующий план ACP Gateway.
 > Последняя сверка: 2026-10-15 — rc8 опубликован в GitHub/PyPI; 1358 source / 121 Windows tests passed;
-> registry rc7→rc8 проверен в Linux/Windows, живая Telegram-приёмка впереди.
+> registry rc7→rc8 проверен в Linux/Windows; VPS/home работают на rc8, живая Telegram-приёмка впереди.
 > Опубликован rc7; независимое ревью завершено, три находки исправлены в rc8.dev0,
 > добавлены будущие P4.15–P4.16 (remote update/host management); P2.4 (Telegram UX) возобновлён 2026-10-15;
 > README сокращён, docs получили оглавление. VPS/Telegram + два Windows/Hermes connectors,
@@ -876,7 +876,10 @@ Goose/platform — P4.9, ownership — P4.10.
 2. **P2.4 — удобство Telegram (PARTIAL).** Кодовая часть готова и проверена;
    rc8 опубликован — далее живая приёмка имён, approvals/progress,
    параллельных диалогов и возврата по истории; [объём и приёмка](docs/items/telegram-usability.ru.md).
-3. **P3.4/P3.5 — установка, настройка и контроль службы.** Основа Linux/WSL
+3. **P3.4/P3.5 — установка, настройка и контроль службы.** В 0.2.0rc9.dev0 исправлены
+   managed update: cold-start budget, Windows task config selection, diagnostics и явный
+   uncertain-only restart. 1386 source / 99 Windows preview passed; остались выпуск и live
+   update приёмка — [журнал](docs/items/p48-delivery-plan.ru.md). Основа Linux/WSL
    и самостоятельная Linux-сборка подтверждены чистым контейнерным CI;
    выпускать версии вручную из локальной сборки; Actions только по ручному запуску.
 4. **P3.1/P3.5 — настоящий Windows reboot.** D-Bus восстановлен; systemd и

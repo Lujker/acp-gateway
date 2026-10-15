@@ -112,3 +112,20 @@ def test_malformed_token_file_is_not_sent_or_deleted(context, data):
         mode.run(client, config, args)
     assert not calls
     assert path.read_text() == data
+
+
+def test_uncertain_restart_ack_is_only_forwarded_for_explicit_connector_prepare(context):
+    client, config, args, calls, _ = context
+    args.role = "connector"
+    args.restart_uncertain = True
+    mode.run(client, config, args)
+    assert json.loads(calls[0].content) == {"restart_uncertain": True}
+
+
+def test_gateway_cannot_ack_connector_uncertainty(context):
+    client, config, args, calls, _ = context
+    args.role = "gateway"
+    args.restart_uncertain = True
+    with pytest.raises(ValueError, match="only for connector"):
+        mode.run(client, config, args)
+    assert not calls

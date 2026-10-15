@@ -195,3 +195,41 @@ def test_busy_reservation_keeps_service_and_package_untouched(cycle):
         worker.execute(plan)
     assert calls == ["prepare"]
     assert current["ActiveState"] == "active"
+
+
+@pytest.mark.parametrize("ready_after", [23, None])
+def test_cold_start_budget_accepts_slow_health_but_still_times_out(cycle, monkeypatch, ready_after):
+    plan, _, current, calls, _ = cycle
+    clock = [0.0]
+    original = worker.cli
+    monkeypatch.setattr(worker.time, "monotonic", lambda: clock[0])
+    monkeypatch.setattr(worker.time, "sleep", lambda delay: clock.__setitem__(0, clock[0] + delay))
+
+    def delayed(plan, service, *arguments, **kwargs):
+        if arguments == ("status",) and (ready_after is None or clock[0] < ready_after):
+            raise ValueError("API not ready")
+        return original(plan, service, *arguments, **kwargs)
+
+    monkeypatch.setattr(worker, "cli", delayed)
+    if ready_after is None:
+        with pytest.raises(ValueError, match="did not become healthy"):
+            worker.execute(plan)
+        assert clock[0] >= 60
+        assert worker.failure_details(plan)["failed_phase"] == "restore-services"
+    else:
+        worker.execute(plan)
+        assert 23 <= clock[0] < 60
+    assert calls.count("start") == 1 and calls.count("update") == 1
+    assert current["ActiveState"] == "active" and current["UnitFileState"] == "enabled"
+    assert plan["_package_status"] == "succeeded"
+
+
+def test_failure_diagnostics_distinguish_busy_from_package_failure(cycle):
+    plan, _, _, _, failures = cycle
+    failures.add("prepare")
+    with pytest.raises(ValueError):
+        worker.execute(plan)
+    details = worker.failure_details(plan)
+    assert details["failed_phase"] == "reserve"
+    assert details["package_status"] == "not_started"
+    assert "uncertain" in details["reason"]

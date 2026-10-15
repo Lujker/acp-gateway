@@ -274,7 +274,10 @@ def test_public_acl_refused_without_task_changes(disposable_connector, target):
     security.SetSecurityDescriptorDacl(1, public, 0)
     try:
         win32security.SetFileSecurity(str(path), win32security.DACL_SECURITY_INFORMATION, security)
-        with pytest.raises(ValueError, match="ACL is not private"):
+        with pytest.raises(
+            ValueError,
+            match=r"ACL is not private|Computer credential files must have private Windows ACLs",
+        ):
             service.install(config, launch=launch)
         assert not windows_service._request("status")["installed"]
     finally:
@@ -521,3 +524,15 @@ def test_native_task_runs_windowless_and_remains_cli_managed(disposable_connecto
     )
     assert windows_service._request("disable")["stopMode"] == "graceful"
     assert not runtime.exists()
+
+
+def test_native_owned_task_selection_reads_existing_config_paths(disposable_connector):
+    config, launch, _ = disposable_connector
+    service.install(config, launch=launch)
+    selected = windows_service.installed_selection()
+    assert selected == (config.config_path.resolve(), config.env_file.resolve())
+    # A different interpreter cannot use automatic discovery to claim this task.
+    with pytest.raises(ValueError, match="another installation"):
+        windows_service._request(
+            "selection", executable=str(config.config_path.parent / "other.exe")
+        )
