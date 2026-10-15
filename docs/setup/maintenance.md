@@ -104,3 +104,17 @@ single-owner; multi-account scopes are P4.10.
 Installation and acceptance scenarios are listed separately in
 [P4.8.5](../items/p48-delivery-plan.ru.md#отдельный-этап-установка-и-приёмка-p485).
 Live VPS/Telegram/Hermes acceptance and service update/rollback remain open.
+
+
+## Explicit uncertain-only connector restart (0.2.0rc9.dev0, unreleased)
+
+Ordinary prepare remains fail-closed. An owner who has checked that no agent turn
+is running can acknowledge uncertainty with
+`maintenance --role connector prepare --restart-uncertain`, or let
+`update --with-services --restart-uncertain` perform the complete managed cycle.
+The flag permits uncertain_sessions only; pending RPCs/approvals, running sessions,
+opening attachments, unsupported agents and an existing reservation still refuse.
+The activity check and reservation happen on the live event loop. This does not
+clear quarantine/lost authority or repeat any model/tool request; resume leaves
+uncertainty intact. Only the explicitly authorized process restart resets local
+attachment state. A stale or missing heartbeat never proves idleness.

@@ -52,6 +52,11 @@ def _build_parser() -> argparse.ArgumentParser:
         help="reserve and restore a selected systemd service or Windows connector task",
     )
     update.add_argument("--service-role", choices=("gateway", "connector"))
+    update.add_argument(
+        "--restart-uncertain",
+        action="store_true",
+        help="owner confirms no agent turn is running; restart an uncertain-only connector",
+    )
     update.add_argument("--service-coordinator-fd", type=int, help=argparse.SUPPRESS)
     update.add_argument("--service-coordinator-file", type=Path, help=argparse.SUPPRESS)
     update.add_argument("--handoff-file", type=Path, help=argparse.SUPPRESS)
@@ -154,6 +159,12 @@ def _build_parser() -> argparse.ArgumentParser:
     for action in ("prepare", "resume"):
         maintenance_action = maintenance_sub.add_parser(action)
         maintenance_action.add_argument("--reservation-file", type=Path)
+        if action == "prepare":
+            maintenance_action.add_argument(
+                "--restart-uncertain",
+                action="store_true",
+                help="owner acknowledges uncertainty after verifying no agent turn is running",
+            )
         if action == "resume":
             maintenance_action.add_argument(
                 "--force", action="store_true", help="owner recovery for a lost reservation token"

@@ -474,3 +474,53 @@ This publishes only the current runner's Linux x86_64 image. GHCR packages can
 initially be private: the owner must make the package public in GitHub package
 settings before anonymous `docker compose pull` works. Check an unauthenticated
 pull rather than inferring availability from a successful push.
+
+
+### Managed update corrections (0.2.0rc9.dev0, unreleased)
+
+After installing a version containing these changes, the normal managed command
+remains a single command:
+
+```console
+acpgw update --version NEXT_VERSION --with-services
+```
+
+Replace NEXT_VERSION with the intended published version. On Windows, when no
+config/env CLI options or ACPGW_CONFIG/ACPGW_ENV_FILE are supplied, the updater
+reads the launch arguments from this installation's owned per-user connector
+task. It checks interpreter, task principal and launch shape, then revalidates
+the task and config before stopping it. Explicit CLI/environment selections win;
+a task belonging to another installation is refused. Other CLI commands retain
+their existing configuration selection rules.
+
+Preflight runs before the background handoff. A refusal leaves the service and
+package unchanged and records the current attempt with failed_phase=preflight
+and package_status=not_started, rather than leaving an older result visible.
+The immediate CLI error identifies the activity counts or invalid selection.
+The helper preserves failed_phase and a controlled reason without persisting
+raw config/subprocess output. A successful package step followed by a failed
+service health check is reported as package_status=succeeded.
+Linux and Windows service restoration retry readiness for a 60-second budget;
+systemd active or a running Scheduler task alone is not sufficient health.
+
+An uncertain Hermes attachment still refuses an ordinary update. After the owner
+has checked that no agent turn is running, a single explicit recovery command is
+available:
+
+```console
+acpgw update --version NEXT_VERSION --with-services --restart-uncertain
+```
+
+This acknowledges uncertainty for this connector maintenance cycle only. The live
+connector atomically checks that pending RPCs, approvals, running sessions,
+initialization and unsupported agents are all absent, then reserves admission.
+It keeps uncertainty/quarantine latched until the process stops; resume does not
+clear it, and no prior prompt/approval is replayed. Active or unverifiable work
+still refuses replacement, even with the flag. The flag is not a general force
+option and cannot be used for a gateway cycle or plain package update.
+
+These options apply to the updater version that starts the cycle. An already
+installed rc8 helper does not gain the new timeout, discovery or recovery flag
+merely because its target package is newer; the first transition must use rc8's
+explicit config/env path and idle requirements (or an owner-authorized stopped
+installation update). Published rc8 artifacts remain unchanged.

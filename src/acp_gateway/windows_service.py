@@ -149,6 +149,12 @@ try {
         }
         return $mode
     }
+    if ($r.action -eq 'selection') {
+        if ($null -eq $task) { throw 'Connector task is not installed' }
+        @{installed=$true; arguments=$task.Definition.Actions.Item(1).Arguments} |
+            ConvertTo-Json -Compress
+        exit 0
+    }
     if ($r.action -in @('snapshot', 'maintenance-state')) {
         if ($null -ne $task) {
             if ($r.action -eq 'snapshot' -and
@@ -329,6 +335,45 @@ def _request(action, **values):
         return data
     except (ValueError, TypeError):
         raise ValueError("Task Scheduler returned an invalid response") from None
+
+
+def _split_arguments(command):
+    """Use the Windows parser matching subprocess.list2cmdline."""
+    import ctypes
+    from ctypes import wintypes
+
+    count = ctypes.c_int()
+    parser = ctypes.WinDLL("shell32", use_last_error=True).CommandLineToArgvW
+    parser.argtypes = [wintypes.LPCWSTR, ctypes.POINTER(ctypes.c_int)]
+    parser.restype = ctypes.POINTER(wintypes.LPWSTR)
+    argv = parser("python " + command, ctypes.byref(count))
+    if not argv:
+        raise ValueError("Cannot parse the installed connector task")
+    release = ctypes.WinDLL("kernel32", use_last_error=True).LocalFree
+    release.argtypes = [ctypes.c_void_p]
+    release.restype = ctypes.c_void_p
+    try:
+        return [argv[i] for i in range(1, count.value)]
+    finally:
+        release(ctypes.cast(argv, ctypes.c_void_p))
+
+
+def installed_selection():
+    """Read paths only from this installation's owned per-user connector task."""
+    task = _request("selection")
+    command = task.get("arguments")
+    if not task["installed"] or not isinstance(command, str) or len(command) > 32768:
+        raise ValueError("Invalid connector task selection")
+    arguments = _split_arguments(command)
+    if (
+        len(arguments) < 7
+        or arguments[:3] != ["-m", "acp_gateway", "--config"]
+        or arguments[4] != "--env-file"
+        or arguments[6] != "connector"
+        or not all(Path(arguments[i]).is_absolute() for i in (3, 5))
+    ):
+        raise ValueError("Task has no supported config/env selection; specify paths explicitly")
+    return Path(arguments[3]), Path(arguments[5])
 
 
 def _arguments_prefix(config):

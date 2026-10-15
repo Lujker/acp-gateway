@@ -105,3 +105,64 @@ async def test_previous_process_request_cannot_reserve_replacement(tmp_path, con
         finally:
             task.cancel()
             await asyncio.gather(task, return_exceptions=True)
+
+
+@pytest.mark.parametrize("acknowledged", [False, True])
+def test_uncertain_restart_needs_explicit_ack_and_preserves_quarantine(controller, acknowledged):
+    counts = dict.fromkeys(FIELDS, 0)
+    counts["uncertain_sessions"] = 1
+    manager = SimpleNamespace(maintenance_status=lambda: counts)
+    controller.managers["hermes"] = manager
+    if acknowledged:
+        result = controller.apply("prepare", restart_uncertain=True)
+        assert result["token"] and controller.status()["reserved"]
+        assert controller.status()["uncertain_sessions"] == 1
+        controller.apply("resume", token=result["token"])
+        assert controller.status()["uncertain_sessions"] == 1
+    else:
+        with pytest.raises(ValueError, match="refused"):
+            controller.apply("prepare")
+        assert not controller.status()["reserved"]
+
+
+@pytest.mark.parametrize(
+    "field", [f for f in FIELDS if f != "uncertain_sessions"] + ["unsupported"]
+)
+def test_uncertain_ack_never_permits_active_or_unsupported_work(controller, field):
+    counts = dict.fromkeys(FIELDS, 0)
+    counts["uncertain_sessions"] = 1
+    controller.managers["hermes"] = SimpleNamespace(maintenance_status=lambda: counts)
+    if field == "unsupported":
+        controller.profiles[0].backend = "remote"
+    else:
+        counts[field] = 1
+    with pytest.raises(ValueError, match="refused"):
+        controller.apply("prepare", restart_uncertain=True)
+    assert not controller.status()["reserved"]
+
+
+async def test_uncertain_restart_ack_crosses_live_ipc_and_still_reserves_atomically(
+    tmp_path, controller
+):
+    counts = dict.fromkeys(FIELDS, 0)
+    counts["uncertain_sessions"] = 1
+    controller.managers["hermes"] = SimpleNamespace(maintenance_status=lambda: counts)
+    with FileLock(tmp_path / "connector.lock"), control_record(tmp_path) as instance:
+        task = asyncio.create_task(watch(tmp_path, instance, controller, interval=0.01))
+        client = LocalClient(tmp_path, timeout=10)
+        try:
+            async with asyncio.timeout(5):
+                while not (tmp_path / STATUS).exists():
+                    await asyncio.sleep(0.01)
+            denied = await asyncio.to_thread(client.request, "POST", "/maintenance/prepare")
+            assert denied.status_code == 409
+            prepared = await asyncio.to_thread(
+                client.request, "POST", "/maintenance/prepare", json={"restart_uncertain": True}
+            )
+            assert prepared.status_code == 200
+            assert controller.status()["reserved"] and counts["uncertain_sessions"] == 1
+            with pytest.raises(Exception, match="reserved"):
+                controller.check_admission()
+        finally:
+            task.cancel()
+            await asyncio.gather(task, return_exceptions=True)
