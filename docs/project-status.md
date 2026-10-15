@@ -3,16 +3,17 @@
 [Documentation](README.md) · [Roadmap and current queue](../road-map.md)
 
 This is a short orientation for readers, not a replacement for the roadmap
-or acceptance journals. Snapshot: **2026-10-14**.
+or acceptance journals. Snapshot: **2026-10-15**.
 
 ## Versions
 
 | Track | State |
 | --- | --- |
-| Published candidate `0.2.0rc7` | Install through uv/PyPI; independent setup sections, Telegram controls/formatting, dialogue execution modes and update tooling |
-| Development `0.2.0rc8.dev0` | Review fixes and Telegram computer/job dashboards; source and isolated Windows preview checked, not released |
+| Stable `0.2.0` | Install through uv/PyPI; independent setup sections, Telegram computer/job dashboards, controls and approvals, dialogue execution modes, managed update with service recovery, Docker dispatcher behind a host reverse proxy |
+| Previous candidates `0.2.0rc1`–`0.2.0rc8` | Published prereleases; upgrade with `acpgw update --stable --with-services` |
 
-The owner has requested no new release for now. See
+A production dispatcher runs in Docker behind a host nginx with two Windows/Hermes
+connectors (owner acceptance 2026-10-15). See
 [installation](setup/self-install-pypi.ru.md),
 [delivery evidence](items/p48-delivery-plan.ru.md) and
 [review findings/fixes](items/project-review-2026-10-14.ru.md).

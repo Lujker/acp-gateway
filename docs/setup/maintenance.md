@@ -106,7 +106,7 @@ Installation and acceptance scenarios are listed separately in
 Live VPS/Telegram/Hermes acceptance and service update/rollback remain open.
 
 
-## Explicit uncertain-only connector restart (0.2.0rc9.dev0, unreleased)
+## Explicit uncertain-only connector restart (since 0.2.0)
 
 Ordinary prepare remains fail-closed. An owner who has checked that no agent turn
 is running can acknowledge uncertainty with
