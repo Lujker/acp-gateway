@@ -1086,3 +1086,24 @@ Task Scheduler (windows-local.xml/.log). Production task и Hermes не меня
 Ruff check/format, diff whitespace и secret guard прошли.
 Остаток: выпуск версии с исправлениями и отдельная live приёмка обновления на
 поставленных VPS/коннекторах. rc8 остаётся опубликованным и не переписывается.
+
+
+### 2026-10-15 — 0.2.0: первый стабильный выпуск
+
+По просьбе владельца `feat/vps-acceptance` влит в `main` (fast-forward), версия
+0.2.0rc9.dev0 → 0.2.0 (`10225f6`), schema/protocol не менялись с rc8.
+GitHub Release (не prerelease): https://github.com/Lujker/acp-gateway/releases/tag/v0.2.0.
+PyPI: https://pypi.org/project/acp-gateway/0.2.0/ — Trusted Publishing из `main`:
+dry-run 38718996944 и публикация 38719063396 — success; хеши PyPI совпали с
+локальной сборкой:
+- wheel: 3c4b9f56a5e8068dd4579752bd035e20d277a4783699ba13b40e3cdc4f3b3a16;
+- sdist: 9605d7900812331657d0abbea98dda021bfbbff1332a8ee24e081f78b53bac8c.
+
+Проверки перед публикацией: source **1386 passed / 38 skipped** (197.8 с),
+ruff check/format; чистая сборка `build_release.py` (`dirty: false`);
+`smoke_installation.py`, `smoke_platform.py` (Linux) и `smoke_docker.py`
+(WSS + nginx + L4/PROXY, read-only runtime) — PASS; установка из PyPI в
+чистое окружение — version 0.2.0. Native Windows suite для 0.2.0 отдельно
+не прогонялся (b8fc23b проверен на Windows preview 99 checks). Docker-образ
+в GHCR не публиковался. Production-диспетчер владельца работает на образе
+`51ea59e` (тот же код, что 0.2.0, кроме номера версии и документации).
