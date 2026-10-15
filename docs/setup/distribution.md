@@ -12,7 +12,7 @@ installed program. Stop jobs and processes before replacing an installation.
 For a new installation, install uv and run:
 
 ```bash
-uv tool install --python 3.12 "acp-gateway==0.2.0rc8"
+uv tool install --python 3.12 "acp-gateway==0.2.0"
 acpgw setup
 ```
 
@@ -21,7 +21,7 @@ the role; each further section is independent. Servers discover agent profiles
 from authenticated rc4 connectors. Configure the executor and its project folder
 on the PC; enroll its key on the server. See the [Ubuntu/Windows walkthrough](self-install-pypi.ru.md).
 For an existing pinned tool use `uv tool install --upgrade --python 3.12
-"acp-gateway==0.2.0rc8"` after stopping jobs/services, then restart the service.
+"acp-gateway==0.2.0"` after stopping jobs/services, then restart the service.
 Upgrade servers before connectors. Package replacement keeps config/keys/data;
 it does not start or reconfigure services automatically.
 
@@ -476,7 +476,7 @@ settings before anonymous `docker compose pull` works. Check an unauthenticated
 pull rather than inferring availability from a successful push.
 
 
-### Managed update corrections (0.2.0rc9.dev0, unreleased)
+### Managed update corrections (since 0.2.0)
 
 After installing a version containing these changes, the normal managed command
 remains a single command:
