@@ -876,7 +876,7 @@ Goose/platform — P4.9, ownership — P4.10.
 2. **P2.4 — удобство Telegram (PARTIAL).** Кодовая часть готова и проверена;
    rc8 опубликован — далее живая приёмка имён, approvals/progress,
    параллельных диалогов и возврата по истории; [объём и приёмка](docs/items/telegram-usability.ru.md).
-3. **P3.4/P3.5 — установка, настройка и контроль службы.** В 0.2.0rc9.dev0 исправлены
+3. **P3.4/P3.5 — установка, настройка и контроль службы.** В 0.2.0 (опубликован 2026-10-15) исправлены
    managed update: cold-start budget, Windows task config selection, diagnostics и явный
    uncertain-only restart. 1386 source / 99 Windows preview passed; остались выпуск и live
    update приёмка — [журнал](docs/items/p48-delivery-plan.ru.md). Основа Linux/WSL
