@@ -15,6 +15,7 @@ Historical documents are not current installation instructions.
 | Connect a Windows PC | [Windows connector](setup/windows-connector.md) |
 | Deploy a native VPS dispatcher with Hermes PCs | [Native deployment (Russian)](setup/vps-native-hermes.ru.md) |
 | Use Docker for a dispatcher and Linux/WSL connectors | [VPS runbook](setup/vps-acceptance.md), [Russian](setup/vps-acceptance.ru.md) |
+| Run the dispatcher in Docker behind the host's reverse proxy, or move a native dispatcher into Docker | [Docker dispatcher (Russian)](setup/vps-docker.ru.md) |
 | Configure autostart | [Services](setup/service.md) |
 | Update, inspect or recover an installation | [Maintenance](setup/maintenance.md) |
 

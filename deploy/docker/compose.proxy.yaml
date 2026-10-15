@@ -1,0 +1,14 @@
+# Behind a reverse proxy that already runs on the host (its own Compose
+# project, its own TLS certificate). The Gateway joins that proxy's Docker
+# network under the alias acpgw-dispatcher and publishes no host ports; the
+# proxy forwards the exact connector path with nginx-location.conf.example.
+# Set ACPGW_PROXY_NETWORK in .env to the name of the proxy's network.
+services:
+  gateway:
+    networks:
+      external_proxy:
+        aliases: [acpgw-dispatcher]
+networks:
+  external_proxy:
+    name: ${ACPGW_PROXY_NETWORK:?Set ACPGW_PROXY_NETWORK to the reverse proxy Docker network}
+    external: true
