@@ -1,13 +1,14 @@
 # Дорожная карта ACP Gateway
 
 > Статус: единый действующий план ACP Gateway. Сверка: **2026-10-16**.
-> Stable: **0.2.0**. Telegram-трек закрыт в main `d42c430`; VPS и два
-> Windows/Hermes коннектора работают по подтверждению владельца.
+> Stable: **0.2.1**, опубликован по поручению владельца в GitHub/PyPI/GHCR.
+> [Журнал выпуска](docs/releases/0.2.1-publication.md),
+> [порядок обновления Docker + uv](docs/setup/update-0.2.1.ru.md).
 > Оставшаяся приёмка предварительно закрыта; возвращаться по сообщениям о проблемах.
 > Исправления P3.5 и single-owner MVP P4.15 готовы в исходниках: подтверждение,
 > durable операции, отдельный updater для uv-служб и Docker dispatcher.
-> Новая функция ещё не опубликована в stable 0.2.0. macOS владелец проверит позже.
-> Новые релизы и production обновления не разрешены.
+> Функция входит в 0.2.1, включение remote updater остаётся локальным opt-in.
+> Production владелец обновит самостоятельно; macOS проверит позже.
 > Архитектура — [docs/architecture.md](docs/architecture.md), решения —
 > [road-notes.md](road-notes.md), текущая очередь — последний раздел.
 > История первоначального плана — [архив](docs/archive/2026-10-06-initial-plan.md).
@@ -894,6 +895,8 @@ Spikes возможны после базы P4.8; общий пользоват�
 ### P4.15. Обновление диспетчера и коннекторов из Telegram
 
 **Статус:** READY как кодовая основа single-owner MVP — 2026-10-16.
+Выпущено в **0.2.1** по последующему поручению владельца;
+[публикация и CI evidence](docs/releases/0.2.1-publication.md).
 В исходниках: Telegram versions → точное подтверждение target/version → durable
 operation → отдельный локальный updater → status/history и уведомление после
 restart/reconnect. Локальный opt-in и живой companion обязательны; старые peers
@@ -912,7 +915,7 @@ install/enable/status и cooperative stop; setup menu, локальная диа
 Scope: одна цель, новые stable major.minor.patch; Git/file, RC, batch и multi-user
 в этот MVP не входят. macOS владелец проверит позже. Не зависит от P4.16.
 
-Функция не опубликована и production не обновлялся; stable остаётся 0.2.0.
+Функция опубликована в 0.2.1; production владелец обновляет самостоятельно.
 **Репозиторий:** acp-gateway. [Решения/evidence](docs/items/remote-connector-management.ru.md),
 [включение companion и границы recovery](docs/setup/remote-updates.md).
 
@@ -956,11 +959,12 @@ generic Telegram формы, подтверждения конкретного t
    задачи и требуется reinstall. Путь env_file сохраняется и используется при
    install; явные CLI/env overrides приоритетны, старые записи используют соседний `.env`.
    Предупреждение исключает молчаливый старт со старым адресом.
-3. **P4.15 — обновление обеих ролей из Telegram (READY в исходниках MVP).**
+3. **P4.15 — обновление обеих ролей из Telegram (RELEASED в 0.2.1).**
    Подтверждение версии, durable state, status/reconcile, уведомления и отдельный
    updater реализованы. uv — существующий managed cycle; Docker — host companion
    с image allowlist, SQLite backup, recreate/health/rollback. Настройка companion
-   локальная, запуск установки из бота. Новых релизов/production update не было.
+   локальная, запуск установки из бота. GitHub/PyPI/GHCR релиз опубликован;
+   production владелец обновляет самостоятельно.
    Следующее согласованное расширение также готово в исходниках: независимый
    автозапуск companion, остановка без обрыва installer, локальная диагностика и
    разрешение executor unknown, регистрация immutable Docker images.
@@ -969,10 +973,10 @@ generic Telegram формы, подтверждения конкретного t
 
 ### Последующие направления
 
-Локальный development-кандидат `0.2.1.dev20261016` подготовлен и проверен:
-wheel/sdist, manifest/checksums; версия checkout и stable не менялась.
-Следующий внешний шаг — решение о версии и публикации; обновление production
-отдельно, приёмка не возобновляется. Автоматическая доставка approved
+После локального development-кандидата `0.2.1.dev20261016` владелец поручил
+выпустить stable **0.2.1**; публикация GitHub/PyPI/GHCR завершена. Следующий шаг —
+обновление рабочих установок владельцем по [инструкции](docs/setup/update-0.2.1.ru.md).
+Приёмка не возобновляется. Автоматическая доставка approved
 Docker manifest и разрешение dispatcher unknown без записи на executor остаются
 дальнейшими расширениями, а не готовыми возможностями.
 

@@ -1,10 +1,11 @@
 # P4.15 — обновление диспетчера и коннекторов через Telegram
 
-**Статус:** READY как кодовая основа single-owner MVP — 2026-10-16.
+**Статус:** RELEASED в stable **0.2.1** — 2026-10-16.
 Реализованы обе роли: versions/confirmation/durable operation/status/notifications,
 локально включаемый независимый companion, uv managed update и Docker host image
-replacement/SQLite backup/known-failure recovery. Это исходники после stable 0.2.0,
-не опубликованная функция. Production установки не менялись. Актуальная настройка —
+replacement/SQLite backup/known-failure recovery. Публикация GitHub/PyPI/GHCR
+выполнена по последующему поручению владельца; [evidence](../releases/0.2.1-publication.md).
+Production установки не менялись. Актуальная настройка —
 [companion guide](../setup/remote-updates.md). История первого этапа ниже сохраняется.
 
 ## Запрос владельца
