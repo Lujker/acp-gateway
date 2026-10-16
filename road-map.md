@@ -1,27 +1,16 @@
 # Дорожная карта ACP Gateway
 
-> Статус: единый действующий план ACP Gateway.
-> Последняя сверка: 2026-10-15 — rc8 опубликован в GitHub/PyPI; 1358 source / 121 Windows tests passed;
-> registry rc7→rc8 проверен в Linux/Windows; VPS/home работают на rc8, живая Telegram-приёмка впереди.
-> Опубликован rc7; независимое ревью завершено, три находки исправлены в rc8.dev0,
-> добавлены будущие P4.15–P4.16 (remote update/host management); P2.4 (Telegram UX) возобновлён 2026-10-15;
-> README сокращён, docs получили оглавление. VPS/Telegram + два Windows/Hermes connectors,
-> поставка uv/Git, CLI/update (`P4.8`); Goose и платформенное расширение — `P4.9`.
-> VPS-диспетчер с собственным WebSocket-коннектором
-> (`P4.1`) поставлен перед расширениями каналов; готовы MCP-фасад Hermes и
-> подтверждения его задач через CLI (`P2.1`, `P2.2`); отдельные цели P3 —
-> дистрибуция/настройка (`P3.4`) и CLI управления службой (`P3.5`). План собран
-> 2026-10-06 из исходного документа
-> ([`docs/archive/2026-10-06-initial-plan.md`](docs/archive/2026-10-06-initial-plan.md))
-> с поправками по фактической семантике ACP и решениями владельца; проект
-> переименован из «Work Goose Bridge» в **ACP Gateway** и обобщён до любого
-> ACP-агента (первый агент — Work Goose); фундамент `P0` закрыт, готовы
-> клиент агента, mock-агент, ядро, подтверждения, политика, демон и CLI (`P1.1`–`P1.5`).
-> Целевая архитектура — [`docs/architecture.md`](docs/architecture.md).
-> Актуальная очередь дальнейшей разработки — последний раздел.
-> Журнал решений и находок — [`road-notes.md`](road-notes.md); пункты с большой
-> историей получат собственные файлы в `docs/items/`.
-> Область: один репозиторий `acp-gateway`.
+> Статус: единый действующий план ACP Gateway. Сверка: **2026-10-16**.
+> Stable: **0.2.0**. Telegram-трек закрыт в main `d42c430`; VPS и два
+> Windows/Hermes коннектора работают по подтверждению владельца.
+> Оставшаяся приёмка предварительно закрыта; возвращаться по сообщениям о проблемах.
+> Исправления P3.5 и single-owner MVP P4.15 готовы в исходниках: подтверждение,
+> durable операции, отдельный updater для uv-служб и Docker dispatcher.
+> Новая функция ещё не опубликована в stable 0.2.0. macOS владелец проверит позже.
+> Новые релизы и production обновления не разрешены.
+> Архитектура — [docs/architecture.md](docs/architecture.md), решения —
+> [road-notes.md](road-notes.md), текущая очередь — последний раздел.
+> История первоначального плана — [архив](docs/archive/2026-10-06-initial-plan.md).
 
 ## 1. Правила ведения
 
@@ -33,7 +22,9 @@
 - **IN PROGRESS** — реализация начата;
 - **DECISION** — требуется решение владельца;
 - **CONDITIONAL** — выполнять только при наступлении триггера;
-- **PARTIAL** — часть результата готова (всегда со списком остатка).
+- **PARTIAL** — часть результата готова (всегда со списком остатка);
+- **PROVISIONALLY CLOSED** — владелец предварительно закрыл приёмку без
+  дополнительных проверок; возврат только по проблемам, не новое evidence.
 
 Приоритеты:
 
@@ -237,7 +228,11 @@ MCP не имеет инструментов принятия решений.
 
 ### P2.3. Telegram
 
-**Статус:** PARTIAL — dashboard/P2.4 опубликованы в rc8: компьютеры, история,
+**Статус:** PROVISIONALLY CLOSED — остаточная приёмка предварительно закрыта
+владельцем 2026-10-16; возврат только по сообщениям о проблемах. Ниже —
+историческое состояние и сценарии для диагностики.
+
+**Исторический статус:** PARTIAL — dashboard/P2.4 опубликованы в rc8: компьютеры, история,
 диалоги/названия, approvals и progress. 1358 source / 121 native Windows checks;
 живой dashboard/P2.4 ещё не приняты.
 rc5 команды/results и работа подтверждений проверены владельцем на двух ПК.
@@ -266,7 +261,11 @@ Done из исходного плана (раздел 20), выполненны�
 
 ### P2.4. Удобство Telegram: диалоги, подтверждения и ход работы
 
-**Статус:** PARTIAL — 2026-10-15 кодовая часть реализована: диалоги/локальные
+**Статус:** PROVISIONALLY CLOSED — остаточная приёмка предварительно закрыта
+владельцем 2026-10-16; возврат только по сообщениям о проблемах. Ниже —
+историческое состояние и сценарии для диагностики.
+
+**Исторический статус:** PARTIAL — 2026-10-15 кодовая часть реализована: диалоги/локальные
 названия, полный ввод и итоги approvals, фактический progress, возврат filter/cursor.
 1358 source tests passed / 35 skipped; остаток — живая приёмка на двух ПК. rc8 опубликован в GitHub/PyPI 2026-10-15.
 **Репозиторий:** `acp-gateway`.
@@ -277,7 +276,11 @@ Done из исходного плана (раздел 20), выполненны�
 
 ### P2.5. Telegram: восстановление результата и ежедневные действия
 
-**Статус:** PARTIAL — 2026-10-15: кодовая часть проверена, 171 Telegram/Hermes
+**Статус:** PROVISIONALLY CLOSED — остаточная приёмка предварительно закрыта
+владельцем 2026-10-16; возврат только по сообщениям о проблемах. Ниже —
+историческое состояние и сценарии для диагностики.
+
+**Исторический статус:** PARTIAL — 2026-10-15: кодовая часть проверена, 171 Telegram/Hermes
 тест прошёл; осталась живая приёмка на двух ПК.
 **Репозиторий:** `acp-gateway`.
 Доставка, действия для невосстановимых диалогов, ввод имён кнопками и основные
@@ -286,8 +289,13 @@ Done из исходного плана (раздел 20), выполненны�
 
 ### P2.6. Контекст и быстрые действия Telegram
 
-**Статус:** PARTIAL — 2026-10-15: кодовая часть завершена, полный source suite
-1495 passed / 38 skipped. Осталась живая приёмка на двух ПК/Docker preview.
+**Статус:** PROVISIONALLY CLOSED — остаточная приёмка предварительно закрыта
+владельцем 2026-10-16; возврат только по сообщениям о проблемах. Ниже —
+историческое состояние и сценарии для диагностики.
+
+**Исторический статус:** PARTIAL — 2026-10-15: кодовая часть завершена, полный source suite
+1495 passed / 38 skipped; main `d42c430` опубликован. Владелец подтвердил
+обновление Docker VPS и подключение агентов; осталась подробная живая приёмка.
 **Репозиторий:** `acp-gateway`.
 `/context`, результаты, `/recent` и `/favorites` сохраняют scope и revision guards;
 выбор/просмотр не повторяют prompt. Релизы пока запрещены владельцем.
@@ -297,7 +305,11 @@ Done из исходного плана (раздел 20), выполненны�
 
 ### P3.1. Автозапуск в WSL (основной путь)
 
-**Статус:** PARTIAL — 2026-10-08: генерация systemd user unit и управление
+**Статус:** PROVISIONALLY CLOSED — остаточная приёмка предварительно закрыта
+владельцем 2026-10-16; возврат только по сообщениям о проблемах. Ниже —
+историческое состояние и сценарии для диагностики.
+
+**Исторический статус:** PARTIAL — 2026-10-08: генерация systemd user unit и управление
 через `acpgw service`; unit проверен `systemd-analyze --user verify`.
 Есть Windows logon task, удерживающая WSL через `sleep infinity` и не
 обходящая отключение службы. Реальный Task Scheduler lifecycle проверен на
@@ -316,7 +328,11 @@ systemd user unit для демона; запуск WSL при входе в Win
 
 ### P3.2. Автозапуск в Windows native
 
-**Статус:** PARTIAL — native Task Scheduler/ACL/locks подтверждены в `P4.8.4`;
+**Статус:** PROVISIONALLY CLOSED — остаточная приёмка предварительно закрыта
+владельцем 2026-10-16; возврат только по сообщениям о проблемах. Ниже —
+историческое состояние и сценарии для диагностики.
+
+**Исторический статус:** PARTIAL — native Task Scheduler/ACL/locks подтверждены в `P4.8.4`;
 остаются reboot/logon и приёмка устанавливаемой поставки.
 **Репозиторий:** `acp-gateway` (`deploy/windows/`)
 
@@ -325,7 +341,11 @@ Task Scheduler («при входе», `python -m acp_gateway`), позже — 
 
 ### P3.3. Надёжность и наблюдаемость
 
-**Статус:** PARTIAL — health/probes, JSON log rotation, Telegram throttle,
+**Статус:** PROVISIONALLY CLOSED — остаточная приёмка предварительно закрыта
+владельцем 2026-10-16; возврат только по сообщениям о проблемах. Ниже —
+историческое состояние и сценарии для диагностики.
+
+**Исторический статус:** PARTIAL — health/probes, JSON log rotation, Telegram throttle,
 core/ACP reconnect и session persistence проверены. В 0.2.0rc2.dev0 готовы
 bounded SQLite retention (audit opt-in), admission limits всех каналов и
 persistent Telegram result outbox с chunk ACK/restart/rollback fence.
@@ -339,7 +359,11 @@ agent prompts автоматически не переигрываются.
 
 ### P3.4. Дистрибуция, установка и первичная настройка
 
-**Статус:** PARTIAL — 2026-10-08: установка из checkout одной командой
+**Статус:** PROVISIONALLY CLOSED — остаточная приёмка предварительно закрыта
+владельцем 2026-10-16; возврат только по сообщениям о проблемах. Ниже —
+историческое состояние и сценарии для диагностики.
+
+**Исторический статус:** PARTIAL — 2026-10-08: установка из checkout одной командой
 `sh scripts/install.sh` через изолированный uv tool; `acpgw setup` создаёт
 приватные config/.env и отдельные токены, не заменяя существующие файлы.
 Добавлена самостоятельная Linux-сборка PyInstaller, версия, SQL-миграции,
@@ -375,7 +399,11 @@ GitHub Release и загрузка файлов вручную; Actions толь
 
 ### P3.5. Понятный CLI и управление службой
 
-**Статус:** PARTIAL — 2026-10-08: help со стартовым маршрутом; `setup`;
+**Статус:** PARTIAL — приёмка предварительно закрыта 2026-10-16; исправлены
+watcher и подсказка reinstall после смены connection, сохраняется выбранный env_file.
+Исходники проверяются отдельно от установленной 0.2.0.
+
+**Исторический статус:** PARTIAL — 2026-10-08: help со стартовым маршрутом; `setup`;
 `service install/enable/disable/start/stop/restart/status/uninstall` для
 Linux/WSL. Windows keepalive task проверена настоящим Task Scheduler.
 Полный user-service lifecycle и crash recovery подтверждены. Остаток: reboot;
@@ -400,7 +428,11 @@ uninstall подтверждён на целевых ОС, включая пер
 
 ### P3.6. Штатная установка, обновление и удаление
 
-**Статус:** PARTIAL — 2026-10-13: расширены isolated wheel update/rollback и
+**Статус:** PROVISIONALLY CLOSED — остаточная приёмка предварительно закрыта
+владельцем 2026-10-16; возврат только по сообщениям о проблемах. Ниже —
+историческое состояние и сценарии для диагностики.
+
+**Исторический статус:** PARTIAL — 2026-10-13: расширены isolated wheel update/rollback и
 crashed-installer/WAL recovery проверки; [журнал](docs/items/p3.3-reliability.ru.md).
 Ранее, 2026-10-09: первый Linux/WSL этап реализован:
 wheel/sdist и release bundle, uv CLI version/update/uninstall/rollback, runtime lease,
@@ -519,7 +551,12 @@ deployment bundle работает с готовым образом. Живая 
 
 ### P4.1. VPS-диспетчер и собственный WebSocket-коннектор
 
-**Статус:** IN PROGRESS — 2026-10-08: по поручению владельца начать следующий
+**Статус:** PROVISIONALLY CLOSED — поставка 0.2.0 и работа двух Windows/Hermes
+ПК подтверждены; оставшаяся приёмка предварительно закрыта владельцем
+2026-10-16. Возврат только по сообщениям о проблемах. Новые remote update
+возможности ведутся отдельно в P4.15; ниже сохранена история этапа.
+
+**Исторический статус:** IN PROGRESS — 2026-10-08: по поручению владельца начать следующий
 этап по рекомендованным приоритетам. Linux/WSL-коннектор перенесён перед
 native Windows; первоначальная граница — один владелец и сетевой ACP.
 Первый шаг реализован: протокол control frames v1 и локальные команды
@@ -642,7 +679,12 @@ launchd-агент; ядро уже кроссплатформенное (см. 
 
 ### P4.8. VPS-диспетчер → два Windows/Hermes-коннектора → Telegram
 
-**Статус:** IN PROGRESS. Уточнение владельца 2026-10-13: завершить пригодную
+**Статус:** PROVISIONALLY CLOSED — поставка 0.2.0 и работа двух Windows/Hermes
+ПК подтверждены; оставшаяся приёмка предварительно закрыта владельцем
+2026-10-16. Возврат только по сообщениям о проблемах. Новые remote update
+возможности ведутся отдельно в P4.15; ниже сохранена история этапа.
+
+**Исторический статус:** IN PROGRESS. Уточнение владельца 2026-10-13: завершить пригодную
 для пользователя поставку этой схемы. Goose и другие agent/platform combinations
 вынесены в P4.9. Все реальные установки и проверки собраны в отдельном P4.8.5,
 с разделением действий агента и пользователя.
@@ -712,7 +754,12 @@ VPS/Telegram — P4.8.5. Полноценные accounts/workspaces относя
 
 #### P4.8.4 — Поставка и штатное обновление обеих ролей
 
-**Статус:** PARTIAL — кодовая основа и локальный кандидат 0.2.0rc1 готовы.
+**Статус:** PROVISIONALLY CLOSED — поставка 0.2.0 и работа двух Windows/Hermes
+ПК подтверждены; оставшаяся приёмка предварительно закрыта владельцем
+2026-10-16. Возврат только по сообщениям о проблемах. Новые remote update
+возможности ведутся отдельно в P4.15; ниже сохранена история этапа.
+
+**Исторический статус:** PARTIAL — кодовая основа и локальный кандидат 0.2.0rc1 готовы.
 Wheel/sdist/bundle/locked requirements/checksums: dist/p48-0.2.0rc1;
 source ref 3da8dffbd5d265c0b135e3aa1bd212e8e618c779, без публикации.
 Uv/Git scripts, maintenance reservations и Linux/Windows service coordinators
@@ -737,7 +784,11 @@ known model-loss reconciliation не повторяет mutation, prompt-loss о
 
 #### P4.8.5 — Отдельный этап установки и приёмки
 
-**Статус:** PARTIAL — владелец обновил VPS/Windows до rc5 и подтвердил работу
+**Статус:** PROVISIONALLY CLOSED — остаточная приёмка предварительно закрыта
+владельцем 2026-10-16; возврат только по сообщениям о проблемах. Ниже —
+историческое состояние и сценарии для диагностики.
+
+**Исторический статус:** PARTIAL — владелец обновил VPS/Windows до rc5 и подтвердил работу
 обоих компьютеров home/home2 с Hermes через Telegram. Первый PONG и команды
 sessions/results работают; обновление через uv выполнено владельцем.
 Остаются live approvals, параллельная изоляция, reboot/logon/sleep/network и
@@ -795,18 +846,16 @@ home aliases, чужие IDs/callbacks/events, pairing/revocation и мигра�
 предложения UX и сценарии: [диалоги и аккаунты](docs/items/dispatcher-accounts-and-dialogues.ru.md).
 
 
-### P4.11. Сценарии и расписания диспетчера
+### P4.11. Локальные задачи коннектора: вручную и по расписанию
 
-**Статус:** OPEN — направление запрошено владельцем 2026-10-13; записан proposal,
-реализации нет. Ручной trigger и расписание создают общий persisted Run с
-user/workspace/connector/agent scope, snapshot версии сценария и audit.
-Время — явная zone диспетчера, UTC persistence; unknown prompt не повторяется.
-Сначала один prompt/target и manual run, затем one-shot/daily scheduling.
-Зависимости: P4.10 ownership и P4.12 client contract; multi-step workflow отдельно.
-Принято 2026-10-13: каждый Run в новом dialogue; offline connector —
-skip + уведомление без догоняющего запуска. Busy/misfire/approval policy открыты.
-**Репозиторий:** acp-gateway.
-[Предложение и критерии](docs/items/scenarios-and-schedules.ru.md).
+**Статус:** OPEN — 2026-10-15 владелец заменил прежний dispatcher scheduler;
+реализации нет. Task/Schedule/Run принадлежат коннектору, управление через CLI
+и dispatcher. Исполнитель — агент с prompt (новый dialogue на Run) или модуль
+P4.16 без агента. Планировщик локальный; once/calendar/interval, явная zone задачи.
+Подтверждено: разрешённые local policy задачи продолжаются без диспетчера.
+Нет replay unknown; подтверждён skip пересечений/пропущенных сроков без catch-up.
+Single-owner база — P4.16; shared выпуск требует P4.10, public API — P4.12.
+**Репозиторий:** acp-gateway. [Контракт и открытые решения](docs/items/scenarios-and-schedules.ru.md).
 
 ### P4.12. Клиентский Web API для Web UI, CLI и mobile
 
@@ -842,122 +891,104 @@ Spikes возможны после базы P4.8; общий пользоват�
 **Репозиторий:** клиент/структура будут определены при активации.
 [Границы и trigger](docs/items/client-api-and-mobile.ru.md).
 
-### P4.15. Удалённое обновление подключённых коннекторов
+### P4.15. Обновление диспетчера и коннекторов из Telegram
 
-**Статус:** OPEN — запрошено владельцем 2026-10-14; runtime реализации нет.
-Dispatcher показывает версии/доступные обновления и запускает обновление выбранного
-connector через управляющий канал; те же действия доступны кнопками Telegram.
-Явный target/version, проверка источника, idle/drain, сохранение config/key/data,
-отдельный updater, restart/health/rollback и результат после reconnect.
-Busy/offline/unknown outcomes не запускают повторную установку автоматически.
-Старт — single-owner; multi-user требует P4.10 ownership и scopes.
-**Репозиторий:** acp-gateway. [Границы и приёмка](docs/items/remote-connector-management.ru.md).
+**Статус:** READY как кодовая основа single-owner MVP — 2026-10-16.
+В исходниках: Telegram versions → точное подтверждение target/version → durable
+operation → отдельный локальный updater → status/history и уведомление после
+restart/reconnect. Локальный opt-in и живой companion обязательны; старые peers
+не получают update capability. Истёкшие/чужие/изменившиеся подтверждения отклоняются;
+потеря ACK не разрешает повтор установки, unknown блокирует новую мутацию target.
 
-### P4.16. Базовое управление компьютерами из диспетчера и Telegram
+Native Linux/Windows uv registry services используют существующий managed updater
+с exact version/operation ID и проверкой соответствующего результата. Docker Linux
+dispatcher: companion на host, заранее разрешённый immutable image, idle reservation,
+SQLite snapshot, замена только gateway, version/health и known-failure rollback
+образа/БД. Native Windows/macOS и живой Docker не объявлены проверенными.
+Добавлены отдельные systemd user unit / Windows logon task для companion,
+install/enable/status и cooperative stop; setup menu, локальная диагностика и
+аудируемое разрешение сохранённого executor unknown после проверки version/health.
+`allow-image` регистрирует подготовленный локальный Docker image ID без pull/build.
+Scope: одна цель, новые stable major.minor.patch; Git/file, RC, batch и multi-user
+в этот MVP не входят. macOS владелец проверит позже. Не зависит от P4.16.
 
-**Статус:** OPEN — запрошено владельцем 2026-10-14; runtime реализации нет.
-Типизированные операции через connector: диагностика хоста/службы, bounded logs,
-перезапуск connector и управляемого agent; sleep/reboot/shutdown — отдельные
-возможности с явным подтверждением конкретного ПК и локальным разрешением.
-Общий dispatcher application layer и Telegram buttons, capability discovery,
-actor/target audit, deadlines и отсутствие replay неизвестной мутации.
-Набор действий уточняется перед реализацией; произвольный remote shell не входит
-в базовый scope. Multi-user зависит от P4.10. **Репозиторий:** acp-gateway.
-[Границы и приёмка](docs/items/remote-connector-management.ru.md).
+Функция не опубликована и production не обновлялся; stable остаётся 0.2.0.
+**Репозиторий:** acp-gateway. [Решения/evidence](docs/items/remote-connector-management.ru.md),
+[включение companion и границы recovery](docs/setup/remote-updates.md).
+
+### P4.16. Подключаемые действия коннекторов из диспетчера и Telegram
+
+**Статус:** OPEN — 2026-10-15 владелец уточнил модульный scope; runtime нет.
+Пользователь подключает свои модули к коннектору; платформа предоставляет
+manifest/discovery, runner, local policy, durable операции и общий dispatcher API.
+Встроенного набора функций управления ПК нет. Предлагается внешний JSON runner,
+generic Telegram формы, подтверждения конкретного target/params и status/reconcile
+без replay неизвестной мутации. Multi-user зависит от P4.10.
+**Репозиторий:** acp-gateway. [Архитектурное предложение](docs/items/connector-action-modules.ru.md),
+[смежный remote update](docs/items/remote-connector-management.ru.md).
 
 ## 8. Очередь дальнейшей разработки
 
-Точка продолжения P4.8 после перерыва: [checkpoint от 2026-10-13](docs/items/p48-resume.ru.md).
-Зафиксированы source/API и durable model state, оставшаяся очередь, ограничения Hermes,
-доказательства проверок и отдельный этап установки/приёмки.
+Актуализировано **2026-10-16** по решению владельца. Это текущая очередь;
+старые rc/checkpoint записи выше и в журналах являются историческими.
 
-**Следующий этап:** обновление VPS/коннекторов до rc8 и живая приёмка Telegram UI (P2.3), затем
-approvals и host lifecycle P4.8.5. Владелец подтвердил rc5 на VPS и двух Windows
-ПК, ответы и переключение маршрутов работают. P4.8.5 остаётся PARTIAL.
-Inline buttons/Markdown и `update --stable --with-services` опубликованы в rc6;
-rc7 добавляет названия и /mode; registry rc5→rc7 проверен в Linux/Windows
-без потери настроек/ключей/БД.
-Доказательства: [UI](docs/items/telegram-ui.ru.md),
-[поставка/обновление](docs/items/p48-delivery-plan.ru.md).
-Работу live approvals владелец подтвердил; открыты отдельная deny-проверка, изоляция параллельных диалогов, reconnect при работе,
-logon/reboot/sleep/network и целевой managed update/rollback. Domain/WSS позже;
-Goose/platform — P4.9, ownership — P4.10.
-Ревью 2026-10-14 завершено: GPT-6 Astra, три подтверждённых дефекта исправлены
-в rc8.dev0; 1325 source tests и 142 native Windows checks прошли; [журнал](docs/items/project-review-2026-10-14.ru.md).
-Перечень ниже — незакрытые смежные задачи, не prerequisites всего трека.
+### Решения о приёмке и поставке
 
-1. **P2.6 — живая приёмка Telegram/Docker preview (PARTIAL).** Кодовая часть
-   завершена. Проверить контекст, результаты, недавние/избранные, approvals,
-   reconnect и модель на двух ПК; релизы пока запрещены. [Сверка исходной таблицы](docs/items/telegram-context-and-shortcuts.ru.md).
-2. **P2.5 — живая приёмка Telegram (PARTIAL).** Кодовая часть завершена:
-   проверить доставку, ввод имён, ошибки и потерю диалога на двух ПК.
-   [Журнал](docs/items/telegram-recovery.ru.md). Релизы пока запрещены.
-3. **P2.3/P4.8.5 — Telegram dashboard и приёмка.** Компьютеры/история задач/навигация
-   опубликованы в rc8 по разрешению владельца; registry upgrades проверены.
-   Дальше — обновление VPS/коннекторов и живая приёмка dashboard/P2.4. Published rc7: кнопки, форматирование,
-   названия и режим выполнения; проверить на двух ПК. Затем approvals/изоляция и lifecycle;
-   [UI](docs/items/telegram-ui.ru.md), [порядок проверок](docs/setup/p48-acceptance.md).
-4. **P2.4 — удобство Telegram (PARTIAL).** Кодовая часть готова и проверена;
-   rc8 опубликован — далее живая приёмка имён, approvals/progress,
-   параллельных диалогов и возврата по истории; [объём и приёмка](docs/items/telegram-usability.ru.md).
-5. **P3.4/P3.5 — установка, настройка и контроль службы.** В 0.2.0 (опубликован 2026-10-15) исправлены
-   managed update: cold-start budget, Windows task config selection, diagnostics и явный
-   uncertain-only restart. 1386 source / 99 Windows preview passed; остались выпуск и live
-   update приёмка — [журнал](docs/items/p48-delivery-plan.ru.md). Основа Linux/WSL
-   и самостоятельная Linux-сборка подтверждены чистым контейнерным CI;
-   выпускать версии вручную из локальной сборки; Actions только по ручному запуску.
-6. **P3.1/P3.5 — настоящий Windows reboot.** D-Bus восстановлен; systemd и
-   Task Scheduler lifecycles уже подтверждены на текущем хосте.
-7. **P2.3/P3.3 — живая приёмка Telegram.** Команды/подтверждения реализованы;
-   persistent delivery и status edits включены в опубликованный 0.2.0rc2,
-   [журнал](docs/items/p3.3-reliability.ru.md). Кандидат установки — 0.2.0rc7.
-8. **P4.1 — VPS-диспетчер и собственный WebSocket-коннектор.** Основа для `P4.8`:
-   один владелец, ACP-релей. Enrollment и WS/WSS-регистрация
-   готовы; инъекция транспорта в AgentClient реализована и проверена на mock ACP
-   без WebSocket; локальная политика ACP реализована и проверена (методы,
-   точные cwd, режимы, MCP/capabilities, live once-only approvals). Решения ревью
-   приняты; TLS выключен для IP/port тестов, paths и будущий nginx поддержаны.
-   Первый guarded ACP relay в serve готов и mock-tested.
-   Два узла и изоляция mock-tested; служба и диагностика готовы.
-   Дальше: живая приёмка в `P4.8.5`, затем recovery и stdio по их триггерам.
-9. **P3.2 — Windows native**, в составе `P4.8.4`, вместе с
-   Windows-частями `P3.4/P3.5`; Scheduler/ACL/locks уже проверены,
-   остаются целевая поставка/update и сценарии P4.8.5 reboot/logon/sleep/network.
-10. **P4.15 → P4.16 — удалённые обновления и управление ПК.** После базовой P4.8.5:
-   общий управляющий контракт, затем update/restart/diagnostics и Telegram buttons.
-   Multi-user выпуск требует P4.10 scopes. [Предложение](docs/items/remote-connector-management.ru.md).
-11. **P4.10 — user/workspace ownership.** Основа новых shared сценариев,
-   пользовательского API и connector scopes; [контракт](docs/items/dispatcher-accounts-and-dialogues.ru.md).
-12. **P4.12 — client Web API.** Контракт и auth вместе с P4.10; нужен до
-   multi-user Web UI/mobile. [Предложение](docs/items/client-api-and-mobile.ru.md).
-13. **P4.11 — сценарии.** Приняты новый dialogue на Run и offline skip+notify;
-   manual runs, затем scheduler по времени диспетчера. [Предложение](docs/items/scenarios-and-schedules.ru.md).
-14. **P4.13 — harness adapters.** Managed Codex/Claude spikes, capability tests;
-    исследование возможно независимо, публичный scope зависит от P4.10.
-    [Источники и этапы](docs/items/connector-harness-adapters.ru.md).
-15. **P4.2 → P4.3 → P4.4 — Snikket, Email, Web UI.** После рабочего P4.8.5;
-    пользовательский Web UI использует P4.12/P4.10.
-16. **P3.5 — смена адреса диспетчера на коннекторе (найдено 2026-10-15, OPEN).**
-    Раздел `connection` в `setup` и `service enable` не переписывают
-    установленную задачу Windows: адрес вшит в её аргументы при `install`,
-    и коннектор молча ходит на старый адрес. `install` без явного `--env-file`
-    отказывает. Обход — переустановка задачи, [Docker-диспетчер §4](docs/setup/vps-docker.ru.md#4-перенос-нативного-диспетчера-в-docker).
-    Нужно: переустанавливать задачу после смены `connection` (или явно
-    предупреждать) и брать `.env` из сохранённой настройки. Там же — текст
-    отказа живого диалога Hermes после перезапуска коннектора: «use /new only
-    to create a different one» читается как «не делайте /new», хотя `/new` —
-    единственный выход.
-17. **P3.5 — молча умирающий watcher активности коннектора (найдено 2026-10-15, OPEN).**
-    `connectors/maintenance.py:watch` пишет `connector-activity.json` вне
-    `try`: любая ошибка записи (на Windows — замена файла, который в этот
-    момент читают) завершает задачу без записи в журнал, а `commands.py`
-    узнаёт об этом только при остановке. Коннектор продолжает работать, но
-    `maintenance status` навсегда `unknown`, и `update --with-services`
-    отказывает с `HTTP 409: Live connector activity is unavailable`. Есть и
-    в 0.2.0. Обход — перезапустить задачу коннектора и сразу обновлять.
-    Нужно: повторять запись при ошибке и писать её в журнал; тест с
-    падающим `_atomic`. На том же ПК rc8 без явных `--config/--env-file`
-    падал раньше — это уже исправлено в 0.2.0 (конфиг берётся из задачи).
+- Telegram P2.3–P2.6 и эксплуатационная приёмка P4.8.5/P3 предварительно
+  закрыты владельцем без дополнительных живых проверок. Возвращаться только
+  при проблемах владельца или других пользователей. Это управленческое решение,
+  а не утверждение о прохождении всех ранее перечисленных сценариев.
+- Разработка Telegram опубликована в main `d42c430`; Docker VPS и подключение
+  двух Windows/Hermes ПК подтверждены владельцем. Stable пакет — 0.2.0.
+- Коннектор macOS владелец проверит позже; проверка не блокирует эту очередь
+  и не означает подтверждённой поддержки native service/update на macOS.
+- Новые релизы и production обновления этой сессией не разрешены; разработка
+  и автоматические проверки продолжаются без публикации.
 
-Новые этапы P4 — будущие возможности; их runtime реализации нет. Условные P4.5–P4.7
-и P4.14 сохраняют свои триггеры, P4.9 — прежний DEFERRED.
+### Ближайшие задачи
+
+1. **P3.5 — watcher активности коннектора (READY в исходниках).** Ошибка атомарной
+   записи `connector-activity.json` больше не завершает watcher; повторная запись,
+   журнал сбоя/восстановления и регрессионный тест добавлены. Исправляет причину
+   отказа обновления `HTTP 409: Live connector activity is unavailable`.
+2. **P3.5 — смена connection и установка службы (READY в исходниках).** Явно сообщается, что
+   сохранённая настройка не переписывает аргументы установленной службы/Windows
+   задачи и требуется reinstall. Путь env_file сохраняется и используется при
+   install; явные CLI/env overrides приоритетны, старые записи используют соседний `.env`.
+   Предупреждение исключает молчаливый старт со старым адресом.
+3. **P4.15 — обновление обеих ролей из Telegram (READY в исходниках MVP).**
+   Подтверждение версии, durable state, status/reconcile, уведомления и отдельный
+   updater реализованы. uv — существующий managed cycle; Docker — host companion
+   с image allowlist, SQLite backup, recreate/health/rollback. Настройка companion
+   локальная, запуск установки из бота. Новых релизов/production update не было.
+   Следующее согласованное расширение также готово в исходниках: независимый
+   автозапуск companion, остановка без обрыва installer, локальная диагностика и
+   разрешение executor unknown, регистрация immutable Docker images.
+   [Результат и evidence](docs/items/remote-connector-management.ru.md),
+   [инструкция](docs/setup/remote-updates.md).
+
+### Последующие направления
+
+Локальный development-кандидат `0.2.1.dev20261016` подготовлен и проверен:
+wheel/sdist, manifest/checksums; версия checkout и stable не менялась.
+Следующий внешний шаг — решение о версии и публикации; обновление production
+отдельно, приёмка не возобновляется. Автоматическая доставка approved
+Docker manifest и разрешение dispatcher unknown без записи на executor остаются
+дальнейшими расширениями, а не готовыми возможностями.
+
+4. **P4.16 — пользовательские модули**, отложены владельцем; автоматически
+   не начинать. [Сохранённая архитектура](docs/items/connector-action-modules.ru.md).
+5. **P4.11 — локальные задачи и расписания**, также отложены; local Task Service,
+   module/agent executors, автономность при недоступном dispatcher, skip misfire
+   и overlap. [Решения владельца](docs/items/scenarios-and-schedules.ru.md).
+6. **P4.10 → P4.12 — ownership и публичный client API**, затем пользовательский
+   Web UI/mobile. Shared management требует сквозных user/workspace scopes.
+7. **P4.13 — дополнительные harness adapters**, отдельные capability spikes;
+   P4.9 Goose/platform остаётся DEFERRED.
+8. **P4.2 → P4.3 → P4.4 — дополнительные каналы** по потребности;
+   P4.5–P4.7/P4.14 сохраняют свои условные триггеры.
+
+Исторические доказательства: [поставка](docs/items/p48-delivery-plan.ru.md),
+[Telegram](docs/items/telegram-recovery.ru.md),
+[контекст и быстрые действия](docs/items/telegram-context-and-shortcuts.ru.md),
+[ревью](docs/items/project-review-2026-10-14.ru.md).

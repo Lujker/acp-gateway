@@ -1,5 +1,10 @@
 # Просмотр новых Telegram-функций на Docker VPS без релиза
 
+> Решение владельца 2026-10-16: оставшиеся приёмочные проверки предварительно
+> закрыты. Использовать этот список при сообщениях о проблемах, не как блокер
+> текущей разработки. macOS коннектор владелец проверит отдельно позже.
+
+
 Это порядок для существующего развёртывания из [Docker-инструкции](vps-docker.ru.md):
 `~/projects/acp-gateway/deploy/docker`, `compose.yaml` + `compose.proxy.yaml`,
 nginx хоста и сохранённые `runtime/`, `state/`, `.env`.
@@ -8,23 +13,24 @@ nginx хоста и сохранённые `runtime/`, `state/`, `.env`.
 ## Обновление из рабочей ветки — основной способ
 
 Для проверенной установки `/home/vpnadmin/projects/acp-gateway` образ
-`acpgw:local` собирается непосредственно из checkout. Изменения доступны в ветке
-`codex/telegram-delivery-recovery`, без выпуска релиза. Дождитесь завершения
+`acpgw:local` собирается непосредственно из checkout. Изменения доступны в
+`main` (начиная с `d42c430`), без выпуска нового релиза. Дождитесь завершения
 активных задач, затем выполните на VPS:
 
 ```bash
 cd /home/vpnadmin/projects/acp-gateway
 git fetch origin
-git switch --track origin/codex/telegram-delivery-recovery
+git switch main
+git pull --ff-only
 cd deploy/docker
 docker compose -f compose.yaml -f compose.proxy.yaml up -d --build gateway
 docker compose -f compose.yaml -f compose.proxy.yaml ps
 docker compose -f compose.yaml -f compose.proxy.yaml logs --tail=50 gateway
 ```
 
-Если локальная ветка уже существует, вместо `git switch --track ...` используйте
-`git switch codex/telegram-delivery-recovery` и `git pull --ff-only`.
-При следующих обновлениях этой ветки достаточно `git pull --ff-only` в корне
+Если локального `main` ещё нет, вместо `git switch main` используйте
+`git switch --track origin/main`.
+При следующих обновлениях `main` достаточно `git pull --ff-only` в корне
 проекта и той же команды Compose `up -d --build gateway` в `deploy/docker`.
 Compose использует существующие `runtime/`, `state/`, `.env` и proxy network.
 Пересоздание контейнера ненадолго прерывает работу бота. На старой установке

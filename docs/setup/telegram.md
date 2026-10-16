@@ -347,3 +347,16 @@ without real adapter capabilities.
 Use the [Docker preview instructions](telegram-preview-docker.ru.md) to try the
 unpublished branch on an existing VPS. Publication and live acceptance remain
 separate from source verification.
+
+## Updates (source development after 0.2.0)
+
+`/updates` shows versions; `/updates_check` explicitly checks the stable PyPI version.
+When updates are enabled locally and an independent companion is running, the panel
+offers Update → exact target/version confirmation → saved operation status. Use
+`/update_history` or `/update_status ID` after reconnect/restart. The originating
+private chat receives a completion/unknown notification; reading status does not
+repeat installation. Older peers keep agent operation without update commands.
+
+See [the companion setup and recovery guide](remote-updates.md) for native uv services,
+Windows paths, Docker-host policy, immutable images and rollback boundaries. These
+changes are source development and have not been published in stable 0.2.0.

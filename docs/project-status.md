@@ -3,7 +3,7 @@
 [Documentation](README.md) · [Roadmap and current queue](../road-map.md)
 
 This is a short orientation for readers, not a replacement for the roadmap
-or acceptance journals. Snapshot: **2026-10-15**.
+or acceptance journals. Snapshot: **2026-10-16**.
 
 ## Versions
 
@@ -26,30 +26,50 @@ connectors (owner acceptance 2026-10-15). See
   The owner has confirmed basic Telegram prompts/results on two Windows PCs.
 - **Telegram:** private user allowlist, command menu, agent/dialogue/model controls,
   human approval buttons, formatted answers and restart-aware delivery.
-  Stable 0.2.0 includes computer cards and scoped task history. Current branch
-  improvements to recovery, renaming and error hints remain unpublished; see
+  Stable 0.2.0 includes computer cards and scoped task history. Recovery, renaming,
+  context cards, recent dialogues and favorites are published in main `d42c430`.
+  The owner reports a successful Docker VPS update and connected agents; development
+  is closed; remaining live acceptance was provisionally closed by the owner
+  on 2026-10-16, to reopen on reported problems. See
   the [Telegram journal](items/telegram-recovery.ru.md).
 - **CLI, local HTTP/SSE API and MCP:** additional interfaces to the same core.
   MCP does not receive human approval controls.
 - **Direct Goose:** ACP connection, TLS pinning, sessions and approvals;
   deployment instructions and historical checks have their own guides.
 
-## Limits and acceptance still ahead
+## Current work and limits
 
-Acceptance remains incomplete after the 0.2.0 publication. Existing two-PC success
-is not proof of every disconnect, concurrent dialogue or reboot scenario.
+The owner provisionally closed outstanding Telegram and operational acceptance
+on 2026-10-16. Reopen those checks only when the owner or another user reports a
+problem. This decision does not claim that all previously listed scenarios passed.
+The macOS connector will be checked by the owner later and does not block current work.
 
-- Dashboard and current Telegram improvements still need live owner acceptance.
-- Managed Hermes conversations do not gain cold resume merely because a
-  connector restarted. Shared Desktop observation does not imply shared write,
-  cancellation or approval authority; see the [Hermes adapter evidence](items/hermes-shared-control.ru.md).
-- Cancellation, model changes and other actions depend on the selected
-  agent's reported capabilities and the gateway policy.
-- Windows reboot/logon/sleep/network and selected update/rollback cases remain
-  in the [acceptance queue](setup/p48-acceptance.md).
-- Remote connector updates and host controls, multi-user/workspace ownership,
-  schedules, a public client API/mobile and additional harness adapters are
-  [planned work](../road-map.md), not current features.
+Connector activity watcher recovery and explicit service reinstallation guidance
+with saved env selection are implemented in source. Telegram updates now include
+single-owner exact-version confirmation, durable operations, status/history and
+restart-aware notifications. An independent, locally enabled companion executes
+uv managed service updates or a Docker dispatcher image replacement with database
+backup and known-failure recovery. See [companion setup](setup/remote-updates.md).
+The companion now has separate Linux user-service/Windows logon-task installation,
+autostart and cooperative stop controls, available from setup. Local diagnosis,
+audited resolution of retained unknown executor records and immutable Docker-image
+registration are implemented in source; image download/build remains external.
+A local development snapshot `0.2.1.dev20261016` was built offline with source/artifact
+hashes and checked wheel contents. It is unpublished and does not change stable 0.2.0.
+This is source development after stable 0.2.0; no new release or production update
+has been authorized or performed. User modules remain a separate deferred track.
+
+- Hermes managed conversations still have cold-resume limitations. Shared Desktop
+  observation does not grant shared write/cancel/approval authority.
+- Actions depend on reported agent capabilities and gateway policy.
+- Telegram update MVP is implemented in source for one target and newer stable
+  major.minor.patch releases. Native updates require a registry uv installation;
+  Docker requires a prepared immutable image allowed by host policy. Live Docker
+  engine/native Windows update evidence is not claimed. macOS, batch, Git/file
+  installs and RC versions are outside this MVP. Stable 0.2.0 lacks the feature.
+- User modules and connector-owned tasks/schedules remain deferred proposals.
+- Multi-user/workspace ownership, public client API/mobile and additional adapters
+  remain [planned work](../road-map.md).
 
 ## Control and data boundaries
 
