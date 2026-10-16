@@ -39,6 +39,7 @@ from acp_gateway.channels.telegram_errors import error_card
 from acp_gateway.channels.telegram_format import FORMAT_VERSION, answer_chunks, plain_html
 from acp_gateway.channels.telegram_shortcuts import Shortcuts
 from acp_gateway.channels.telegram_ui import PANEL_CONTEXT, Panels
+from acp_gateway.channels.telegram_updates import Updates
 from acp_gateway.channels.telegram_work import WorkCards
 from acp_gateway.config import TelegramSettings
 from acp_gateway.connectors.diagnostics import computer_diagnostics
@@ -54,6 +55,7 @@ HELP = (
     "/recent — недавние диалоги всех агентов\n/favorites — избранные маршруты\n"
     "/menu — панель и текущий выбор\n/start, /help — начало работы и подсказки\n"
     "/computers — компьютеры и подключения\n/agent [ALIAS] — список или выбор агента\n"
+    "/updates — версии диспетчера и компьютеров; /updates_check — проверить обновления\n"
     "/new [ALIAS] — новый диалог\n/sessions [PAGE] — список диалогов\n"
     "/dialogue ID [PAGE] — предпросмотр диалога\n/switch ID — выбрать диалог\n"
     "Переименовать: откройте диалог и нажмите «Переименовать», затем отправьте название.\n"
@@ -80,6 +82,7 @@ COMMANDS = (
     ("recent", "Recent dialogues across agents", "Недавние диалоги всех агентов"),
     ("favorites", "Favorite routes", "Избранные маршруты"),
     ("computers", "Computers", "Компьютеры и подключения"),
+    ("updates", "Dispatcher and connector updates", "Версии и обновления компьютеров"),
     ("jobs", "Job history", "История задач этого чата"),
     ("job", "Job details", "Подробности: /job JOB_ID"),
     ("agent", "List or select an agent", "Список и выбор агента"),
@@ -166,17 +169,28 @@ class _Updates(BaseMiddleware):
         return await handler(event, data)
 
 
-class TelegramChannel(Shortcuts, ContextCard, WorkCards, Dashboard, Channel):
+class TelegramChannel(Updates, Shortcuts, ContextCard, WorkCards, Dashboard, Channel):
     name = "telegram"
     can_approve = True
 
-    def __init__(self, settings: TelegramSettings, token: SecretStr, *, bot=None, dispatcher=None):
+    def __init__(
+        self,
+        settings: TelegramSettings,
+        token: SecretStr,
+        *,
+        bot=None,
+        dispatcher=None,
+        update_inventory=None,
+        update_service=None,
+    ):
         register_secret(token.get_secret_value())
         self.settings = settings.model_copy(deep=True)
         self.bot = bot or Bot(
             token.get_secret_value(), default=DefaultBotProperties(parse_mode="HTML")
         )
         self.connector_dispatcher = dispatcher
+        self.update_inventory = update_inventory
+        self.update_service = update_service
         self.namespace = f"telegram:{self.bot.id}"
         self.dispatcher = Dispatcher()
         self.dispatcher.update.outer_middleware(_Updates(self))
@@ -248,6 +262,10 @@ class TelegramChannel(Shortcuts, ContextCard, WorkCards, Dashboard, Channel):
         ]
         if self.settings.status_enabled:
             self._tasks.append(asyncio.create_task(self._update_statuses()))
+        if self.update_service is not None:
+            self._tasks.append(
+                asyncio.create_task(self._update_notifications(), name="telegram-updates")
+            )
 
     async def _register_commands(self):
         for language, column in (("", 1), ("ru", 2)):
@@ -670,6 +688,8 @@ class TelegramChannel(Shortcuts, ContextCard, WorkCards, Dashboard, Channel):
             text += "\nВыберите агента, затем создайте или выберите диалог."
         rows += [[("🕘 Недавние", "/recent"), ("⭐ Избранное", "/favorites")]]
         rows += [[("📍 Текущий контекст", "/context")]]
+        if self.update_inventory is not None:
+            rows += [[("⬆ Обновления", "/updates")]]
         rows += [[("✅ Подтверждения", "/approvals"), ("❓ Помощь", "/help")]]
         await self._panel(chat, text, rows)
 
@@ -928,6 +948,8 @@ class TelegramChannel(Shortcuts, ContextCard, WorkCards, Dashboard, Channel):
             self._clear_rename_input(chat)
         if command == "/context":
             await self._show_context(chat, explicit=True)
+            return
+        if await self._updates(chat, command, argument):
             return
         if command == "/approval":
             await self._approval_details(chat, argument)

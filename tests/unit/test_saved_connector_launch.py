@@ -118,3 +118,58 @@ def test_missing_saved_role_has_actionable_error(saved):
 def test_saved_role_version_is_an_integer_contract(value):
     with pytest.raises(ValueError, match=r"Invalid setup\.json"):
         parse(json.dumps({"version": value, "role": "local"}))
+
+
+@pytest.mark.parametrize("explicit", [False, True])
+def test_service_install_selects_env_beside_config_and_respects_explicit(
+    saved, monkeypatch, explicit
+):
+    config, _ = saved
+    env = config.parent / ".env"
+    env.write_text("LOCAL_VALUE=selected-env-value\n")
+    other = config.parent / "custom.env"
+    other.write_text("LOCAL_VALUE=explicit-env-value\n")
+    seen = []
+    monkeypatch.delenv("ACPGW_ENV_FILE", raising=False)
+    monkeypatch.setattr("acp_gateway.service.install", lambda cfg, **kw: seen.append(cfg) or 0)
+    args = ["--config", str(config)]
+    if explicit:
+        args += ["--env-file", str(other)]
+    assert main([*args, "service", "--role", "connector", "install"]) == 0
+    assert seen[0].env_file == (other if explicit else env)
+
+
+@pytest.mark.parametrize("override", ["saved", "explicit", "environment"])
+def test_service_install_uses_saved_custom_env_without_overriding_user(
+    saved, monkeypatch, override
+):
+    config, state = saved
+    env = config.parent / "private-custom.env"
+    env.write_text("LOCAL_VALUE=saved-env-value\n")
+    other = config.parent / "override.env"
+    other.write_text("LOCAL_VALUE=override-env-value\n")
+    state["env_file"] = str(env)
+    (config.parent / STATE).write_text(json.dumps(state))
+    seen = []
+    monkeypatch.setattr("acp_gateway.service.install", lambda cfg, **kw: seen.append(cfg) or 0)
+    args = ["--config", str(config)]
+    if override == "explicit":
+        args += ["--env-file", str(other)]
+    elif override == "environment":
+        monkeypatch.setenv("ACPGW_ENV_FILE", str(other))
+    assert main([*args, "service", "--role", "connector", "install"]) == 0
+    assert seen[0].env_file == (env if override == "saved" else other)
+
+
+@pytest.mark.parametrize("value", [None, True, "relative.env"])
+def test_invalid_saved_env_path_is_refused(value):
+    with pytest.raises(ValueError, match="Invalid setup"):
+        parse(json.dumps({"version": 1, "role": "connector", "env_file": value}))
+
+
+def test_missing_saved_env_fails_instead_of_loading_unrelated_defaults(saved, monkeypatch):
+    config, state = saved
+    state["env_file"] = str(config.parent / "missing-private.env")
+    (config.parent / STATE).write_text(json.dumps(state))
+    monkeypatch.setattr("acp_gateway.service.install", lambda *a, **kw: pytest.fail("wrong env"))
+    assert main(["--config", str(config), "service", "--role", "connector", "install"]) == 2

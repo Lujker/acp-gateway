@@ -70,6 +70,8 @@ class Panels:
                     "/mode",
                 }
                 once = verb in {
+                    "/update_confirm",
+                    "/update_cancel",
                     "/new",
                     "/switch",
                     "/open_dialogue",

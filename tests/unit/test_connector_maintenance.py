@@ -166,3 +166,41 @@ async def test_uncertain_restart_ack_crosses_live_ipc_and_still_reserves_atomica
         finally:
             task.cancel()
             await asyncio.gather(task, return_exceptions=True)
+
+
+async def test_activity_write_failure_is_logged_and_watcher_recovers(
+    tmp_path, controller, monkeypatch
+):
+    from acp_gateway.connectors import maintenance
+
+    original = maintenance._atomic
+    attempts = 0
+    warnings = []
+
+    def flaky(path, content):
+        nonlocal attempts
+        if path.name == STATUS:
+            attempts += 1
+            if attempts <= 2:
+                raise PermissionError("private-error-detail")
+        return original(path, content)
+
+    monkeypatch.setattr(maintenance, "_atomic", flaky)
+    monkeypatch.setattr(maintenance.log, "warning", lambda *a, **kw: warnings.append((a, kw)))
+    with FileLock(tmp_path / "connector.lock"), control_record(tmp_path) as instance:
+        task = asyncio.create_task(watch(tmp_path, instance, controller, interval=0.01))
+        try:
+            async with asyncio.timeout(5):
+                while read_status(tmp_path).get("state") != "running":
+                    assert not task.done()
+                    await asyncio.sleep(0.01)
+            assert attempts >= 3
+            client = LocalClient(tmp_path, timeout=5)
+            response = await asyncio.to_thread(client.request, "POST", "/maintenance/prepare")
+            assert response.status_code == 200
+        finally:
+            task.cancel()
+            await asyncio.gather(task, return_exceptions=True)
+    assert len(warnings) == 1
+    assert all(a == ("connector_activity_publish_failed",) for a, _ in warnings)
+    assert "private-error-detail" not in str(warnings)

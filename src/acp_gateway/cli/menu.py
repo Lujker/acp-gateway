@@ -61,6 +61,7 @@ def menu(config_file=None, env_file=None, *, prompts=None, execute=None):
                 "conversation",
                 "approvals",
                 "updates",
+                "updater",
                 "exit",
             ),
             "exit",
@@ -137,6 +138,8 @@ def menu(config_file=None, env_file=None, *, prompts=None, execute=None):
                 run(["approvals", operation])
             elif action == "updates":
                 run(["update", "--check"])
+            elif action == "updater":
+                updater_menu(prompts, run, config_file)
         except (OSError, ValueError, httpx.HTTPError) as exc:
             print("error: " + redact_text(str(exc)), file=sys.stderr)
         except KeyboardInterrupt:
@@ -158,6 +161,42 @@ def service_menu(prompts, run, config_file):
     result = run(["service", "--role", role, operation])
     if not result and operation == "install":
         print("Installed without starting. Choose service -> enable to start and enable autostart.")
+
+
+def updater_menu(prompts, run, config_file):
+    if config_file is None:
+        raise ValueError("Run base setup first")
+    operation = prompts.choice(
+        "Independent updater",
+        (
+            "settings",
+            "init",
+            "install",
+            "enable",
+            "status",
+            "start",
+            "stop",
+            "restart",
+            "disable",
+            "uninstall",
+        ),
+        "status",
+    )
+    if operation == "settings":
+        return run(["config", "edit", "--section", "updates"])
+    policy = (
+        Path(prompts.ask("Updater policy", str(config_file.parent / "updater.json"), _required))
+        .expanduser()
+        .absolute()
+    )
+    args = ["updater", "--policy", str(policy)]
+    if operation == "init":
+        state = _state(_snapshot(config_file.parent / "setup.json"))
+        role = "connector" if state.get("role") == "connector" else "dispatcher"
+        args += ["--init", "--role", role]
+    else:
+        args.append(operation)
+    return run(args)
 
 
 def computers_menu(prompts, run, config_file):

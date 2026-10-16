@@ -59,6 +59,9 @@ def run(config, args):
         from acp_gateway.connectors.maintenance import ConnectorMaintenance, watch
 
         maintenance = ConnectorMaintenance(config.settings.agents, managers)
+        from acp_gateway.update_service import LocalUpdates
+
+        updates = LocalUpdates(config, role="connector", target=launch.computer_id)
 
         async def local_factory(alias):
             maintenance.check_admission()
@@ -100,6 +103,8 @@ def run(config, args):
                     hello=launch.hello(config),
                     fingerprint=launch.tls_fingerprint,
                     local_factory=local_factory,
+                    installation_report=updates.report,
+                    update_handler=updates.request,
                 )
             except asyncio.CancelledError:
                 if not stopping:
@@ -164,3 +169,9 @@ def run(config, args):
             store.close()
         lock.release()
     return 0
+
+
+def connector_installation_report():
+    from acp_gateway.updates import installation_report
+
+    return installation_report(role="connector")

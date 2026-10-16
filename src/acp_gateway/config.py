@@ -92,6 +92,18 @@ class ConnectorSettings(_Section):
         return self
 
 
+class UpdateSettings(_Section):
+    enabled: bool = False
+    spool_dir: Path | None = None
+
+    @field_validator("spool_dir")
+    @classmethod
+    def absolute_spool(cls, value):
+        if value is not None and not value.is_absolute():
+            raise ValueError("updates.spool_dir must be absolute")
+        return value
+
+
 class HermesAttachSettings(_Section):
     lock_dir: Path | None = None
     role: Literal["desktop-serve", "serve"] = "desktop-serve"
@@ -304,6 +316,7 @@ class Settings(BaseSettings):
 
     gateway: GatewaySettings = Field(default_factory=GatewaySettings)
     connector: ConnectorSettings = Field(default_factory=ConnectorSettings)
+    updates: UpdateSettings = Field(default_factory=UpdateSettings)
     agents: list[AgentProfile] = Field(default_factory=list)
     policy: PolicySettings = Field(default_factory=PolicySettings)
     rate_limits: RateLimitSettings = Field(default_factory=RateLimitSettings)

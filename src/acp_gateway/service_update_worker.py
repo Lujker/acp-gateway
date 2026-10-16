@@ -136,6 +136,7 @@ def record(plan, status, phase, code=None, **details):
                 "status": status,
                 "phase": phase,
                 "returncode": code,
+                **({"operation_id": plan["operation_id"]} if plan.get("operation_id") else {}),
                 **details,
             }
         ),

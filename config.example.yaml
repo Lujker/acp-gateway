@@ -59,3 +59,9 @@ retention:
 rate_limits:
   work_requests: 60        # shared new-session/prompt attempts per channel
   window_seconds: 60
+
+# Source development after 0.2.0: Telegram-triggered updates require a separate
+# locally configured companion. Disabled by default; see docs/setup/remote-updates.md.
+updates:
+  enabled: false
+  # spool_dir: /absolute/private/update-spool  # default: data_dir/update-spool

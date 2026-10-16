@@ -96,6 +96,7 @@ class ControlDispatcher:
                 and not registration.relay.closed.is_set()
             )
             row["active_streams"] = len(registration.relay.streams) if row["connected"] else 0
+            row["update_inventory"] = bool(row["connected"] and registration.relay.update_inventory)
             row["advertised_agents"] = (
                 [a.alias for a in registration.agents] if row["connected"] else []
             )
@@ -126,6 +127,19 @@ class ControlDispatcher:
             task.add_done_callback(self._closing.discard)
 
     async def open_agent(self, computer_id: str, alias: str):
+        registration = await self._authorized_registration(computer_id)
+        return await registration.relay.open(alias)
+
+    async def update_info(self, computer_id: str):
+        registration = await self._authorized_registration(computer_id)
+        report = await registration.relay.update_info()
+        # Recheck after the remote await: revoked/replaced responses are not current.
+        current = await self._authorized_registration(computer_id)
+        if current is not registration:
+            raise AgentUnavailable("computer connection changed")
+        return report
+
+    async def _authorized_registration(self, computer_id):
         registration = self.active.get(computer_id)
         if registration is None or registration.relay is None:
             raise AgentUnavailable("computer is offline")
@@ -141,7 +155,23 @@ class ControlDispatcher:
             self._disconnected(registration, "access_changed", 1008)
             await registration.connection.close(code=1008, reason="computer access changed")
             raise AgentUnavailable("computer access changed")
-        return await registration.relay.open(alias)
+        return registration
+
+    async def update_operation(self, computer_id, binding, request):
+        registration = await self._authorized_registration(computer_id)
+        epoch, generation = binding.rsplit(":", 1)
+        if str(registration.generation) != generation or (
+            request.action == "execute" and str(registration.connection_id) != epoch
+        ):
+            raise AgentUnavailable("computer connection changed; update refused")
+        result = await registration.relay.update_operation(request)
+        if result.operation != request.operation:
+            raise ProtocolError("update response operation mismatch")
+        if request.action == "status":
+            current = await self._authorized_registration(computer_id)
+            if current.generation != registration.generation:
+                raise AgentUnavailable("computer access changed")
+        return result
 
     def authenticate(self, connection, request):
         if len(connection.server.handler_tasks) > self.max_connections:
@@ -151,6 +181,10 @@ class ControlDispatcher:
         try:
             identity = request.headers.get("X-ACP-Computer", "")
             authorization = request.headers.get("Authorization", "")
+            update_inventory = request.headers.get("X-ACP-Update-Inventory") == "1"
+            update_operations = (
+                update_inventory and request.headers.get("X-ACP-Update-Operations") == "1"
+            )
         except MultipleValuesError:
             return connection.respond(401, "Unauthorized\n")
         if not authorization.startswith("Bearer "):
@@ -162,6 +196,8 @@ class ControlDispatcher:
         if generation is None:
             return connection.respond(401, "Unauthorized\n")
         connection.computer_grant = (identity, generation)
+        connection.update_inventory = update_inventory
+        connection.update_operations = update_operations
         return None
 
     async def _watch_grant(self, registration):
@@ -197,7 +233,11 @@ class ControlDispatcher:
                 identity, uuid4(), generation, tuple(frame.agents), connection
             )
             registration.relay = RelayPeer(
-                connection, registration.connection_id, [agent.alias for agent in frame.agents]
+                connection,
+                registration.connection_id,
+                [agent.alias for agent in frame.agents],
+                update_inventory=connection.update_inventory,
+                update_operations=connection.update_operations,
             )
             self.active[identity] = registration
             if previous is not None:
@@ -220,6 +260,8 @@ class ControlDispatcher:
                     Welcome(
                         connection_id=registration.connection_id,
                         heartbeat_seconds=self.heartbeat_seconds,
+                        update_inventory=1 if registration.relay.update_inventory else None,
+                        update_operations=1 if registration.relay.update_operations else None,
                     )
                 )
             )
@@ -343,7 +385,13 @@ def normalize_pin(value: str) -> str:
 
 
 async def connect_control(
-    url: str, *, credential: str, hello: Hello, fingerprint: str | None = None
+    url: str,
+    *,
+    credential: str,
+    hello: Hello,
+    fingerprint: str | None = None,
+    update_inventory=False,
+    update_operations=False,
 ):
     parts = validate_url(url)
     if fingerprint is not None and parts.scheme != "wss":
@@ -368,6 +416,8 @@ async def connect_control(
             additional_headers={
                 "Authorization": f"Bearer {credential}",
                 "X-ACP-Computer": hello.computer_id,
+                **({"X-ACP-Update-Inventory": "1"} if update_inventory else {}),
+                **({"X-ACP-Update-Operations": "1"} if update_operations else {}),
             },
             ssl=tls,
             proxy=None,
@@ -404,6 +454,10 @@ async def connect_control(
         welcome = decode_frame(await asyncio.wait_for(connection.recv(), timeout=5))
         if not isinstance(welcome, Welcome):
             raise ProtocolError("dispatcher did not welcome this computer")
+        if welcome.update_inventory is not None and not update_inventory:
+            raise ProtocolError("unsolicited update inventory negotiation")
+        if welcome.update_operations is not None and not update_operations:
+            raise ProtocolError("unsolicited update operation negotiation")
         return connection, welcome
     except BaseException as exc:
         close_code = connection.close_code
@@ -427,6 +481,8 @@ async def run_connector(
     hello: Hello,
     fingerprint: str | None = None,
     local_factory=None,
+    installation_report=None,
+    update_handler=None,
 ):
     delays = (1, 2, 5, 10, 30)
     attempt = 0
@@ -438,6 +494,8 @@ async def run_connector(
                 hello=hello,
                 fingerprint=fingerprint,
                 local_factory=local_factory,
+                installation_report=installation_report,
+                update_handler=update_handler,
             )
         except ConnectorUnavailable as exc:
             delay = delays[min(attempt, len(delays) - 1)]
@@ -448,12 +506,23 @@ async def run_connector(
             attempt += 1
 
 
-async def _run_connection(url, *, credential, hello, fingerprint, local_factory):
+async def _run_connection(
+    url,
+    *,
+    credential,
+    hello,
+    fingerprint,
+    local_factory,
+    installation_report=None,
+    update_handler=None,
+):
     connection, welcome = await connect_control(
         url,
         credential=credential,
         hello=hello,
         fingerprint=fingerprint,
+        update_inventory=installation_report is not None,
+        update_operations=update_handler is not None,
     )
     try:
         get_logger(__name__).info(
@@ -469,6 +538,10 @@ async def _run_connection(url, *, credential, hello, fingerprint, local_factory)
             welcome.connection_id,
             [agent.alias for agent in hello.agents],
             local_factory=local_factory,
+            update_inventory=welcome.update_inventory == 1,
+            installation_report=installation_report,
+            update_operations=welcome.update_operations == 1,
+            update_handler=update_handler,
         )
         await peer.run()
     except ProtocolError:

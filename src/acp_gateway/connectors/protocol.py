@@ -4,7 +4,8 @@ import json
 from typing import Annotated, Any, Literal
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field, TypeAdapter, model_validator
+from packaging.version import Version
+from pydantic import BaseModel, ConfigDict, Field, TypeAdapter, field_validator, model_validator
 
 MAX_FRAME_BYTES = 65_536
 MAX_DATA_BYTES = 1_048_576
@@ -64,6 +65,84 @@ class Welcome(_Frame):
     type: Literal["welcome"] = "welcome"
     connection_id: UUID
     heartbeat_seconds: Annotated[int, Field(ge=5, le=300)] = 20
+    update_inventory: Literal[1] | None = None
+    update_operations: Literal[1] | None = None
+
+
+class InstallationReport(_Model):
+    installed_version: Annotated[str, Field(pattern=r"^[0-9A-Za-z.+!-]{1,64}$")]
+    manager: Literal["uv", "docker", "unmanaged", "binary"]
+    source: Literal["registry", "editable", "git", "file"]
+    platform: Literal["linux", "win32", "darwin", "other"]
+    # Discovery never grants permission to mutate the installation.
+    can_update: bool = False
+
+    @field_validator("installed_version")
+    @classmethod
+    def valid_version(cls, value):
+        Version(value)
+        return value
+
+
+class UpdateInfoRequest(_Frame):
+    type: Literal["update_info"] = "update_info"
+    epoch: UUID
+    request: UUID
+
+
+class UpdateInfoResponse(_Frame):
+    type: Literal["update_info_result"] = "update_info_result"
+    epoch: UUID
+    request: UUID
+    report: InstallationReport | None = None
+
+
+class UpdateOperation(_Model):
+    operation: UUID
+    status: Literal[
+        "awaiting_confirmation",
+        "dispatching",
+        "queued",
+        "running",
+        "succeeded",
+        "failed",
+        "unknown",
+        "cancelled",
+        "not_found",
+    ]
+    reason: Literal[
+        "",
+        "disabled",
+        "unsupported",
+        "busy",
+        "expired",
+        "stale",
+        "conflict",
+        "version_not_allowed",
+        "failed",
+        "unknown",
+        "rolled_back",
+        "worker_stopped",
+    ] = ""
+
+
+class UpdateRequest(_Frame):
+    type: Literal["update_operation"] = "update_operation"
+    epoch: UUID
+    request: UUID
+    operation: UUID
+    action: Literal["execute", "status"]
+    actor: Annotated[str, Field(min_length=1, max_length=256)]
+    target_version: Annotated[str, Field(pattern=r"^[0-9]+\.[0-9]+\.[0-9]+$", max_length=64)]
+    current_version: Annotated[str, Field(min_length=1, max_length=64)]
+    expires: Annotated[float, Field(allow_inf_nan=False)]
+
+
+class UpdateResponse(_Frame):
+    type: Literal["update_operation_result"] = "update_operation_result"
+    epoch: UUID
+    request: UUID
+    result: UpdateOperation
 
 
 class Ping(_Frame):
@@ -105,7 +184,21 @@ class Close(_StreamFrame):
     code: Literal["closed", "unavailable", "access_denied", "policy_denied", "overflow"] = "closed"
 
 
-ControlFrame = Hello | Welcome | Ping | Pong | Error | Open | Opened | Data | Close
+ControlFrame = (
+    Hello
+    | Welcome
+    | Ping
+    | Pong
+    | Error
+    | Open
+    | Opened
+    | Data
+    | Close
+    | UpdateInfoRequest
+    | UpdateInfoResponse
+    | UpdateRequest
+    | UpdateResponse
+)
 _ADAPTER = TypeAdapter(Annotated[ControlFrame, Field(discriminator="type")])
 
 
