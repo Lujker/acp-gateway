@@ -9,7 +9,8 @@ or acceptance journals. Snapshot: **2026-10-16**.
 
 | Track | State |
 | --- | --- |
-| Stable `0.2.0` | Install through uv/PyPI; independent setup sections, Telegram computer/job dashboards, controls and approvals, dialogue execution modes, managed update with service recovery, Docker dispatcher behind a host reverse proxy |
+| `0.2.1` | Telegram update operations, independent updater lifecycle, watcher/env fixes, context and recovery controls; [release notes](releases/0.2.1.md), [upgrade](setup/update-0.2.1.ru.md) |
+| Previous stable `0.2.0` | Install through uv/PyPI; independent setup sections, Telegram computer/job dashboards, controls and approvals, dialogue execution modes, managed update with service recovery, Docker dispatcher behind a host reverse proxy |
 | Previous candidates `0.2.0rc1`–`0.2.0rc8` | Published prereleases; upgrade with `acpgw update --stable --with-services` |
 
 A production dispatcher runs in Docker behind a host nginx with two Windows/Hermes
@@ -56,8 +57,8 @@ audited resolution of retained unknown executor records and immutable Docker-ima
 registration are implemented in source; image download/build remains external.
 A local development snapshot `0.2.1.dev20261016` was built offline with source/artifact
 hashes and checked wheel contents. It is unpublished and does not change stable 0.2.0.
-This is source development after stable 0.2.0; no new release or production update
-has been authorized or performed. User modules remain a separate deferred track.
+These features are included in 0.2.1; the owner authorized its release on 2026-10-16.
+Production updates remain the owner's next action. User modules remain deferred.
 
 - Hermes managed conversations still have cold-resume limitations. Shared Desktop
   observation does not grant shared write/cancel/approval authority.
@@ -66,7 +67,7 @@ has been authorized or performed. User modules remain a separate deferred track.
   major.minor.patch releases. Native updates require a registry uv installation;
   Docker requires a prepared immutable image allowed by host policy. Live Docker
   engine/native Windows update evidence is not claimed. macOS, batch, Git/file
-  installs and RC versions are outside this MVP. Stable 0.2.0 lacks the feature.
+  installs and RC versions are outside this MVP. Version 0.2.0 lacks the feature.
 - User modules and connector-owned tasks/schedules remain deferred proposals.
 - Multi-user/workspace ownership, public client API/mobile and additional adapters
   remain [planned work](../road-map.md).
