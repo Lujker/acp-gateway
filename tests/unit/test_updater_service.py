@@ -16,6 +16,10 @@ from acp_gateway.cli.main import main
 from acp_gateway.maintenance_worker import lease
 from acp_gateway.update_journal import Journal
 
+pytestmark = pytest.mark.skipif(
+    sys.platform != "linux", reason="POSIX lifecycle harness; no native Windows task mutation"
+)
+
 
 @pytest.fixture
 def policy(tmp_path, monkeypatch):

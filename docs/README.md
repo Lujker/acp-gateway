@@ -17,7 +17,8 @@ Historical documents are not current installation instructions.
 | Use Docker for a dispatcher and Linux/WSL connectors | [VPS runbook](setup/vps-acceptance.md), [Russian](setup/vps-acceptance.ru.md) |
 | Run the dispatcher in Docker behind the host's reverse proxy, or move a native dispatcher into Docker | [Docker dispatcher (Russian)](setup/vps-docker.ru.md) |
 | Configure autostart | [Services](setup/service.md) |
-| Telegram updates of dispatcher/connectors (source development) | [Independent updater setup](setup/remote-updates.md) |
+| Upgrade Docker dispatcher and uv connectors to 0.2.1 | [Upgrade instructions (Russian)](setup/update-0.2.1.ru.md) |
+| Telegram updates of dispatcher/connectors (0.2.1, local opt-in) | [Independent updater setup](setup/remote-updates.md) |
 | Update, inspect or recover an installation | [Maintenance](setup/maintenance.md) |
 
 ## Use and troubleshoot

@@ -2,9 +2,9 @@
 
 [Documentation](../README.md) · [Development contract](../items/remote-connector-management.ru.md)
 
-This feature is implemented in source after the published 0.2.0 release. It is
-not included in stable 0.2.0. No production deployment or release is performed
-by developing it. The first scope is single-owner, one target at a time, newer
+This feature is included in 0.2.1 and is not present in 0.2.0. Start with the
+[0.2.1 upgrade instructions](update-0.2.1.ru.md). The first scope is
+single-owner, one target at a time, newer
 stable `major.minor.patch` versions, Linux/Windows uv services and a Linux Docker
 dispatcher. macOS, prereleases, Git/file installs and batch updates are excluded.
 
