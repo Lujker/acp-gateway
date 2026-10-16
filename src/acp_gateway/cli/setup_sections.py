@@ -11,5 +11,6 @@ SECTIONS = (
     "rate-limits",
     "retention",
     "logging",
+    "updates",
     "all",
 )

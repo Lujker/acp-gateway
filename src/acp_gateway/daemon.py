@@ -58,6 +58,7 @@ def configured_app(config: AppConfig):
     except Timeout as exc:
         raise ValueError("another gateway daemon already owns this data directory") from exc
     store = None
+    update_journal = None
     try:
         store = Store.open_in(data_dir)
         dispatcher = (
@@ -93,6 +94,9 @@ def configured_app(config: AppConfig):
         core.add_channel(cli)
         if config.settings.telegram.enabled:
             from acp_gateway.channels.telegram import TelegramChannel
+            from acp_gateway.update_journal import Journal
+            from acp_gateway.update_service import LocalUpdates, UpdateService
+            from acp_gateway.updates import UpdateInventory
 
             telegram_token = config.secrets.get(config.settings.telegram.token_env)
             if telegram_token is None:
@@ -105,8 +109,17 @@ def configured_app(config: AppConfig):
                     telegram_token.get_secret_value().encode(), other.get_secret_value().encode()
                 ):
                     raise ValueError("Telegram and other credentials must be different")
+            local_updates = LocalUpdates(config, role="dispatcher", target="dispatcher")
+            inventory = UpdateInventory(dispatcher, local_report=local_updates.report)
+            update_journal = Journal(data_dir / "update-control.db")
             core.add_channel(
-                TelegramChannel(config.settings.telegram, telegram_token, dispatcher=dispatcher)
+                TelegramChannel(
+                    config.settings.telegram,
+                    telegram_token,
+                    dispatcher=dispatcher,
+                    update_inventory=inventory,
+                    update_service=UpdateService(inventory, update_journal, local_updates),
+                )
             )
         mcp = McpChannel(core, mcp_token) if mcp_token is not None else None
         if mcp is not None:
@@ -127,6 +140,8 @@ def configured_app(config: AppConfig):
         app.state.dispatcher = dispatcher
         yield app
     finally:
+        if update_journal is not None:
+            update_journal.close()
         if store is not None:
             store.close()
         lock.release()

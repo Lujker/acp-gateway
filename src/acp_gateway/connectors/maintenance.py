@@ -5,6 +5,8 @@ import re
 import secrets
 import time
 
+import structlog
+
 from acp_gateway.agents.errors import AgentUnavailable
 from acp_gateway.cli.wizard import _atomic
 from acp_gateway.connectors.lifecycle import RUNTIME_FILE, _read
@@ -19,6 +21,7 @@ FIELDS = (
     "uncertain_sessions",
     "opening",
 )
+log = structlog.get_logger(__name__)
 
 
 def can_reserve(status, *, restart_uncertain=False):
@@ -99,6 +102,7 @@ async def watch(directory, instance, controller, *, interval=0.2):
     import json
 
     last = None
+    publish_failed = False
     try:
         while True:
             status = {
@@ -107,7 +111,17 @@ async def watch(directory, instance, controller, *, interval=0.2):
                 "published": time.time(),
                 **controller.status(),
             }
-            await asyncio.to_thread(_atomic, directory / STATUS, json.dumps(status).encode())
+            try:
+                await asyncio.to_thread(_atomic, directory / STATUS, json.dumps(status).encode())
+            except OSError as exc:
+                if not publish_failed:
+                    log.warning("connector_activity_publish_failed", error_type=type(exc).__name__)
+                publish_failed = True
+                await asyncio.sleep(interval)
+                continue
+            if publish_failed:
+                log.info("connector_activity_publish_recovered")
+                publish_failed = False
             try:
                 request = await asyncio.to_thread(_read, directory / REQUEST)
                 valid = (
@@ -156,7 +170,10 @@ async def watch(directory, instance, controller, *, interval=0.2):
                 pass
             await asyncio.sleep(interval)
     finally:
-        (directory / STATUS).unlink(missing_ok=True)
+        try:
+            (directory / STATUS).unlink(missing_ok=True)
+        except OSError as exc:
+            log.warning("connector_activity_cleanup_failed", error_type=type(exc).__name__)
 
 
 def read_status(directory):

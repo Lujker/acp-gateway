@@ -233,3 +233,21 @@ def test_failure_diagnostics_distinguish_busy_from_package_failure(cycle):
     assert details["failed_phase"] == "reserve"
     assert details["package_status"] == "not_started"
     assert "uncertain" in details["reason"]
+
+
+def test_remote_operation_id_requires_exact_managed_update():
+    from uuid import uuid4
+
+    with pytest.raises(ValueError, match="exact-version"):
+        installation.maintenance(
+            _build_parser().parse_args(["update", "--operation-id", uuid4().hex])
+        )
+
+
+def test_service_result_preserves_remote_operation_identity(tmp_path):
+    from uuid import uuid4
+
+    key = uuid4().hex
+    path = tmp_path / "result.json"
+    worker.record({"result": str(path), "operation_id": key}, "succeeded", "complete", 0)
+    assert json.loads(path.read_text())["operation_id"] == key

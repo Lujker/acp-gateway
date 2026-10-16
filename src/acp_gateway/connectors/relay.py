@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import sqlite3
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from uuid import UUID, uuid4
@@ -26,6 +27,10 @@ from acp_gateway.connectors.protocol import (
     Ping,
     Pong,
     ProtocolError,
+    UpdateInfoRequest,
+    UpdateInfoResponse,
+    UpdateRequest,
+    UpdateResponse,
     decode_frame,
     encode_frame,
 )
@@ -126,11 +131,27 @@ class RelayPeer:
     """
 
     def __init__(
-        self, connection, epoch: UUID, aliases, *, local_factory: LocalFactory | None = None
+        self,
+        connection,
+        epoch: UUID,
+        aliases,
+        *,
+        local_factory: LocalFactory | None = None,
+        update_inventory=False,
+        installation_report=None,
+        update_operations=False,
+        update_handler=None,
     ):
         self.connection, self.epoch = connection, epoch
         self.aliases = frozenset(aliases)
         self.local_factory = local_factory
+        self.update_inventory = update_inventory
+        self.installation_report = installation_report
+        self.update_operations = update_operations
+        self.update_handler = update_handler
+        self.update_requests = {}
+        self.update_kinds = {}
+        self.update_workers = set()
         self.streams: dict[UUID, RelayTransport | _LocalStream] = {}
         self.seen: set[UUID] = set()
         self.closed = asyncio.Event()
@@ -205,6 +226,9 @@ class RelayPeer:
             return
         self.closed.set()
         self.ready.set()
+        for pending in self.update_requests.values():
+            if not pending.done():
+                pending.set_exception(ConnectionError("computer disconnected"))
         for stream in list(self.streams):
             self.stop(stream)
         while not self.outbox.empty():
@@ -275,6 +299,39 @@ class RelayPeer:
     async def _read(self):
         async for payload in self.connection:
             frame = decode_frame(payload)
+            if isinstance(
+                frame, (UpdateInfoRequest, UpdateInfoResponse, UpdateRequest, UpdateResponse)
+            ):
+                if not self.update_inventory or frame.epoch != self.epoch:
+                    raise ProtocolError("unnegotiated update inventory or invalid epoch")
+                if (
+                    isinstance(frame, (UpdateRequest, UpdateResponse))
+                    and not self.update_operations
+                ):
+                    raise ProtocolError("unnegotiated update operation")
+                if isinstance(frame, (UpdateInfoResponse, UpdateResponse)):
+                    if self.local_factory is not None:
+                        raise ProtocolError("unexpected update inventory response")
+                    pending = self.update_requests.get(frame.request)
+                    if pending is not None and not pending.done():
+                        if type(frame) is not self.update_kinds[frame.request]:
+                            raise ProtocolError("update response type mismatch")
+                        pending.set_result(
+                            frame.report if isinstance(frame, UpdateInfoResponse) else frame.result
+                        )
+                else:
+                    if self.local_factory is None or len(self.update_workers) >= 4:
+                        raise ProtocolError("invalid update inventory request")
+                    task = asyncio.create_task(
+                        self._operate_update(frame)
+                        if isinstance(frame, UpdateRequest)
+                        else self._report_installation(frame)
+                    )
+                    self.tasks.add(task)
+                    self.update_workers.add(task)
+                    task.add_done_callback(self.tasks.discard)
+                    task.add_done_callback(self.update_workers.discard)
+                continue
             if isinstance(frame, Ping) and self.local_factory is not None:
                 await self.send(Pong(sequence=frame.sequence))
                 continue
@@ -330,6 +387,72 @@ class RelayPeer:
                 except BufferError:
                     self.stop(frame.stream, "overflow")
                     await self.send(Close(**route, code="overflow"))
+
+    async def update_info(self, *, timeout=5):
+        if self.local_factory is not None or not self.update_inventory:
+            raise AgentUnavailable("update inventory is unsupported; upgrade connector locally")
+        if len(self.update_requests) >= 4:
+            raise AgentUnavailable("update inventory is busy")
+        return await self._update_rpc(UpdateInfoRequest(epoch=self.epoch, request=uuid4()), timeout)
+
+    async def update_operation(self, frame, *, timeout=10):
+        if self.local_factory is not None or not self.update_operations:
+            raise AgentUnavailable("remote update is unsupported")
+        return await self._update_rpc(frame.model_copy(update={"epoch": self.epoch}), timeout)
+
+    async def _update_rpc(self, frame, timeout):
+        if len(self.update_requests) >= 4:
+            raise AgentUnavailable("update requests are busy")
+        request = frame.request
+        pending = asyncio.get_running_loop().create_future()
+        self.update_requests[request] = pending
+        self.update_kinds[request] = (
+            UpdateResponse if isinstance(frame, UpdateRequest) else UpdateInfoResponse
+        )
+        try:
+            async with asyncio.timeout(timeout):
+                await self.send(frame)
+                return await pending
+        finally:
+            self.update_requests.pop(request, None)
+            self.update_kinds.pop(request, None)
+            if not pending.done():
+                pending.cancel()
+            elif not pending.cancelled():
+                pending.exception()
+
+    async def _report_installation(self, request):
+        report = None
+        try:
+            if self.installation_report is not None:
+                report = await asyncio.to_thread(self.installation_report)
+                if report is not None and not self.update_operations:
+                    report = report.model_copy(update={"can_update": False})
+        except (OSError, ValueError):
+            get_logger(__name__).warning("update inventory report unavailable")
+        try:
+            await self.send(
+                UpdateInfoResponse(
+                    epoch=self.epoch,
+                    request=request.request,
+                    report=report,
+                )
+            )
+        except (OSError, ValueError, ConnectionError, BufferError):
+            get_logger(__name__).warning("update inventory report unavailable")
+
+    async def _operate_update(self, request):
+        from acp_gateway.connectors.protocol import UpdateOperation
+
+        result = UpdateOperation(operation=request.operation, status="failed", reason="unsupported")
+        try:
+            if self.update_handler is not None:
+                result = await asyncio.to_thread(self.update_handler, request)
+            await self.send(
+                UpdateResponse(epoch=self.epoch, request=request.request, result=result)
+            )
+        except (OSError, ValueError, ConnectionError, BufferError, sqlite3.Error):
+            get_logger(__name__).warning("update operation response unavailable")
 
     async def _local(self, stream_id, stream):
         transport = None

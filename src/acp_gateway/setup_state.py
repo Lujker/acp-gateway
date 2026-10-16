@@ -1,6 +1,7 @@
 """Saved operational role and connector recipe, shared by CLI entry points."""
 
 import json
+from pathlib import Path
 
 STATE = "setup.json"
 
@@ -14,6 +15,10 @@ def parse(contents):
             type(value.get("version")) is not int
             or value["version"] != 1
             or value.get("role") not in {"local", "server", "connector"}
+        ):
+            raise ValueError
+        if "env_file" in value and (
+            not isinstance(value["env_file"], str) or not Path(value["env_file"]).is_absolute()
         ):
             raise ValueError
         if value.get("role") == "connector" and "connection" in value:

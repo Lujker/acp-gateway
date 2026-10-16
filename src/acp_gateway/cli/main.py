@@ -3,6 +3,9 @@
 from __future__ import annotations
 
 import argparse
+import os
+import sqlite3
+import subprocess
 import sys
 from collections.abc import Sequence
 from pathlib import Path
@@ -60,6 +63,7 @@ def _build_parser() -> argparse.ArgumentParser:
     update.add_argument("--service-coordinator-fd", type=int, help=argparse.SUPPRESS)
     update.add_argument("--service-coordinator-file", type=Path, help=argparse.SUPPRESS)
     update.add_argument("--handoff-file", type=Path, help=argparse.SUPPRESS)
+    update.add_argument("--operation-id", help=argparse.SUPPRESS)
     update.add_argument(
         "--constraints", type=Path, help="release requirements.lock.txt (with --from)"
     )
@@ -139,6 +143,42 @@ def _build_parser() -> argparse.ArgumentParser:
     commands.add_parser("paths", help="show platform directories used by the gateway")
     commands.add_parser("serve", help="run the gateway daemon on loopback")
     commands.add_parser("start", help="run the role saved by interactive setup")
+    updater = commands.add_parser("updater", help="run an independent, locally configured updater")
+    updater.add_argument("--policy", type=Path, required=True)
+    updater.add_argument(
+        "--init", action="store_true", help="write a uv companion policy without starting it"
+    )
+    updater.add_argument("--role", choices=("dispatcher", "connector"), default="connector")
+    updater.add_argument(
+        "updater_action",
+        nargs="?",
+        default="run",
+        choices=(
+            "run",
+            "install",
+            "enable",
+            "disable",
+            "start",
+            "stop",
+            "restart",
+            "status",
+            "uninstall",
+            "diagnose",
+            "resolve",
+            "allow-image",
+        ),
+        help="manage independent updater autostart; install does not start it",
+    )
+    updater.add_argument("--operation", help="unknown operation ID to resolve locally")
+    updater.add_argument("--outcome", choices=("succeeded", "failed"))
+    updater.add_argument("--note", help="local recovery audit note")
+    updater.add_argument(
+        "--acknowledge-idle",
+        action="store_true",
+        help="confirm installers/rollback have finished after local inspection",
+    )
+    updater.add_argument("--version", help="reviewed stable version for allow-image")
+    updater.add_argument("--image", help="reviewed immutable local Docker image")
     commands.add_parser("menu", help="interactive configuration and management console")
     commands.add_parser("status", help="show gateway, agents and channels")
     local_sessions = commands.add_parser(
@@ -377,6 +417,45 @@ def main(argv: Sequence[str] | None = None) -> int:
     if not argv and sys.stdin.isatty() and sys.stdout.isatty():
         argv = ["menu"]
     args = _build_parser().parse_args(argv)
+    if args.command == "updater":
+        from acp_gateway.update_runner import init_policy, start_updater
+
+        try:
+            if (
+                any((args.operation, args.outcome, args.note, args.acknowledge_idle))
+                and args.updater_action != "resolve"
+            ):
+                raise ValueError("Recovery options require updater resolve")
+            if any((args.version, args.image)) and args.updater_action != "allow-image":
+                raise ValueError("Image options require updater allow-image")
+            if args.init:
+                if args.updater_action != "run":
+                    raise ValueError("--init cannot be combined with an updater service action")
+                return init_policy(args.policy, args.config, args.env_file, role=args.role)
+            if args.updater_action in {"diagnose", "resolve", "allow-image"}:
+                from acp_gateway.updater_recovery import allow_image, diagnose, resolve
+
+                if args.updater_action == "diagnose":
+                    return diagnose(args.policy)
+                if args.updater_action == "allow-image":
+                    return allow_image(args.policy, args.version, args.image)
+                if args.operation is None:
+                    raise ValueError("resolve requires --operation")
+                return resolve(
+                    args.policy,
+                    args.operation,
+                    args.outcome,
+                    args.note,
+                    acknowledge_idle=args.acknowledge_idle,
+                )
+            if args.updater_action != "run":
+                from acp_gateway.updater_service import manage
+
+                return manage(args.updater_action, args.policy)
+            return start_updater(args.policy)
+        except (OSError, ValueError, sqlite3.Error, subprocess.SubprocessError) as exc:
+            print(f"error: {redact_text(str(exc))}", file=sys.stderr)
+            return 1
     if args.command in {"version", "update", "uninstall"}:
         try:
             from acp_gateway.installation import maintenance
@@ -522,6 +601,17 @@ def _run_configured(args) -> int:
             return 130
 
     try:
+        if args.command == "service" and args.env_file is None:
+            from acp_gateway.config import ENV_FILE_ENV, find_config_file
+
+            selected_config = find_config_file(args.config)
+            if not os.environ.get(ENV_FILE_ENV) and selected_config is not None:
+                from acp_gateway.setup_state import read
+
+                saved = read(selected_config)
+                saved_env = Path(saved.get("env_file", selected_config.parent / ".env"))
+                if "env_file" in saved or saved_env.is_file():
+                    args.env_file = saved_env
         cfg = load_config(args.config, args.env_file)
     except FileNotFoundError as exc:
         print(f"error: {exc}", file=sys.stderr)
@@ -529,6 +619,9 @@ def _run_configured(args) -> int:
     except ValidationError as exc:
         print(f"error: invalid configuration\n{exc}", file=sys.stderr)
         return 2
+    except (OSError, ValueError) as exc:
+        print(f"error: {redact_text(str(exc))}", file=sys.stderr)
+        return 1
 
     if args.command == "config" and args.config_command == "check":
         return _cmd_config_check(cfg)

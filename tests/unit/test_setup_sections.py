@@ -345,3 +345,76 @@ def test_local_working_directory_is_real_and_absolute(tmp_path):
     for value in ("relative", str(tmp_path / "missing")):
         with pytest.raises(ValueError, match="existing absolute"):
             _working_directory(value)
+
+
+def test_connection_edit_warns_to_reinstall_service_with_selected_paths(tmp_path, capsys):
+    base(tmp_path, "connector")
+    key = tmp_path / "home.key"
+    key.write_text("acpc_" + "a" * 43)
+    key.chmod(0o600)
+    answers = {
+        "Enrollment key file copied privately from the server": str(key),
+        "Server connection URL": "wss://first.example/acpgw/connect",
+    }
+    wizard(tmp_path, section="connection", prompts=save_answers(**answers))
+    capsys.readouterr()
+    answers["Server connection URL"] = "wss://second.example/acpgw/connect"
+    wizard(tmp_path, section="connection", prompts=save_answers(**answers))
+    output = capsys.readouterr().out
+    assert "enable/start does not refresh" in output
+    assert "service --role connector install" in output
+    assert str(tmp_path / ".env") in output
+    assert parse((tmp_path / STATE).read_bytes())["connection"]["dispatcher_url"].startswith(
+        "wss://second.example/"
+    )
+
+
+def test_setup_persists_custom_env_selection(tmp_path):
+    selected = tmp_path / "private" / "custom.env"
+    wizard(tmp_path, env_file=selected, section="base", role="connector", prompts=save_answers())
+    assert parse((tmp_path / STATE).read_bytes())["env_file"] == str(selected)
+
+
+def test_updates_section_is_explicit_and_does_not_start_services(tmp_path, monkeypatch):
+    cfg = base(tmp_path)
+    assert cfg.settings.updates.enabled is False
+    secrets = (tmp_path / ".env").read_bytes()
+    monkeypatch.setattr(
+        "acp_gateway.updater_service.manage", lambda *a: pytest.fail("service action")
+    )
+    wizard(
+        tmp_path,
+        section="updates",
+        prompts=save_answers(
+            **{
+                "Updates: enabled": True,
+                "Updates: spool dir": str(tmp_path / "private-spool"),
+            }
+        ),
+    )
+    cfg = load_config(tmp_path / "config.yaml", tmp_path / ".env")
+    assert cfg.settings.updates.enabled is True
+    assert cfg.settings.updates.spool_dir == tmp_path / "private-spool"
+    assert (tmp_path / ".env").read_bytes() == secrets
+
+
+def test_setup_updater_status_routes_to_selected_config_and_policy(tmp_path):
+    base(tmp_path, "connector")
+    calls = []
+    setup_menu(
+        tmp_path,
+        prompts=Sections(["updater", "exit"]),
+        execute=lambda args: calls.append(args) or 0,
+    )
+    assert calls == [
+        [
+            "--config",
+            str(tmp_path / "config.yaml"),
+            "--env-file",
+            str(tmp_path / ".env"),
+            "updater",
+            "--policy",
+            str(tmp_path / "updater.json"),
+            "status",
+        ]
+    ]

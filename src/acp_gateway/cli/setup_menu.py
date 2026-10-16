@@ -17,7 +17,7 @@ def setup_menu(
     if prompts is None and (not sys.stdin.isatty() or not sys.stdout.isatty()):
         raise ValueError("interactive setup requires a terminal")
     from acp_gateway.cli.main import main
-    from acp_gateway.cli.menu import agents_menu, computers_menu, service_menu
+    from acp_gateway.cli.menu import agents_menu, computers_menu, service_menu, updater_menu
 
     prompts = prompts or Prompts()
     execute = execute or main
@@ -72,6 +72,7 @@ def setup_menu(
                     "telegram",
                     "computers",
                     "service",
+                    "updater",
                     "policy",
                     "rate-limits",
                     "retention",
@@ -85,6 +86,7 @@ def setup_menu(
                     "agents",
                     "connection",
                     "service",
+                    "updater",
                     "policy",
                     "logging",
                     "check",
@@ -99,6 +101,7 @@ def setup_menu(
                     "hermes",
                     "agent-tools",
                     "service",
+                    "updater",
                     "policy",
                     "rate-limits",
                     "retention",
@@ -131,6 +134,8 @@ def setup_menu(
                 agents_menu(prompts, run, config_file, env_file)
             elif action == "service":
                 service_menu(prompts, run, config_file)
+            elif action == "updater":
+                updater_menu(prompts, run, config_file)
             elif action == "check":
                 run(["config", "check"])
                 if prompts.yes("Check connections (no model prompts or messages)?"):

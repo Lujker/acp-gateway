@@ -12,6 +12,7 @@ import secrets
 import shlex
 import shutil
 import socket
+import subprocess
 import sys
 import tempfile
 from pathlib import Path
@@ -33,6 +34,7 @@ from acp_gateway.config import (
     RetentionSettings,
     SecretStore,
     Settings,
+    UpdateSettings,
 )
 from acp_gateway.connectors.control import normalize_pin, read_credential, validate_url
 from acp_gateway.connectors.launch import ConnectorLaunch
@@ -759,17 +761,18 @@ def wizard(
         )
     if role is not None and section not in {"all", "base", "connection"} and role != saved_role:
         raise ValueError("Choose base setup to change this installation's role")
-    state = {**previous, "version": 1, "role": role}
+    state = {**previous, "version": 1, "role": role, "env_file": str(env_file)}
     if role == "connector":
         raw.setdefault("connector", {})["enabled"] = False
     if role != "connector":
         state.pop("connection", None)
-    if section in {"policy", "rate-limits", "retention", "logging"}:
+    if section in {"policy", "rate-limits", "retention", "logging", "updates"}:
         key, model = {
             "policy": ("policy", PolicySettings),
             "rate-limits": ("rate_limits", RateLimitSettings),
             "retention": ("retention", RetentionSettings),
             "logging": ("logging", LoggingSettings),
+            "updates": ("updates", UpdateSettings),
         }[section]
         _settings_section(prompts, raw, key, model)
     gateway = raw.setdefault("gateway", {})
@@ -964,6 +967,30 @@ def wizard(
             control("start", role=running_role)
         raise
     print("Saved private configuration." + (f" Previous files: {backup}" if backup else ""))
+    if (
+        role == "connector"
+        and previous.get("connection")
+        and previous.get("connection") != state.get("connection")
+        and not start_service
+    ):
+        print(
+            "IMPORTANT: the installed connector service/task still has its previous "
+            "connection arguments. enable/start does not refresh them. Before starting "
+            "it, reinstall with: "
+            + (subprocess.list2cmdline if sys.platform == "win32" else shlex.join)(
+                [
+                    "acpgw",
+                    "--config",
+                    str(config_file),
+                    "--env-file",
+                    str(env_file),
+                    "service",
+                    "--role",
+                    "connector",
+                    "install",
+                ]
+            )
+        )
     if windows_task is not None:
         try:
             windows_task.apply(launch)

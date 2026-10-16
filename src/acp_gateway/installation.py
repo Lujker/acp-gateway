@@ -315,10 +315,11 @@ def _handoff_service_update(args, descriptor):
     except (OSError, ValueError, subprocess.SubprocessError) as exc:
         directory = paths.data_dir() / "updates" / lease_path().stem
         directory.mkdir(parents=True, exist_ok=True, mode=0o700)
-        result = directory / (uuid.uuid4().hex + ".service-result.json")
+        key = getattr(args, "operation_id", None) or uuid.uuid4().hex
+        result = directory / (key + ".service-result.json")
         # Exception text can contain config values. Persist only controlled guidance.
         service_update_worker.record(
-            {"result": str(result)},
+            {"result": str(result), "operation_id": getattr(args, "operation_id", None)},
             "failed",
             "preflight",
             1,
@@ -373,7 +374,11 @@ def _handoff_service_update(args, descriptor):
         "coordinator_lock": str(lease_path().with_suffix(".service-update.lock")),
         "pid": os.getpid(),
         "reservation": str(temporary / "reservation.json"),
-        "result": str(directory / (uuid.uuid4().hex + ".service-result.json")),
+        "result": str(
+            directory
+            / ((getattr(args, "operation_id", None) or uuid.uuid4().hex) + ".service-result.json")
+        ),
+        "operation_id": getattr(args, "operation_id", None),
         "pointer": str(directory / "last-operation.json"),
         "pending_pointer": str(directory / "service-operation.json"),
     }
@@ -473,6 +478,18 @@ def check_update() -> int:
 
 def maintenance(args) -> int:
     with_services = getattr(args, "with_services", False)
+    if getattr(args, "operation_id", None):
+        if not with_services or not args.version or args.source or args.rollback:
+            raise ValueError("--operation-id requires an exact-version managed service update")
+        args.operation_id = uuid.UUID(args.operation_id).hex
+        result = (
+            paths.data_dir()
+            / "updates"
+            / lease_path().stem
+            / (args.operation_id + ".service-result.json")
+        )
+        if result.exists():
+            raise ValueError("Update operation already has a result; refusing replay")
     if with_services and (
         sys.platform not in {"linux", "win32"}
         or args.check
