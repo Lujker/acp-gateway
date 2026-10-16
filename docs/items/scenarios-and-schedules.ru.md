@@ -1,158 +1,206 @@
-# P4.11 — сценарии диспетчера: ручной запуск и расписание
+# P4.11 — задачи коннектора: ручной запуск и расписание
 
-**Статус:** OPEN — направление запрошено владельцем 2026-10-13; исследование и
-предлагаемый MVP записаны, реализации нет. Зависимости: P4.10 (identity/scope),
-контракты P4.12 (клиенты/API), существующие core/jobs/approvals/outbox.
-Режим диалога и offline policy утверждены владельцем ниже. Остальные детали —
-предложения для обсуждения, не существующие команды/настройки.
+**Статус:** OPEN — архитектура уточнена владельцем 2026-10-15, реализации нет.
+**Репозиторий:** `acp-gateway`.
+Основной контракт модулей — [P4.16](connector-action-modules.ru.md).
 
-## Задача и пример
+## Решения владельца — 2026-10-15
 
-Пользователь создаёт «Утренний отчёт»: свой workspace → неизменный connector ID
-→ выбранный agent profile → разрешённый cwd → сохранённый prompt.
-Нажатие «Запустить» или наступление 09:00 по явно показанному часовому поясу
-диспетчера создаёт отдельный Run. В нём видны инициатор, причина запуска,
-версия сценария, выбранный диалог, progress/result/error/approval и доставка.
-Ручной запуск не меняет время следующего планового запуска.
+1. Задачи находятся на коннекторе. Определения, расписания, authoritative состояние
+   и история исполнения принадлежат компьютеру, не диспетчеру.
+2. Запуск вручную, в заданное время или периодически.
+3. Два взаимоисключающих executor: подключённый агент с prompt или действие
+   пользовательского модуля без агентского запроса.
+4. Управление через диспетчер (включая Telegram) и CLI коннектора.
+5. Работающий коннектор продолжает разрешённые локальной политикой задачи
+   при недоступном диспетчере/соединении. Это отдельно подтверждено владельцем.
+6. Подтверждено: пересечения и пропущенные сроки пропускаются с записью причины,
+   без очереди и автоматического догоняющего выполнения.
 
-Сценарий — ресурс приложения, а не Telegram-команда, cron job ОС или скрытый
-prompt внутри канала. Telegram, CLI, Web API и будущий мобильный клиент обращаются
-к одному application service. Реальный cron/systemd/Windows scheduler не получает
-provider keys и не запускает agent CLI в обход connector.
+Последующие технические defaults — предложения, не факт реализации.
+Набора готовых административных функций в поставке нет. Модульный executor
+не вызывает LLM сам по себе; собственный модуль пользователя может обращаться
+к внешним сервисам, поэтому универсальное обещание нулевых расходов неверно.
 
-## Решения владельца — 2026-10-13
+## Изменение прежнего решения
 
-- Каждый ручной или плановый Run создаёт новый отдельный dialogue. Закреплённый
-  диалог и повторное использование активного пользовательского чата не входят
-  в первый вариант.
-- Если в назначенное время connector недоступен, Run пропускается с причиной
-  и уведомлением владельца. Ожидания подключения и автоматического догоняющего
-  запуска после reconnect в первом варианте нет.
-- Пропуск сохраняется в истории Run; уведомление доставляется отдельно от
-  agent execution. Unknown после возможного dispatch по-прежнему не становится
-  skipped и не разрешает повторить prompt.
-- Это решения MVP, не факт реализации. Busy target, misfire после простоя самого
-  dispatcher и approval policy остаются отдельными вопросами.
+Proposal от 2026-10-13 предполагал Scenario/Schedule и scheduler на диспетчере,
+который в момент due отправляет готовый prompt коннектору. Решением 2026-10-15
+эта модель заменена: dispatcher управляет задачей, а due и исполнение локальны.
+Время — явная timezone задачи, не глобальная зона диспетчера.
 
-## Предлагаемый первый этап
+Сохранено: каждый агентский Run создаёт новый отдельный dialogue, без reuse
+пользовательского чата; неизвестный исход не разрешает replay prompt/мутации.
+Прежнее offline connector → skip + notify теперь означает: выключенный ПК или
+остановленный runtime не догоняет пропущенные сроки после возвращения. Потеря
+связи с dispatcher сама по себе не пропускает разрешённую локальную задачу.
+Локальное выполнение агента без relay ещё предстоит реализовать; существующая
+поддержка подключённого агента не доказывает наличие автономного Task Runner.
 
-- Один текстовый prompt, один явно выбранный connector/agent/cwd, один Run.
-- Create/edit/disable/delete, «проверить доступность без prompt», «запустить»,
-  список запусков, просмотр результата и явная отмена.
-- Сначала ручной запуск; затем разовое время и ежедневный запуск. Произвольный
-  cron, цепочки шагов, условия, webhooks, fan-out и загрузка файлов — расширения.
-- Принято: новый отдельный dialogue на каждый Run; закреплённый dialogue —
-  возможное расширение после отдельного решения.
-- Принято: offline connector → skipped + уведомление, без ожидания/reconnect retry.
-  Для busy agent предлагается skip; это ещё не выбранная владельцем policy.
-- Approval идёт человеку с действующими правами; без ответа действует deadline
-  и отказ. Сам факт расписания не выдаёт allow, always или bypass permissions.
-- По умолчанию concurrency=1 на сценарий, плюс общий lock диалога и квоты
-  workspace/user/connector. Ручной и плановый запуск конкурируют одинаково.
+## Разделение ответственности
 
-## Объекты и права
+Connector Task Service владеет CRUD, revision checks, расписаниями, admission,
+Run journal, executor adapters и outbox. Это единый application service на ПК.
+CLI обращается к нему через защищённый локальный IPC; remote management frames
+через существующий исходящий WSS вызывают тот же сервис с remote authorization.
+Прямое редактирование работающей БД через CLI и второй независимый scheduler
+не допускаются. При остановленном runtime CLI показывает stopped; offline import
+возможен только с exclusive lock, если будет добавлен отдельным решением.
 
-| Объект | Основные поля/смысл |
-|---|---|
-| Scenario | id, workspace_id, owner_id, name, revision, enabled, prompt/parameters |
-| Target | immutable connector_id, agent_id/profile, cwd, model policy, required capabilities |
-| Schedule | scenario_id, generation, timezone, recurrence/one-shot, next_due_utc |
-| Run | id, scenario_revision, trigger, initiator, scheduled_for, job_id, immutable target snapshot |
-| Execution intent | run_id, operation_id, target runtime/epoch, dispatch state и evidence |
-| Audit | actor, service identity, action, resource, reason, authority revision, result |
+Диспетчер хранит каталог/проекцию задач, историю доступных Run, remote request
+intents и audit, но не является вторым владельцем definition и не запускает due.
+События синхронизируются cursor/sequence, с snapshot после gap и дедупликацией.
+При offline коннекторе UI честно показывает cache/staleness. В MVP изменения и
+remote run offline отклоняются, не сохраняются в скрытую очередь на reconnect.
 
-Connector alias служит отображению, не является authority. Имена home у разных
-пользователей не должны пересекать routing. Workspace/owner вычисляются сервером
-по authenticated actor, не принимаются на веру из request body.
+CLI и dispatcher используют expected_revision; при конфликте пользователь
+обновляет карточку. Успешная локальная запись публикует новую revision обоим
+клиентам. Передача task definition не устанавливает executable: модули заранее
+установлены и разрешены на ПК. Prompt/cwd/model также проверяются локально.
 
-Раздельные права: читать/изменять сценарий, управлять расписанием, запустить,
-использовать connector/agent, писать в dialogue, отменить, ответить на approval.
-Право редактировать prompt не даёт доступ к чужому target. Запуск от имени владельца
-не выполняется с глобальным owner API token. Scheduler имеет отдельную service
-identity, действует on behalf of владельца и не расширяет его полномочия.
-Права проверяются при сохранении, создании Run, перед dispatch и при approval.
-Удаление membership, revoke connector, disable agent или смена policy до dispatch
-даёт blocked/revoked, а не исполнение по старому снимку прав.
-Connector повторно применяет свою локальную политику cwd/tools/model.
+## Модель данных
 
-Prompt и параметры приватны по workspace. Секреты — только разрешённые scoped
-references; provider credentials остаются на host агента. Audit/уведомления не
-содержат сырые secrets. Политики retention отдельно охватывают definition,
-историю Run и результаты; удаление definition не стирает audit самовольно.
+| Объект | Смысл |
+| --- | --- |
+| Task | computer_id + task_id, name, revision, owner/local principal, enabled, executor и policy |
+| AgentExecutor | local agent profile, prompt, разрешённый cwd, model/capability policy; новый dialogue |
+| ModuleExecutor | module/action id, descriptor revision, валидированные параметры; без agent dialogue |
+| Schedule | task_id, generation, paused, once/calendar/interval, timezone, next due, misfire policy |
+| Run | run_id, task/executor revision snapshot, manual/scheduled trigger, initiator, due, status/result |
+| Execution intent | stable operation_id, admission evidence, исполнение/неизвестный исход |
+| Audit / Outbox | изменения и авторизация; отдельная доставка события/уведомления |
 
-## Время диспетчера
+Task.enabled=false блокирует новые ручные и плановые запуски. Pause schedule
+останавливает только расписание; ручной Run остаётся возможным. Run now не
+сдвигает next_due. Edit/disable/delete не останавливают уже допущенный Run;
+остановка — отдельный capability-gated cancel. Удаление task не стирает audit.
+В MVP один executor на Task, без цепочек agent→module, fan-out и fallback.
 
-Один явно настраиваемый IANA dispatcher_timezone в первом варианте. UI/CLI
-показывают zone и ближайшие запуски, а не только «09:00». Например Europe/Moscow
-можно выбрать при настройке; текущая timezone Windows/телефона не меняет запуск.
-В базе — UTC instants плюс исходная zone/правило для календарных повторов.
-Одноразовое время нормализуется при создании; ежедневное считается в этой zone.
-Версия правила/zone фиксируется для Run; изменение настроек явно пересчитывает
-только будущие occurrences с показом новой next_due.
+## Расписание и работа после простоя
 
-Для DST предлагается: отсутствующее локальное время пропустить с записью причины,
-повторившееся выполнить один раз (первое UTC соответствие). Это требует тестов;
-политику можно изменить до реализации. Wall-clock нужен для calendar due,
-monotonic — для таймаутов. NTP jumps, restart, sleep VPS и update timezone data
-не должны порождать повтор уже зарегистрированного occurrence.
+Первый объём: manual, одноразовое время, calendar daily и fixed interval.
+Примеры: сегодня в 18:30 Europe/Moscow; ежедневно в 09:00; каждые 30 минут.
+Weekdays/cron/exclusions — возможные расширения после проверки простого UI.
+Каждая calendar schedule имеет явно выбранную IANA zone, UI показывает следующие
+запуски. Хранятся UTC instants + zone/правило. Interval имеет фиксированный anchor,
+не отсчитывается заново после manual run или окончания предыдущего Run.
 
-## Доставка исполнения и неопределённость
+Подтверждённые правила skip и предлагаемые технические defaults:
+- concurrency=1 на Task, общий resource admission между задачами, модулями и ACP;
+- busy/overlap → skipped + причина, без скрытого накопления;
+- после sleep/reboot/остановки runtime — skip пропущенных occurrences без catch-up;
+- runtime не включает и не будит выключенный ПК; OS autostart — отдельная настройка;
+- DST gap → skip, fold → один запуск; clock rollback/restart не дублируют occurrence;
+- небольшой явный grace допускает обычный scheduler jitter, но не маскирует простой.
 
-Единая цепочка: trigger → persisted occurrence/Run → проверка актуальных прав
-→ проверка target/lease/budgets → persisted dispatch intent → core job →
-stream/terminal evidence → результат → отдельная доставка уведомления.
+Occurrence key включает task_id, schedule generation и planned UTC instant.
+Claim и durable intent атомарны; один active scheduler на локальное хранилище.
+Manual request имеет idempotency key. Edit увеличивает revision/generation;
+старый claim проходит повторную проверку до start. Нужны locks/fencing для
+гонок CLI/dispatcher/scheduler, а не только защита кнопки Telegram.
 
-Создание occurrence и обновление scheduler watermark атомарны. Dedupe по
-scenario_id/schedule_generation/planned UTC instant; ручной trigger имеет
-actor-scoped idempotency key. Edit/disable меняет generation, запрещает старым
-неотправленным claims проходить final check; применимость проверяется под тем же
-lock/transaction перед созданием execution intent. После атомарного допуска dispatch intent Run считается начавшим исполнение
-для гонки edit/revoke: изменение не является доказанной отменой внешней команды.
-Уже начавшийся Run живёт по immutable snapshot; остановка — отдельная операция. Редактирование не
-порождает второй запуск старого tick.
+## Два исполнителя
 
-| Ситуация | Предлагаемое поведение |
-|---|---|
-| Диспетчер перезапустился до due | Восстановить сохранённое расписание |
-| Пропущено несколько сроков | Не разгребать все подряд; MVP skip + audit, позднее latest-within-TTL |
-| Connector offline | Принято: skipped + уведомление, без запуска после reconnect |
-| Agent busy | Предлагается skip; отдельное решение до реализации |
-| Два scheduler workers увидели due | Unique occurrence + lease/fencing; один dispatch intent |
-| Prompt мог быть принят, ACK потерян | Run unknown, никакого автоматического повторения prompt |
-| Dispatcher/connector упал в работе | Сохранить target/session/run; recovery только по доказанным capabilities |
-| Нет человека на approval | Timeout/reject, уведомление; расписание не подменяет решение |
-| Результат готов, notification потерян | Доставлять сохранённый результат независимо от agent execution |
-| Восстановлена старая БД | Pending dispatch/delivery требует reconciliation/unknown fence |
-| Диалог занят Desktop/другим Run | Не steal writer; skipped/blocked согласно явной политике |
+### Module
 
-Exactly-once выполнение внешнего prompt не обещается: локальный dedupe не доказывает
-удалённую идемпотентность. Retry безопасен только до возможного dispatch либо после
-явного подтверждения непринятия; новый ручной запуск при unknown требует отдельного
-решения пользователя с предупреждением о возможном повторном действии.
-Смена connector/agent/model/cwd не служит неявным fallback.
+Task Runner вызывает Action Runtime P4.16 с зафиксированным action/params и тем
+же operation_id. Общие validation, local policy, journal, лимиты stdout/runtime,
+concurrency group и неизвестные исходы. Direct action и Task run разделяют
+admission; ручной action не создаёт вторую scheduler запись.
 
-Timeout, max turns/tokens/cost — capability-dependent: нельзя обещать жёсткий лимит
-стоимости, если backend его не предоставляет. Локально ограничиваются runtime,
-очередь, concurrent jobs и output; cancel request не равен доказанному kill.
-Многошаговый workflow требует отдельного решения, компенсаций и новых границ.
+### Agent
 
-## Этапы и критерии
+Task Runner использует local agent transport/adapters с теми же проверками
+cwd/tools/model, ownership, approvals и capability limits. Не отправляет prompt
+обратно через VPS и не вызывает agent CLI в обход gateway policy. Runtime
+получает новую выделенную managed session на Run; её identity можно показывать
+через dispatcher после синхронизации, без превращения в активный чат пользователя.
+Agent runner потребует отдельных session/job/result и approval lifecycle на ПК;
+это существенная часть реализации, не тонкая обёртка над module subprocess.
 
-1. Согласовать scopes и busy/misfire/approval правила; dialogue/offline policy уже выбраны.
-2. Schema/application service для Scenario/Run и ручной запуск через CLI/test API.
-3. Fake clock scheduler, durable claims/lease/fencing и одна node deployment.
-4. Telegram/API UI, approvals/notifications и отдельная живая приёмка.
-5. Только потом несколько scheduler instances и расширенные triggers/workflows.
+Отказ/неизвестный исход агента не переключают Task на другой агент/модуль.
+Timeout/cancel не доказывают остановку или отсутствие внешних эффектов.
+Лимит токенов/стоимости возможен только при достоверной поддержке backend.
 
-Автотесты: два пользователя с одинаковыми aliases; чужие IDs/approval/events;
-отзыв прав между claim и dispatch; double tick/restart/DST/clock rollback;
-manual+scheduled overlap; target offline/removed/busy; duplicate request;
-ACK lost после side effect; no human; restore snapshot; bounded quotas.
-Живые: один известный connector/agent, разовое время по zone диспетчера,
-ручной запуск, отдельный dialogue, сохранённый результат и ответ на approval.
+## Автономность, права и подтверждения
 
-Открытые решения: busy target и misfire после простоя dispatcher; нужны ли
-cron/workdays в первом выпуске; зона диспетчера и экран её изменения;
-retention/ограничения Run; сценарии без доступного approver.
-Новый dialogue и пропуск offline connector с уведомлением уже приняты.
-Остальные технические defaults выше остаются предложениями.
+Разрешение расписания — явная локально сохранённая authority для конкретной
+Task revision/executor/параметров. Расписание не выдаёт blanket allow для
+agent tools или модулей. Изменение prompt/action/параметров/политики инвалидирует
+предварительное согласие в затронутой части; новый module digest требует revalidation.
+
+Для операции с обязательным человеческим подтверждением: либо оно получено
+для конкретного Run, либо существует явно допустимое локальное разрешение
+на эту точную периодическую операцию. Если подходящего разрешения нет, Run
+блокируется/ждёт до deadline и затем завершается отказом; offline не означает auto allow.
+Новый диалог и безопасный approval режим остаются обязательными для AgentExecutor.
+Local CLI approval возможен только через отдельно авторизованный human канал,
+а не через ответ script/агента; детальный UX ещё нужно согласовать.
+
+Owner/local policy определяет, каким Task разрешена автономная работа.
+Расписания действуют от локальной service identity с ограниченной сохранённой
+authority; remote edits проверяют actor и connector grant, CLI — права OS пользователя.
+/mode auto не предоставляет полномочий management API.
+
+Без связи невозможно узнать о свежем удалённом отзыве прав немедленно. Для MVP
+явная local offline authority действует до локального запрета или получения
+revoke при reconnect; локальная policy всегда может запретить start. Для shared
+P4.10 можно отдельно ввести authority lease/expiry: это ограничит автономность.
+Не обещать одновременно бессрочный offline execution и мгновенный remote revoke.
+
+## История, доставка и recovery
+
+Run journal и результаты сначала локальны. Во время outage task продолжает
+исполнение, outbox сохраняет события; после reconnect dispatcher получает их
+и доставляет уведомления, не повторяя исполнение. Уведомления настраиваются
+отдельно (ошибки/пропуски/все итоги), чтобы частая задача не засоряла Telegram.
+Нужны лимиты диска, retention, redaction и политика outbox overflow; заполнение
+хранилища не должно вести к start без durable intent.
+
+Если процесс/агент мог принять запрос, но нет доказанного terminal outcome,
+Run=unknown; восстановление/reconcile только по journal/capabilities. Локальный
+dedupe не обеспечивает exactly-once внешних действий. Пользовательский повтор
+создаёт новый Run с предупреждением, не тайно переисполняет неизвестный intent.
+После restore старой БД pending operations требуют reconciliation/fencing.
+
+## Этапы и приёмка
+
+1. Утвердить Task/Schedule/Run, local authority и approval policies; skip без
+   очереди/catch-up уже подтверждён.
+2. P4.16 registry/runner и локальный Task Service с ручным module executor/CLI.
+3. Локальный scheduler: once/daily/interval, fake-clock tests, locks и restart.
+4. AgentExecutor: отдельные sessions, local approval/result, без VPS dependency.
+5. WSS management и dispatcher/Telegram UI для обоих исполнителей.
+6. Linux/Windows приёмка, автономный outage/reconnect, disk/clock/crash tests.
+
+Проверки: CLI и remote concurrent edits; duplicate manual/tick; old revision;
+busy/overlap; sleep/missed due; DST/clock rollback; agent unknown; module crash;
+outbox recovery; insufficient approval offline; module removal/change; права
+actor и OS principal; bounded quotas; no token/secret leaks. Shared multi-user
+выпуск требует P4.10; публичный client API — P4.12, не блокирует single-owner CLI.
+
+## Открытые решения
+
+- Выбрать первый собственный модуль для испытания.
+- Согласовать allowed unattended policy для module/agent и локальный approval UX.
+- Определить retention/output/disk quotas и уведомления по умолчанию.
+
+### Журнал — 2026-10-15
+
+Владелец заменил dispatcher scheduling локальными задачами коннектора с двумя
+исполнителями и управлением через dispatcher/CLI. Отдельно подтвердил продолжение
+локально разрешённых задач при outage диспетчера. Предыдущая модель времени
+диспетчера и готового remote prompt заменена; новый dialogue на агентский Run
+и отсутствие replay неизвестного исхода сохранены. Runtime не изменялся.
+
+Владелец также подтвердил skip для пересечений/пропущенных сроков без очереди
+и catch-up. Пример первого возможного модуля — управление Happ; несколько
+публичных действий и внутренние шаги описаны в P4.16. Реализации нет.
+
+### 2026-10-15 — сохранено для будущего возвращения
+
+По просьбе владельца требования и пример Happ сохранены для отдельного будущего
+обсуждения и возможной реализации. Сейчас разработку P4.11/P4.16 и Happ-модуля
+не начинать автоматически при продолжении других треков. Сначала вернуться к
+этим документам, сверить архитектуру с актуальным кодом, выбрать объём и проверить
+способ управления установленной версией Happ. Реализация пока не обещана.

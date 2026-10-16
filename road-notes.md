@@ -3094,3 +3094,81 @@ unavailable`: файла `connector-activity.json` не было вовсе, wat
 файл появился (`running`, `idle_observed: true`), обновление с явными
 `--config/--env-file --service-role connector` прошло: 0.2.0, `succeeded`,
 коннектор подключён. Дефект — пункт 15 очереди road-map.
+
+
+## 2026-10-16 — приёмка, исправления P3.5 и старт Telegram update inventory
+
+Владелец предварительно закрыл оставшуюся Telegram/эксплуатационную приёмку:
+возвращаться только по проблемам владельца или других пользователей. macOS
+коннектор он проверит позже. Roadmap/status/item journals синхронизированы;
+старые rc/приёмочные записи остаются историческими, не активными блокерами.
+
+Разрешена разработка исправлений watcher и connection/service, затем обновления
+диспетчера и коннекторов из Telegram. P4.15 теперь включает Docker dispatcher
+и не зависит от P4.16 модулей; P4.11/P4.16 остаются отложены.
+Запрет новых релизов/production обновлений сохранён.
+
+Watcher переживает OSError записи activity, повторяет публикацию, журналирует
+сбой и восстановление без flood и без exception text. Cleanup не маскирует cancel.
+После изменения connection setup явно требует reinstall службы с выбранными
+путями, объясняет отличие enable/start. env_file сохраняется в setup.json;
+service install использует сохранённый путь, для старых записей — соседний .env,
+с приоритетом явного --env-file/ACPGW_ENV_FILE.
+
+P4.15 первый этап: общий read-only inventory обеих ролей, negotiated version RPC
+через существующий WS, Telegram `/updates` и explicit stable check. Новые frames
+не отправляются старым peers; epoch/grant и bounded queues сохраняются. Запуска
+установки ещё нет. Следом durable operation/handoff/status и внешний Docker updater.
+Проверки и ограничения записаны в журнале P4.15 после финального прогона.
+
+Финальная проверка этой итерации: **1525 passed / 38 skipped**, 0 failures/errors,
+`dist/remote-update-inventory-tests.xml`; targeted P3.5/inventory regressions —
+83 passed. Ruff check/format, whitespace/secret guard и 155 локальных Markdown
+file links пройдены. Native Windows/macOS и live Telegram не запускались;
+релизы/push/production update не выполнялись. Разработка дальше начинается с
+durable confirmed update operation, затем uv executor и Docker host updater.
+
+
+## 2026-10-16 — P4.15: подтверждённые операции и отдельный updater
+
+По «Продолжай работу» реализован single-owner MVP обеих ролей в исходниках.
+Telegram создаёт durable confirmation точного target/version, затем once-only
+execute; status/history и уведомления продолжаются после restart/reconnect без
+повтора установки. Actor/chat и generation/epoch проверяются; unknown blocks target.
+Отдельный operation journal/mailbox не откатывается с основной gateway.db.
+
+Для updater выбран отдельный локальный companion: дочерний процесс в lifecycle
+обновляемой службы может быть остановлен вместе с ней. Base interpreter исполняет
+скопированный stdlib helper вне заменяемого uv environment. Native uv registry путь
+использует существующий service updater, pinned version и tagged result. Docker host
+путь — локально разрешённый immutable image, idle reservation, SQLite backup,
+recreate только gateway и health/recovery. Не передаётся Docker socket в dispatcher;
+пакет внутри контейнера не переустанавливается. Базовая возможность отключена,
+нужны local opt-in и живой companion. Готовые пользовательские модули не добавлялись.
+
+Настройка, точный scope и recovery bounds: docs/setup/remote-updates.md.
+Source MVP не является новым релизом; production не менялся. Старые варианты
+приёмки не возобновляются автоматически; macOS владелец проверит позже.
+
+Итоговые проверки P4.15: полный source **1563 passed / 38 skipped**, 0 failures/errors;
+дополнительный mailbox/worker/operation прогон **35 passed** после усиления границы
+общей очереди. Evidence: `dist/remote-update-operations-tests.xml`,
+`dist/remote-update-mailbox-tests.xml`. Ruff/format/whitespace/secret guard и
+163 локальных Markdown links пройдены. Native Windows/macOS и живой Docker не
+проверялись; внешние installations не менялись. Подробности — журнал P4.15.
+
+## 2026-10-16 — companion lifecycle и локальное восстановление
+
+По согласованному плану добавлены независимые Linux systemd user unit / Windows
+logon task, установка/autostart/status/cooperative stop и setup/menu. Runtime копируется
+вне uv environment; busy stop ждёт завершения операции без force-kill. Локальные
+diagnose/resolve сохраняют evidence и аудируемый outcome executor unknown только
+после остановки worker, явного idle acknowledgment и version/health check.
+Docker allow-image регистрирует подготовленный immutable ID без pull/build/publish.
+Unknown без executor record не разрешается предположением.
+
+Полный source прогон: **1578 passed / 38 skipped**, 0 failures/errors;
+последний focused guard/setup прогон — **42 passed**. Локально offline собраны
+wheel/sdist development snapshot `0.2.1.dev20261016`, manifest и SHA256SUMS;
+97 Python sources в wheel совпадают с исходниками. Версия checkout не менялась.
+Публикации/production updates нет; приёмка не возобновлена, macOS позже.

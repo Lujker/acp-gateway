@@ -37,7 +37,7 @@ Public contracts не раскрывают сырой agent RPC, provider auth �
 | connectors / agents | Только доступные PCs/profiles, health/capability summaries |
 | dialogues / jobs | Создание, prompt, status/result, явная отмена и выбор |
 | approvals | Свои открытые requests, одноразовое решение с expiry/version guard |
-| scenarios / schedules / runs | P4.11 CRUD, manual trigger, history, pause и cancel |
+| scenarios / schedules / runs | P4.11: управление локальными задачами коннектора, manual trigger, history, pause и cancel |
 | events | Scoped stream, cursor, reconnect и authoritative snapshot |
 | devices / sessions | Отзыв client session и просмотр связанных устройств |
 
@@ -95,7 +95,7 @@ capability; отключение клиента само по себе не да
 Push — отдельная опциональная интеграция: минимальные IDs/тип события, без prompt,
 answer, credential или approval token; клиент после входа перечитывает authoritative
 state. Нажатие push не является одобрением. Background execution платформы не
-используется как scheduler диспетчера. Offline можно смотреть разрешённый cache;
+используется как scheduler: расписания выполняет коннектор (P4.11). Offline можно смотреть разрешённый cache;
 отложенные mutations требуют idempotency/revision/expiry и явного дизайна.
 
 PWA/Web UI может проверить UX до native app, но не заменяет решение о native.

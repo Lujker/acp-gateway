@@ -1,5 +1,10 @@
 # P4.8 candidate: VPS, Telegram and native Windows Hermes
 
+> 2026-10-16: оставшаяся приёмка предварительно закрыта владельцем.
+> Этот список сохранён для диагностики сообщений о проблемах, не как блокер
+> дальнейшей разработки. Коннектор macOS владелец проверит отдельно позже.
+
+
 [Russian step-by-step self-install guide](self-install-pypi.ru.md).
 
 The current candidate is 0.2.0rc7. Public 0.1.0 does not contain this workflow.

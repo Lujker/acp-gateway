@@ -17,6 +17,7 @@ Historical documents are not current installation instructions.
 | Use Docker for a dispatcher and Linux/WSL connectors | [VPS runbook](setup/vps-acceptance.md), [Russian](setup/vps-acceptance.ru.md) |
 | Run the dispatcher in Docker behind the host's reverse proxy, or move a native dispatcher into Docker | [Docker dispatcher (Russian)](setup/vps-docker.ru.md) |
 | Configure autostart | [Services](setup/service.md) |
+| Telegram updates of dispatcher/connectors (source development) | [Independent updater setup](setup/remote-updates.md) |
 | Update, inspect or recover an installation | [Maintenance](setup/maintenance.md) |
 
 ## Use and troubleshoot
@@ -51,7 +52,7 @@ Historical documents are not current installation instructions.
 - [Planned Telegram usability improvements: P2.4 (Russian)](items/telegram-usability.ru.md).
 - [Project review and verified fixes (Russian)](items/project-review-2026-10-14.ru.md).
 - [Delivery and update evidence (Russian)](items/p48-delivery-plan.ru.md).
-- [Future connector updates and host management (Russian)](items/remote-connector-management.ru.md).
+- [Dispatcher/connector updates from Telegram: development stages (Russian)](items/remote-connector-management.ru.md).
 - [User/workspace ownership](items/dispatcher-accounts-and-dialogues.ru.md),
   [scenarios](items/scenarios-and-schedules.ru.md),
   [client API/mobile](items/client-api-and-mobile.ru.md),
