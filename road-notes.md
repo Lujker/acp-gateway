@@ -3172,3 +3172,14 @@ Unknown без executor record не разрешается предположе�
 wheel/sdist development snapshot `0.2.1.dev20261016`, manifest и SHA256SUMS;
 97 Python sources в wheel совпадают с исходниками. Версия checkout не менялась.
 Публикации/production updates нет; приёмка не возобновлена, macOS позже.
+
+## 2026-10-16 — stable 0.2.1 опубликован
+
+По прямому поручению владельца выпущены GitHub Release, PyPI wheel/sdist и GHCR
+`ghcr.io/lujker/acp-gateway:0.2.1` на release commit `47de1b1`. Full CI:
+1580 passed / 38 skipped; native package/binary matrix и live Docker smoke прошли.
+Первый GHCR push вернул unknown blob; повтор только упавшего image job успешен.
+PyPI использовал проверенные SHA256 release assets без пересборки; anonymous Docker
+manifest/config и публичный PyPI JSON проверены. Production обновляет владелец.
+Точный порядок и recovery fallback — docs/setup/update-0.2.1.ru.md;
+журнал и digest — docs/releases/0.2.1-publication.md. Приёмка не возобновлена.

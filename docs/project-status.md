@@ -9,7 +9,7 @@ or acceptance journals. Snapshot: **2026-10-16**.
 
 | Track | State |
 | --- | --- |
-| `0.2.1` | Telegram update operations, independent updater lifecycle, watcher/env fixes, context and recovery controls; [release notes](releases/0.2.1.md), [upgrade](setup/update-0.2.1.ru.md) |
+| Stable `0.2.1` | Published GitHub/PyPI/GHCR; Telegram updates, independent updater lifecycle, watcher/env fixes, context/recovery controls; [publication](releases/0.2.1-publication.md), [upgrade](setup/update-0.2.1.ru.md) |
 | Previous stable `0.2.0` | Install through uv/PyPI; independent setup sections, Telegram computer/job dashboards, controls and approvals, dialogue execution modes, managed update with service recovery, Docker dispatcher behind a host reverse proxy |
 | Previous candidates `0.2.0rc1`–`0.2.0rc8` | Published prereleases; upgrade with `acpgw update --stable --with-services` |
 
