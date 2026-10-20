@@ -3,12 +3,13 @@
 [Documentation](README.md) · [Roadmap and current queue](../road-map.md)
 
 This is a short orientation for readers, not a replacement for the roadmap
-or acceptance journals. Snapshot: **2026-10-16**.
+or acceptance journals. Planning snapshot: **2026-10-20**; source/release candidate is **0.2.2**.
 
 ## Versions
 
 | Track | State |
 | --- | --- |
+| Release candidate `0.2.2` | Connector-first pairing, out-of-box updater, CLI artifact gate and recovery fixes; automated suite 1734 passed/38 skipped; [release notes](releases/0.2.2.md), [upgrade](setup/update-0.2.2.ru.md) |
 | Stable `0.2.1` | Published GitHub/PyPI/GHCR; Telegram updates, independent updater lifecycle, watcher/env fixes, context/recovery controls; [publication](releases/0.2.1-publication.md), [upgrade](setup/update-0.2.1.ru.md) |
 | Previous stable `0.2.0` | Install through uv/PyPI; independent setup sections, Telegram computer/job dashboards, controls and approvals, dialogue execution modes, managed update with service recovery, Docker dispatcher behind a host reverse proxy |
 | Previous candidates `0.2.0rc1`–`0.2.0rc8` | Published prereleases; upgrade with `acpgw update --stable --with-services` |
@@ -55,10 +56,16 @@ The companion now has separate Linux user-service/Windows logon-task installatio
 autostart and cooperative stop controls, available from setup. Local diagnosis,
 audited resolution of retained unknown executor records and immutable Docker-image
 registration are implemented in source; image download/build remains external.
-A local development snapshot `0.2.1.dev20261016` was built offline with source/artifact
-hashes and checked wheel contents. It is unpublished and does not change stable 0.2.0.
-These features are included in 0.2.1; the owner authorized its release on 2026-10-16.
-Production updates remain the owner's next action. User modules remain deferred.
+These features are included in stable 0.2.1, released with the owner's authorization
+on 2026-10-16. Historical development snapshots do not supersede that release.
+Production installation state was not rechecked or changed by the planning interview.
+
+[P4.17 connector-first pairing](items/connector-pairing.ru.md) and
+[P4.15.1 updates out of the box](items/updates-out-of-box.ru.md) are implemented
+in the 0.2.2 source and pass the automated suite. Live native service update,
+Docker replacement, Telegram round trips and owner smoke remain acceptance checks.
+Existing 0.2.1 computers keep their enrollment; the one-time legacy re-pairing
+transition is explicit and is not activated by installing 0.2.2.
 
 - Hermes managed conversations still have cold-resume limitations. Shared Desktop
   observation does not grant shared write/cancel/approval authority.
@@ -68,9 +75,12 @@ Production updates remain the owner's next action. User modules remain deferred.
   Docker requires a prepared immutable image allowed by host policy. Live Docker
   engine/native Windows update evidence is not claimed. macOS, batch, Git/file
   installs and RC versions are outside this MVP. Version 0.2.0 lacks the feature.
-- User modules and connector-owned tasks/schedules remain deferred proposals.
-- Multi-user/workspace ownership, public client API/mobile and additional adapters
-  remain [planned work](../road-map.md).
+- Built-in basic OS/agent actions plus user scripts/modules, and connector-owned
+  tasks/schedules, remain deferred. No shutdown/restart actions were added.
+- [VK](items/vk-bot.ru.md), [Goose parity](items/goose-alternative.ru.md) and multi-user
+  are future directions; their relative order is not selected. CLI/Desktop/platform
+  coverage is a target matrix, not an assertion that every combination works.
+- Public client API/mobile and additional adapters remain [planned work](../road-map.md).
 
 ## Control and data boundaries
 

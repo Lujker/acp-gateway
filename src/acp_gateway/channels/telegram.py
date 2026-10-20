@@ -75,6 +75,8 @@ HELP = (
 
 
 COMMANDS = (
+    ("owner", "Pairing owner profile", "Профиль владельца подключения"),
+    ("pairing", "Compare and approve a computer", "Сверить и подтвердить подключение ПК"),
     ("start", "Getting started", "Начало работы"),
     ("help", "Commands and usage", "Команды и подсказки"),
     ("menu", "Control panel", "Панель управления"),
@@ -182,6 +184,7 @@ class TelegramChannel(Updates, Shortcuts, ContextCard, WorkCards, Dashboard, Cha
         dispatcher=None,
         update_inventory=None,
         update_service=None,
+        pairing=None,
     ):
         register_secret(token.get_secret_value())
         self.settings = settings.model_copy(deep=True)
@@ -191,6 +194,7 @@ class TelegramChannel(Updates, Shortcuts, ContextCard, WorkCards, Dashboard, Cha
         self.connector_dispatcher = dispatcher
         self.update_inventory = update_inventory
         self.update_service = update_service
+        self.pairing = pairing
         self.namespace = f"telegram:{self.bot.id}"
         self.dispatcher = Dispatcher()
         self.dispatcher.update.outer_middleware(_Updates(self))
@@ -921,6 +925,57 @@ class TelegramChannel(Updates, Shortcuts, ContextCard, WorkCards, Dashboard, Cha
             [[("← Диалог", f"/dialogue {session.id} {pending['page']}")], *self._back_rows()],
         )
 
+    async def _pairing_command(self, chat, command, argument):
+        if command not in {"/owner", "/pairing", "/pair_approve", "/pair_deny"}:
+            return False
+        if self.pairing is None:
+            await self._send(
+                chat, "Pairing is unavailable; ask the dispatcher owner to bootstrap locally."
+            )
+            return True
+        actor = f"telegram:{chat}"
+        try:
+            owner = self.pairing.owner(actor)
+            if command == "/owner":
+                text = "Owner ID: " + owner["owner_id"]
+            elif command == "/pairing":
+                rows = self.pairing.pending(actor)
+                lines = [
+                    "Compare this exact request and target with the applicant PC. Never "
+                    "approve an unsolicited request."
+                ]
+                for row in rows[:10]:
+                    lines.append(
+                        f"Request: {row['request_id']}\n"
+                        f"PC: {row['name']}\n"
+                        f"Target: {row['target'] or 'NEW COMPUTER'}\n"
+                        f"Compare: {row['verification']}\n"
+                        f"Expires: {row['expires']}\n"
+                        f"/pair_approve {row['request_id']} {row['verification']}\n"
+                        f"/pair_deny {row['request_id']} {row['verification']}"
+                    )
+                if not rows:
+                    lines.append("No pending requests.")
+                text = "\n\n".join(lines)
+            else:
+                parts = argument.split()
+                if len(parts) != 2:
+                    raise ValueError("Use request ID and exact comparison value from your PC")
+                result = self.pairing.decide(
+                    actor, parts[0], parts[1], approve=command == "/pair_approve"
+                )
+                text = (
+                    "Pairing: "
+                    + result["state"]
+                    + ". Continue on the applicant PC; agent readiness is checked separately."
+                )
+        except ValueError as exc:
+            text = str(exc)
+        from html import escape
+
+        await self._send(chat, escape(text))
+        return True
+
     async def _command(self, chat: int, text: str):
         command, _, argument = text.partition(" ")
         command = command.split("@", 1)[0]
@@ -948,6 +1003,8 @@ class TelegramChannel(Updates, Shortcuts, ContextCard, WorkCards, Dashboard, Cha
             self._clear_rename_input(chat)
         if command == "/context":
             await self._show_context(chat, explicit=True)
+            return
+        if await self._pairing_command(chat, command, argument):
             return
         if await self._updates(chat, command, argument):
             return

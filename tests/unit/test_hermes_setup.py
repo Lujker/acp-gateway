@@ -115,6 +115,7 @@ def test_connector_accepts_hermes_attachment(discovered, tmp_path):
                     "Role": "connector",
                     "Server connection URL": "wss://server.example/acpgw/connect",
                     "Agent type": "hermes",
+                    "Connection method": "advanced credential file",
                     "Enrollment key file copied privately from the server": str(key),
                 }
             ),

@@ -93,7 +93,9 @@ class ConnectorSettings(_Section):
 
 
 class UpdateSettings(_Section):
-    enabled: bool = False
+    # Out-of-box: the independent updater is prepared on setup/start. An explicit
+    # `updates.enabled: false` remains an opt-out and must be honoured everywhere.
+    enabled: bool = True
     spool_dir: Path | None = None
 
     @field_validator("spool_dir")
@@ -276,6 +278,12 @@ class LoggingSettings(_Section):
         return value.upper() if isinstance(value, str) else value
 
 
+class PairingSettings(_Section):
+    enabled: bool = True
+    request_ttl_seconds: int = Field(default=600, ge=60, le=1800)
+    max_requests: int = Field(default=256, ge=1, le=1024)
+
+
 class TelegramSettings(_Section):
     enabled: bool = False
     status_enabled: bool = True
@@ -316,6 +324,7 @@ class Settings(BaseSettings):
 
     gateway: GatewaySettings = Field(default_factory=GatewaySettings)
     connector: ConnectorSettings = Field(default_factory=ConnectorSettings)
+    pairing: PairingSettings = Field(default_factory=PairingSettings)
     updates: UpdateSettings = Field(default_factory=UpdateSettings)
     agents: list[AgentProfile] = Field(default_factory=list)
     policy: PolicySettings = Field(default_factory=PolicySettings)

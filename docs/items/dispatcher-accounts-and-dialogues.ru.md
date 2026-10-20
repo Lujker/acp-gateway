@@ -1,6 +1,6 @@
 # Постоянные диалоги, независимые каналы и аккаунты диспетчера
 
-Дата: 2026-10-13. Требования и направление подтверждены владельцем.
+Дата: 2026-10-13; enrollment/scope уточнены 2026-10-20. Требования подтверждены владельцем.
 Это архитектурный план, не заявление об уже реализованной многопользовательской
 изоляции. Hermes — целевой агент P4.8; Telegram — текущий основной вход.
 
@@ -32,7 +32,8 @@ Generation выбора сохраняется в SQLite и защищает о�
 включая переключение A → B → A во время await. Created session при конфликте
 остаётся в списке, но не заменяет более поздний выбор.
 Текущий Conversation=(channel,key,agent) всё ещё одновременно задаёт владение
-и адрес канала, а Hermes handle нельзя восстановить после обрыва. Полная actor/
+и адрес канала. Idle reconnect при живом connector session manager поддержан;
+restart connector/потеря Hermes attachment не считаются cold resume. Полная actor/
 workspace модель ещё предстоит; первый connector session manager реализован.
 Legacy submit для
 программных callers пока сохраняет auto-create; interactive callers должны
@@ -121,20 +122,25 @@ sharing отдельных connectors и совместные чаты можн�
 Наличие workspace не делает данные невидимыми администратору самой VPS/базы;
 это логическая изоляция приложения, не end-to-end encryption.
 
-## Принятое направление: регистрация и подключение своего ПК
+## Актуальное направление: личная привязка, затем multi-user
 
-Администратор создаёт приглашение; пользователь в личном чате бота принимает
-его, получает внутренний account и личное пространство. Затем запрашивает
-привязку ПК и переносит на него краткоживущий одноразовый pairing code.
-Connector по WSS обменивает code на собственный отзываемый credential.
-Владельца назначает сервер по приглашению; connector не может объявить чужой
-workspace/user. Code не даёт owner API access и не заменяет постоянный key.
-Повторное использование/истечение code, rate limits и отзыв связи явные.
+Уточнение владельца 2026-10-20: ближайший [P4.17](connector-pairing.ru.md) начинается
+на целевом ПК: адрес диспетчера + стабильный не секретный ID владельца → запрос →
+сверка/подтверждение в уже авторизованном Telegram или CLI диспетчера. Постоянный
+credential создаёт/сохраняет приложение; пароль и ручной перенос key/code не нужны.
+Прежний bot-first перенос pairing code заменён; данные сверки не являются credential.
 
-Это принятое направление UX, не существующие команды. На переходном этапе можно
-сохранить выдачу private key файлом через CLI, но уже назначать owner scope.
-Статическая конфигурация маршрутов сейчас общая; self-service добавление ПК
-потребует persisted scoped agent registry и согласованного обновления routing.
+Сейчас один профиль владельца, без регистрации других пользователей. Старые ПК
+однократно перепривязываются, сохраняя записи/настройки/историю, без автоматической
+замены по alias. Обычные updates после перехода сохраняют новую привязку.
+WSS рекомендуется, WS разрешён с явным предупреждением/согласием, без downgrade.
+
+P4.10 остаётся будущим invite-only личным workspace для каждого независимого
+пользователя; минимальная owner identity P4.17 не доказывает multi-user изоляцию.
+При включении P4.10 принадлежность назначает сервер, не клиент. Account invitation
+и создание пользователя отделены от запроса подключения устройства. Owner API token
+не выдаётся коннекторам или пользовательским клиентам. Общая авторизация/динамический
+scoped routing/expiry/revoke/limits требуют отдельной реализации и приёмки.
 
 ## Что заложить сейчас и что вынести дальше
 
@@ -147,7 +153,7 @@ dialogue/active-context contract; explicit authenticated actor context и еди
 второго независимого пользователя; сами поля в базе изоляции не обеспечивают.
 
 **Принятый отдельный P4.10:** полноценные аккаунты/личные пространства,
-invitations/pairing, dynamic scoped routing, per-user credentials, доступ через
+invitations, развитие pairing P4.17 до user scopes, dynamic routing, credentials, доступ через
 Telegram и будущую привязку каналов. Командные пространства и billing — дальнейшие
 расширения после решения. Учёт здесь означает identities/resources/audit/basic
 limits; платёжная система не предполагается автоматически.
@@ -167,7 +173,7 @@ jobs приватны по conversation, но approvals из других кан
 | Поздний ответ после переключения | Job/events/approval остаются привязаны к исходному диалогу; /switch не перенаправляет работу | Проверить понятное отображение двух диалогов |
 | Два личных аккаунта | Один bot, два user_id, одинаковые aliases home; нет пересечения списка, history, jobs, approvals, routes, audit и event subscriptions | Два Telegram-пользователя для живого smoke; свои тестовые connectors |
 | Доступ по чужому ID | Отказ на direct API/callback/session/job/connector IDs во всех application entry points; один фильтр списка не считается защитой | Дополнительных действий для автоматизированных отрицательных тестов не требуется |
-| Pairing и отзыв | Одноразовость/expiry/неверный scope, подмена owner, revoke/rotate; событие из старой epoch не получает новую authority | Перенести code/key на свой ПК приватно; проверить отключение отозванного ПК |
+| Pairing и отзыв | Одноразовость/expiry/неверный scope, подмена owner, revoke/rotate; старая epoch не получает новую authority | Создать запрос в CLI ПК, сверить/подтвердить его в профиле; проверить отключение отозванного ПК |
 | Несколько входов | Fake Telegram/Web adapter используют тот же dialogue/application service и actor; identity linking не основан на display name | Настоящий Web UI — отдельный будущий этап |
 | Миграция | Старые owner data/bindings/active pointers переходят в default workspace без потери и без назначения всем allowlisted users административных прав | Определить владельца прежних ресурсов при неоднозначной конфигурации |
 | Ресурсы и администрирование | Лимиты jobs/connectors/event buffers по workspace, отсутствие starvation; audit actor/action/resource/result, отдельные admin операции | Выбрать начальные лимиты и администраторов при запуске общего сервиса |
@@ -179,11 +185,11 @@ jobs приватны по conversation, но approvals из других кан
 
 ## Связанные будущие контракты (2026-10-13)
 
-P4.11 добавляет Scenario/Schedule/Run как workspace-owned ресурсы:
-[proposal](scenarios-and-schedules.ru.md). Scheduler service identity действует
-on behalf of пользователя, не как глобальный owner; актуальные права на connector/
-agent/dialogue проверяются при dispatch и approval. Manual и scheduled triggers
-не создают отдельной модели доступа. Новые права и revoke должны войти в P4.10.
+P4.11 по последующему решению 2026-10-15 использует connector-owned Task/Schedule/Run:
+[актуальный контракт](scenarios-and-schedules.ru.md). Scheduler и due локальны;
+dispatcher управляет проекцией, не является вторым scheduler. Local authority
+проверяет права на task/executor; multi-user scope/revoke добавляются в P4.10.
+Manual и scheduled triggers не создают отдельной модели доступа.
 
 P4.12 выделяет versioned client API и user/device auth:
 [API/mobile proposal](client-api-and-mobile.ru.md). Telegram, Web/mobile и CLI
