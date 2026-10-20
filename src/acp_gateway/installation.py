@@ -446,6 +446,11 @@ def latest_stable_release() -> Version | None:
         print("No PyPI release is published yet. Install a reviewed release wheel or Git ref.")
         return None
     response.raise_for_status()
+    declared = response.headers.get("content-length")
+    if declared is not None and (not declared.isdigit() or int(declared) > 262144):
+        raise ValueError("PyPI release metadata exceeded its limit")
+    if len(response.content) > 262144:
+        raise ValueError("PyPI release metadata exceeded its limit")
     data = response.json()
     urls = data.get("info", {}).get("project_urls") or {}
     if not any(str(value).rstrip("/") == REPOSITORY for value in urls.values()):
@@ -513,6 +518,16 @@ def maintenance(args) -> int:
             else f"acpgw {info['version']} (manager: {info['manager']}, source: {info['source']})"
         )
         return 0
+    if args.command == "update":
+        # Ordinary frontend: shared artifact gates and automatic managed role.
+        # Explicit advanced switches return None and keep the manual paths below.
+        from acp_gateway.cli.update_command import run as update_frontend
+
+        handled = update_frontend(args, info)
+        if handled is not None:
+            return handled
+        # The ordinary frontend may have selected the managed coordinator.
+        with_services = getattr(args, "with_services", False)
     if args.command == "update" and args.check:
         if args.constraints:
             raise ValueError("--constraints requires --from")

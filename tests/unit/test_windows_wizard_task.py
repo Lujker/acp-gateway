@@ -37,6 +37,7 @@ def setup(tmp_path, monkeypatch):
         values = {
             "Role": "connector",
             "Server connection URL": "wss://server.example/acpgw/connect",
+            "Connection method": "advanced credential file",
             "Enrollment key file copied privately from the server": str(key),
             QUESTION: task,
             "Computer ID registered on the server": "work",

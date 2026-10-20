@@ -8,6 +8,7 @@ from uuid import UUID, uuid4
 from acp_gateway.agents.errors import AgentError
 from acp_gateway.connectors.protocol import UpdateOperation, UpdateRequest
 from acp_gateway.core import GatewayError
+from acp_gateway.update_delivery import official_image
 from acp_gateway.update_journal import ACTIVE, TERMINAL, Journal
 from acp_gateway.updates import installation_report
 
@@ -17,8 +18,9 @@ def public_operation(row):
 
 
 class LocalUpdates:
-    def __init__(self, config, *, role, target):
+    def __init__(self, config, *, role, target, idle_check=None):
         self.config, self.role, self.target = config, role, target
+        self.idle_check = idle_check
         root = config.settings.updates.spool_dir or (
             config.settings.resolved_data_dir() / "update-spool"
         )
@@ -62,9 +64,20 @@ class LocalUpdates:
                 isinstance(worker, dict)
                 and (
                     worker.get("backend") == "uv"
-                    or (worker.get("backend") == "docker" and version in worker.get("versions", []))
+                    or (
+                        worker.get("backend") == "docker"
+                        and (
+                            version in worker.get("versions", [])
+                            or (
+                                worker.get("delivery") == "official"
+                                and official_image(version) is not None
+                            )
+                        )
+                    )
                 )
             )
+        except (OSError, ValueError, sqlite3.Error):
+            return False
         finally:
             journal.close()
 
@@ -94,6 +107,8 @@ class LocalUpdates:
                 reason = "expired"
             elif not self.available():
                 reason = "worker_stopped"
+            elif self.idle_check is not None and not self.idle_check():
+                reason = "busy"
             elif not self.version_allowed(request.target_version):
                 reason = "version_not_allowed"
             try:
@@ -165,6 +180,11 @@ class UpdateService:
         report, binding = await self._target(role, target)
         if report is None or not report.can_update:
             raise GatewayError("Обновление не включено локально или отдельный updater не запущен.")
+        available, _ = await self.inventory.available_version(report)
+        if available != version:
+            raise GatewayError(
+                "Опубликованный артефакт этой версии для выбранной установки недоступен."
+            )
         if role == "dispatcher" and not self.local.version_allowed(version):
             raise GatewayError("Эта версия ещё не подготовлена в локальной политике updater.")
         from packaging.version import Version

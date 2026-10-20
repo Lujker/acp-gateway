@@ -166,6 +166,7 @@ def _build_parser() -> argparse.ArgumentParser:
             "diagnose",
             "resolve",
             "allow-image",
+            "stage-runtime",
         ),
         help="manage independent updater autostart; install does not start it",
     )
@@ -283,6 +284,34 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     connector.add_argument(
         "--tls-fingerprint", help="optional WSS certificate pin; otherwise use CA/name validation"
+    )
+
+    owner = commands.add_parser("owner", help="trusted local single-owner profile")
+    owner_sub = owner.add_subparsers(dest="owner_command", required=True)
+    owner_sub.add_parser("show")
+    bootstrap = owner_sub.add_parser(
+        "bootstrap", help="explicitly select Telegram approvers; empty means local only"
+    )
+    bootstrap.add_argument("--telegram-id", type=int, action="append", default=[])
+    pairing = commands.add_parser(
+        "pairing", help="compare and resolve connector enrollment locally"
+    )
+    pair_sub = pairing.add_subparsers(dest="pairing_command", required=True)
+    pair_sub.add_parser("list")
+    for action in ("approve", "deny"):
+        decision = pair_sub.add_parser(action)
+        decision.add_argument("request_id")
+        decision.add_argument(
+            "--verification", required=True, help="exact comparison value displayed on applicant PC"
+        )
+    activate = pair_sub.add_parser(
+        "activate-legacy-rebind",
+        help="one-time forward-only credential fencing after local upgrades",
+    )
+    activate.add_argument(
+        "--confirm",
+        action="store_true",
+        help="confirm backup and local upgrade path; old software/DB rollback prohibited",
     )
 
     computers = commands.add_parser(
@@ -432,6 +461,13 @@ def main(argv: Sequence[str] | None = None) -> int:
                 if args.updater_action != "run":
                     raise ValueError("--init cannot be combined with an updater service action")
                 return init_policy(args.policy, args.config, args.env_file, role=args.role)
+            if args.updater_action == "stage-runtime":
+                # Called by the independent worker itself: no config, services or
+                # package installation may be touched on this path.
+                from acp_gateway.update_bootstrap import stage_runtime
+
+                stage_runtime(args.policy)
+                return 0
             if args.updater_action in {"diagnose", "resolve", "allow-image"}:
                 from acp_gateway.updater_recovery import allow_image, diagnose, resolve
 
@@ -533,10 +569,17 @@ def _run_configured(args) -> int:
                 from acp_gateway.cli.wizard import wizard
                 from acp_gateway.config import find_config_file
 
+                selected = find_config_file(args.config)
+                fresh = args.command == "connect" and (selected is None or not selected.is_file())
                 return wizard(
-                    config_file=find_config_file(args.config),
+                    config_file=selected,
                     env_file=args.env_file,
-                    section="connection" if args.command == "connect" else "agents",
+                    section="all"
+                    if fresh
+                    else "connection"
+                    if args.command == "connect"
+                    else "agents",
+                    **({"role": "connector"} if fresh else {}),
                 )
             if args.command == "menu":
                 from acp_gateway.cli.menu import menu
@@ -626,6 +669,10 @@ def _run_configured(args) -> int:
     if args.command == "config" and args.config_command == "check":
         return _cmd_config_check(cfg)
     try:
+        if args.command in {"owner", "pairing"}:
+            from acp_gateway.cli.pairing import run
+
+            return run(cfg, args)
         if args.command == "connector-sessions":
             from acp_gateway.cli.connector_maintenance import sessions
 

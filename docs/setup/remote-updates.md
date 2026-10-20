@@ -1,5 +1,11 @@
 # Telegram updates: dispatcher and connectors
 
+> **Since 0.2.2:** automatic bootstrap and official immutable Docker delivery
+> are described in [Updates out of the box](updates-out-of-box.md). Normal
+> setup/start does not require `--init`, `install`, `enable`, or per-version
+> `allow-image`. Explicit `updates.enabled: false` remains an opt-out. The manual
+> instructions below remain the advanced path and match 0.2.1.
+
 [Documentation](../README.md) · [Development contract](../items/remote-connector-management.ru.md)
 
 This feature is included in 0.2.1 and is not present in 0.2.0. Start with the

@@ -1,7 +1,9 @@
 # Inspect an existing Goose ACP endpoint
 
-Scope update 2026-10-13: Goose and the platform expansion now belong to P4.9.
-They are deferred and do not block the P4.8 Windows/Hermes delivery.
+Scope update 2026-10-20: P4.9 targets Goose as an alternative to Hermes across
+CLI/Desktop and platform combinations. This is future scope, not verified parity;
+see [requirements](../items/goose-alternative.ru.md). It does not block the nearer
+P4.17/P4.15.1 work. This guide describes the existing limited probe only.
 
 The development CLI can inspect an explicitly supplied local Goose endpoint:
 

@@ -142,6 +142,7 @@ def test_connector_base_can_add_connection_and_agents_in_either_order(tmp_path):
         section="connection",
         prompts=save_answers(
             **{
+                "Connection method": "advanced credential file",
                 "Enrollment key file copied privately from the server": str(key),
                 "Server connection URL": "wss://server.example/acpgw/connect",
             }
@@ -347,12 +348,14 @@ def test_local_working_directory_is_real_and_absolute(tmp_path):
             _working_directory(value)
 
 
-def test_connection_edit_warns_to_reinstall_service_with_selected_paths(tmp_path, capsys):
+def test_connection_edit_no_service_skips_manual_reinstall(tmp_path, capsys, monkeypatch):
+    monkeypatch.setattr("acp_gateway.service.unit_path", lambda *a: tmp_path / "absent.service")
     base(tmp_path, "connector")
     key = tmp_path / "home.key"
     key.write_text("acpc_" + "a" * 43)
     key.chmod(0o600)
     answers = {
+        "Connection method": "advanced credential file",
         "Enrollment key file copied privately from the server": str(key),
         "Server connection URL": "wss://first.example/acpgw/connect",
     }
@@ -361,8 +364,8 @@ def test_connection_edit_warns_to_reinstall_service_with_selected_paths(tmp_path
     answers["Server connection URL"] = "wss://second.example/acpgw/connect"
     wizard(tmp_path, section="connection", prompts=save_answers(**answers))
     output = capsys.readouterr().out
-    assert "enable/start does not refresh" in output
-    assert "service --role connector install" in output
+    assert "no managed connector service is installed" in output
+    assert "reinstall with" not in output
     assert str(tmp_path / ".env") in output
     assert parse((tmp_path / STATE).read_bytes())["connection"]["dispatcher_url"].startswith(
         "wss://second.example/"
@@ -377,7 +380,7 @@ def test_setup_persists_custom_env_selection(tmp_path):
 
 def test_updates_section_is_explicit_and_does_not_start_services(tmp_path, monkeypatch):
     cfg = base(tmp_path)
-    assert cfg.settings.updates.enabled is False
+    assert cfg.settings.updates.enabled is True
     secrets = (tmp_path / ".env").read_bytes()
     monkeypatch.setattr(
         "acp_gateway.updater_service.manage", lambda *a: pytest.fail("service action")
@@ -387,13 +390,13 @@ def test_updates_section_is_explicit_and_does_not_start_services(tmp_path, monke
         section="updates",
         prompts=save_answers(
             **{
-                "Updates: enabled": True,
+                "Updates: enabled": False,
                 "Updates: spool dir": str(tmp_path / "private-spool"),
             }
         ),
     )
     cfg = load_config(tmp_path / "config.yaml", tmp_path / ".env")
-    assert cfg.settings.updates.enabled is True
+    assert cfg.settings.updates.enabled is False
     assert cfg.settings.updates.spool_dir == tmp_path / "private-spool"
     assert (tmp_path / ".env").read_bytes() == secrets
 

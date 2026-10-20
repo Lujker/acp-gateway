@@ -115,6 +115,7 @@ def test_server_enrollment_and_connector_start(tmp_path, monkeypatch):
                 **{
                     "Role": "connector",
                     "Server connection URL": "wss://server.example/acpgw/connect",
+                    "Connection method": "advanced credential file",
                     "Enrollment key file copied privately from the server": str(key),
                 }
             ),
@@ -333,6 +334,7 @@ def test_connect_from_local_setup_or_later_without_reentering_profiles(tmp_path,
     answers = save_answers(
         **{
             "Connect this computer to an external dispatcher now?": True,
+            "Connection method": "advanced credential file",
             "Enrollment key file copied privately from the server": str(key),
             "Server connection URL": "wss://dispatcher.example/acpgw/connect",
         }

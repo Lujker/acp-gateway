@@ -1,7 +1,9 @@
 # ACP Gateway — target architecture
 
-> Document status: the current target architecture, updated whenever a
-> decision changes. The chronology of decisions and findings lives in
+> Document status: architecture and historical implementation notes. Current
+> orientation and planning scope were reconciled on 2026-10-20; detailed Goose/LAN
+> sections retain their original evidence and are not the current deployment queue.
+> The chronology of decisions and findings lives in
 > [`road-notes.md`](../road-notes.md); statuses and the work queue live in
 > [`road-map.md`](../road-map.md) (both kept in Russian).
 > The original plan as it stood before the 2026-10-06 review (historical, in
@@ -9,16 +11,18 @@
 
 ## 1. Goal
 
-**ACP Gateway** is a local bus that accepts messages from external channels
-(Hermes, Telegram, later Snikket/XMPP, e-mail, a web UI and others), delivers
-them to an ACP-compatible agent, and routes answers, events and approval
-requests back to the channels.
+**ACP Gateway** is a single-owner dispatcher with outgoing computer connectors.
+It accepts messages from channels (Telegram, CLI and MCP; VK is a selected future
+channel), delivers them through ACP or a dedicated local adapter to agents, and
+routes answers, events and approval requests back to the channels.
 
 The gateway is not tied to a particular agent: it speaks ACP, and everything
 agent-specific (how to connect, authentication, TLS, modes) lives in an
-**agent profile** (section 4.1). The first and so far only target agent is
-**Work Goose** (`goose serve` on a work laptop); the rest of this document
-uses it as the main example.
+**agent profile** (section 4.1). The current owner-confirmed path is a VPS dispatcher
+with two native Windows/Hermes Desktop connectors. Direct Work Goose ACP remains
+an existing path and the historical example below. Goose parity across CLI/Desktop
+and platform combinations is a [future target](items/goose-alternative.ru.md), not
+verified universal support.
 
 The gateway is not a second AI agent: it makes no decisions on the agent's
 behalf, stores no work MCP credentials and has no access to the work file
@@ -45,20 +49,21 @@ replaces it nor depends on it.
 
 ## 3. Deployment topologies
 
-The current LAN and co-located topologies are followed by a planned VPS
-dispatcher topology (`P4.1`, before channel extensions `P4.2`–`P4.4`). The connector is a launch
-mode of the same program. Computer enrollment and a separate WS/WSS
-registration and guarded ACP relay in `serve` are implemented and mock-tested.
-Real Goose relay acceptance and VPS deployment remain outstanding.
+The current main topology is a VPS dispatcher with outgoing WS/WSS computer
+connectors, implemented in the same package. Basic Telegram use on two Windows/Hermes
+PCs was confirmed by the owner; remaining historical acceptance was provisionally
+closed on 2026-10-16, not declared fully passed. LAN/co-located Goose paths remain
+available. Do not infer live Goose relay parity from the Hermes deployment.
 
-| Topology | Gateway runs on | Work Goose runs on | Transport | Status |
+| Topology | Gateway runs on | Agent runs on | Transport | Status |
 |---|---|---|---|---|
-| **LAN** (initial default) | home host, WSL | work laptop, WSL | `wss://<work-host>:<port>/acp`, TLS + secret + pinning | MVP target |
+| **LAN** (historical initial default) | home host, WSL | work laptop, WSL | `wss://<work-host>:<port>/acp`, TLS + secret + pinning | MVP target |
 | **Co-located** | the same machine as Work Goose | WSL | `ws://127.0.0.1:3284/acp` (loopback), secret | supported from MVP |
-| **VPS dispatcher** | VPS with a stable IP and/or domain | multiple computers, any ACP-compatible agents | computers initiate WS/WSS connections through our own connector | guarded ACP relay in serve mock-tested; live acceptance next, `P4.1` |
+| **VPS dispatcher** | VPS with a stable IP and/or domain | multiple computers, any ACP-compatible agents | computers initiate WS/WSS connections through our own connector | implemented; basic Windows/Hermes owner use confirmed; detailed limits in project status |
 
-Gateway platforms: **WSL (Linux) is the primary and recommended path**,
-native Windows and macOS adapters are planned. Hence the code requirements:
+The main deployed path uses a Linux VPS and native Windows connectors. WSL is
+also used for development/direct ACP; macOS service/update acceptance is not implied.
+Keep platform-specific lifecycle adapters separate. Core code requirements:
 plain Python without OS-specific dependencies in the core, paths via
 `platformdirs`, service wrappers (systemd / Task Scheduler / launchd) as
 separate files under `deploy/`.
@@ -110,7 +115,7 @@ are checked under `P0.1`.
 
 Outbound connections from the home WSL into the LAN work without any setup.
 
-### 3.2. Planned VPS dispatcher and WebSocket connector
+### 3.2. VPS dispatcher and WebSocket connector
 
 Updated priority, 2026-10-08: start the Linux/WSL connector before native
 Windows, using the existing core/channels. Channel extensions `P4.2`–`P4.4`
@@ -172,14 +177,16 @@ and never automatically repeats a disconnected prompt. Core/owner API/CLI use
 `computer/agent`; MCP uses `computer__agent` tool prefixes. Health reports
 computer connectivity separately from ACP readiness.
 
-TLS is disabled for current IP/port tests by the owner's decision. Listener paths
-are configurable (`/`, `/connect` or a proxy subpath), and connector URLs support
+WSS is recommended. The owner permits explicit unencrypted WS for self-hosted
+installations, not only tests, with a warning/consent and no automatic WSS downgrade.
+Listener paths are configurable (`/`, `/connect` or a proxy subpath), and connector URLs support
 IP addresses and DNS names. Future nginx deployments can terminate TLS on a
 domain and forward WebSockets to the plain loopback listener. Explicit WSS uses
 CA/name validation or a supplied certificate pin, without plaintext fallback.
 
-The first target is one owner, Linux/WSL connectors and network ACP agents.
-Development stages and the protocol boundary are documented in
+The historical first target was one owner, Linux/WSL connectors and network ACP
+agents; the current deployed target includes native Windows/Hermes. Historical
+development stages and the protocol boundary are documented in
 [the connector design](items/connector.md). Multi-user access, stdio bridging
 and native platform adapters follow the initial route.
 
@@ -549,12 +556,30 @@ built on [P4.10 identity/ownership](items/dispatcher-accounts-and-dialogues.ru.m
 It must not distribute the owner token or bypass the loopback guard. Web/mobile
 surfaces share authenticated application services, scoped operations and events.
 
-[P4.11 scenarios](items/scenarios-and-schedules.ru.md) use the same persisted
-execution path for manual triggers and dispatcher-time schedules, current actor/
-workspace/connector authority and independent result delivery. Trigger dedupe
-does not establish external prompt idempotency; unknown outcomes stay fenced.
+[P4.11 tasks](items/scenarios-and-schedules.ru.md), revised on 2026-10-15, are owned
+and scheduled locally by the connector, not by dispatcher-time scheduling. Manual
+and scheduled runs use the local Task Service and explicit local authority; the
+dispatcher manages a projection. Trigger dedupe is not external prompt idempotency;
+unknown outcomes stay fenced. This remains deferred, not implemented.
 
 [P4.13 adapters](items/connector-harness-adapters.ru.md) wrap documented native
 protocols through capability/lifecycle contracts. Managed sessions, owned resume
 and live shared UI attach are distinct capabilities. These contracts are proposed,
 not current backend enum additions. Native mobile P4.14 remains conditional.
+
+
+## Next agreed personal milestone (2026-10-20)
+
+[P4.17](items/connector-pairing.ru.md) proposes connector-first pairing using server
+address and a stable non-secret owner ID, approved in an authenticated Telegram/CLI
+profile. Credentials are managed internally; old PCs undergo one explicit re-pairing
+at the future transition, preserving data. Later ordinary updates preserve binding.
+[The technical plan](plans/p4.17-connector-pairing.ru.md) identifies unresolved claim,
+transport/bootstrap and rollout/rollback details; it is not an implemented protocol.
+
+[P4.15.1](items/updates-out-of-box.ru.md) then removes manual companion/policy/image
+preparation from the existing updater. Busy jobs are not interrupted; a new explicit
+command is required after they finish. Cold resume is not added implicitly. Current
+0.2.1 defaults/deployments are unchanged. Multi-user, VK, Goose parity and built-in
+OS actions/user modules are separate future stages, with no approved relative order
+for VK/Goose/multi-user. Only documentation/planning was authorized here.

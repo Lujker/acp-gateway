@@ -59,9 +59,15 @@ def run(config, args):
         from acp_gateway.connectors.maintenance import ConnectorMaintenance, watch
 
         maintenance = ConnectorMaintenance(config.settings.agents, managers)
+        from acp_gateway.connectors.maintenance import can_reserve
         from acp_gateway.update_service import LocalUpdates
 
-        updates = LocalUpdates(config, role="connector", target=launch.computer_id)
+        updates = LocalUpdates(
+            config,
+            role="connector",
+            target=launch.computer_id,
+            idle_check=lambda: can_reserve(maintenance.status()),
+        )
 
         async def local_factory(alias):
             maintenance.check_admission()
@@ -78,6 +84,21 @@ def run(config, args):
                 return PolicyTransport(await managers[alias].open(), policies[alias])
             transport, _ = await clients[alias].open_transport()
             return PolicyTransport(transport, policies[alias])
+
+        async def ensure_updater():
+            from acp_gateway.update_bootstrap import ensure_updates
+
+            try:
+                result = await asyncio.to_thread(
+                    ensure_updates,
+                    config,
+                    role="connector",
+                    target=launch.computer_id,
+                )
+                if not result.ready:
+                    get_logger(__name__).warning("updater not ready", reason=result.reason)
+            except Exception:
+                get_logger(__name__).exception("updater provisioning failed")
 
         async def connect(instance):
             loop = asyncio.get_running_loop()
@@ -96,6 +117,7 @@ def run(config, args):
                 loop.add_signal_handler(signal.SIGTERM, terminate)
             watcher = asyncio.create_task(watch_stop(directory, instance, terminate))
             activity = asyncio.create_task(watch(directory, instance, maintenance))
+            provisioning = asyncio.create_task(ensure_updater())
             try:
                 await run_connector(
                     launch.dispatcher_url,
@@ -111,6 +133,9 @@ def run(config, args):
                     raise
                 get_logger(__name__).info("computer connector stopped")
             finally:
+                provisioning.cancel()
+                with suppress(asyncio.CancelledError):
+                    await provisioning
                 activity.cancel()
                 with suppress(asyncio.CancelledError, OSError, ValueError):
                     await activity
