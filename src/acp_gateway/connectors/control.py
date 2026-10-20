@@ -71,9 +71,13 @@ class ControlDispatcher:
         heartbeat_seconds: int = 20,
         connect_path: str = "/connect",
         max_connections: int = 64,
+        pairing=None,
     ):
         if not 5 <= heartbeat_seconds <= 300:
             raise ValueError("heartbeat must be between 5 and 300 seconds")
+        from acp_gateway.connectors.pairing import PairingIngress
+
+        self.pairing = PairingIngress(pairing) if pairing is not None else None
         self.registry = registry
         self.connect_path = validate_connect_path(connect_path)
         self.heartbeat_seconds = heartbeat_seconds
@@ -176,6 +180,17 @@ class ControlDispatcher:
     def authenticate(self, connection, request):
         if len(connection.server.handler_tasks) > self.max_connections:
             return connection.respond(503, "Computer ingress is full\n")
+        if self.pairing is not None and request.path == self.connect_path.rstrip("/") + "/pair":
+            if not self.pairing.admit():
+                return connection.respond(429, "Pairing ingress busy; retry later\n")
+            connection.pairing_grant = True
+            # websockets 17 split the protocol limit into message/fragment limits.
+            if hasattr(connection.protocol, "max_message_size"):
+                connection.protocol.max_message_size = 4096
+                connection.protocol.max_fragment_size = 4096
+            else:
+                connection.protocol.max_size = 4096
+            return None
         if request.path != self.connect_path:
             return connection.respond(404, "Not found\n")
         try:
@@ -194,6 +209,8 @@ class ControlDispatcher:
         except sqlite3.Error:
             return connection.respond(503, "Access check unavailable\n")
         if generation is None:
+            if self.registry.migration_required(identity, authorization[7:]):
+                return connection.respond(412, "migration-required; run acpgw connect\n")
             return connection.respond(401, "Unauthorized\n")
         connection.computer_grant = (identity, generation)
         connection.update_inventory = update_inventory
@@ -219,6 +236,8 @@ class ControlDispatcher:
                 return
 
     async def handle(self, connection):
+        if getattr(connection, "pairing_grant", False):
+            return await self.pairing.handle(connection)
         registration = None
         watcher = None
         try:
@@ -431,6 +450,11 @@ async def connect_control(
             logger=_WIRE_LOG,
         )
     except InvalidStatus as exc:
+        if exc.response.status_code == 412:
+            raise ConnectorAccessError(
+                "migration-required: upgrade locally if necessary, then run acpgw "
+                "connect and ask the owner to confirm the previous computer ID"
+            ) from None
         error = ConnectorAccessError if exc.response.status_code < 500 else ConnectorUnavailable
         raise error("cannot connect to dispatcher: verify endpoint and computer access") from None
     except (TLSFingerprintMismatch, ssl.SSLCertVerificationError):

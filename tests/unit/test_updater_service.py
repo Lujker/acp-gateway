@@ -58,6 +58,7 @@ def test_systemd_install_copies_base_python_runtime_without_starting(policy, mon
         "update_lock.py",
         "update_journal.py",
         "windows_acl.py",
+        "update_delivery.py",
     }
     assert service.manage("enable", path) == 0
     assert calls[-1] == ("enable", "--now", service.unit_path(path).name)

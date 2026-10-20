@@ -17,8 +17,10 @@ Historical documents are not current installation instructions.
 | Use Docker for a dispatcher and Linux/WSL connectors | [VPS runbook](setup/vps-acceptance.md), [Russian](setup/vps-acceptance.ru.md) |
 | Run the dispatcher in Docker behind the host's reverse proxy, or move a native dispatcher into Docker | [Docker dispatcher (Russian)](setup/vps-docker.ru.md) |
 | Configure autostart | [Services](setup/service.md) |
-| Upgrade Docker dispatcher and uv connectors to 0.2.1 | [Upgrade instructions (Russian)](setup/update-0.2.1.ru.md) |
-| Telegram updates of dispatcher/connectors (0.2.1, local opt-in) | [Independent updater setup](setup/remote-updates.md) |
+| Upgrade Docker dispatcher and uv connectors to 0.2.2 | [Upgrade instructions (Russian)](setup/update-0.2.2.ru.md) |
+| Updates out of the box (working source) | [Normal setup and first start](setup/updates-out-of-box.md) |
+| Updates out of the box (0.2.2): dispatcher and connectors | [Normal setup and first start](setup/updates-out-of-box.md) |
+| Telegram updates in the 0.2.1 manual opt-in path | [Independent updater setup](setup/remote-updates.md) |
 | Update, inspect or recover an installation | [Maintenance](setup/maintenance.md) |
 
 ## Use and troubleshoot
@@ -47,8 +49,21 @@ Historical documents are not current installation instructions.
 
 ## Plan and evidence
 
+- [ACP in the unified AI business (Russian)](items/ai-business-strategy.ru.md):
+  practicum, universal AI Assistant + agent and future remote-control reuse; not
+  a delivered integration or a replacement for the current engineering queue.
+
 - [Roadmap](../road-map.md): the single status board; the final section is the current queue.
 - [Decision journal](../road-notes.md): dated findings and owner decisions.
+- [Future AI-agent practicum and business brief (Russian)](items/business-practicum.ru.md):
+  approved educational concept, pilot gates and open economics; not a launched
+  service, a sales commitment or a change to the implementation queue.
+- [Connector-first pairing P4.17 (Russian)](items/connector-pairing.ru.md) and its
+  [technical plan (Russian)](plans/p4.17-connector-pairing.ru.md): next agreed scope,
+  not implemented commands or enrollment instructions.
+- [Updates out of the box P4.15.1 (Russian)](items/updates-out-of-box.ru.md): next substage.
+- [VK channel](items/vk-bot.ru.md) and [Goose alternative](items/goose-alternative.ru.md):
+  future requirements, not current runtime support.
 - [Telegram implementation and checks (Russian)](items/telegram-ui.ru.md).
 - [Planned Telegram usability improvements: P2.4 (Russian)](items/telegram-usability.ru.md).
 - [Project review and verified fixes (Russian)](items/project-review-2026-10-14.ru.md).
