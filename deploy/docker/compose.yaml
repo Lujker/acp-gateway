@@ -3,7 +3,7 @@ services:
   gateway:
     build:
       context: ../..
-    image: acpgw:local
+    image: ${ACPGW_IMAGE:-acpgw:local}
     user: "${ACPGW_UID:?Run prepare.py first}:${ACPGW_GID:?Run prepare.py first}"
     init: true
     restart: unless-stopped

@@ -40,15 +40,17 @@ Hermes Desktop and Goose integrations are described in the documentation.
 Install [uv](https://docs.astral.sh/uv/getting-started/installation/), then:
 
 ```sh
-uv tool install --python 3.12 "acp-gateway==0.2.1"
+uv tool install --python 3.12 "acp-gateway==0.2.2"
 uv tool update-shell
 acpgw setup
 ```
 
-The current release is **0.2.1**: one dispatcher, outgoing connectors from your PCs,
-Telegram dashboards and approvals, managed updates and an optional independent
-companion for updates from Telegram. See [project status](docs/project-status.md)
-and the [0.2.1 upgrade instructions](docs/setup/update-0.2.1.ru.md).
+The current release is **0.2.2**: connector-first pairing with owner approval,
+updates out of the box for the dispatcher and connectors, and Telegram dashboards
+and approvals. Existing computers keep their enrollment; the one-time legacy
+pairing transition is explicit. See [project status](docs/project-status.md),
+[release notes](docs/releases/0.2.2.md) and the
+[0.2.2 upgrade instructions](docs/setup/update-0.2.2.ru.md).
 
 Follow the [Ubuntu dispatcher + Windows/Hermes guide (Russian)](docs/setup/self-install-pypi.ru.md)
 for enrollment, connection, Telegram and autostart. For an existing installation,

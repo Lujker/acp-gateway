@@ -160,7 +160,8 @@ def test_native_wizard_start_failure_restores_files_and_task(
             prompts=save_answers(
                 **{
                     "Server connection URL": launch.dispatcher_url,
-                    "Use this unencrypted test connection?": True,
+                    "I accept unencrypted WS credentials and conversations?": True,
+                    "Connection method": "advanced credential file",
                     "Enrollment key file copied privately from the server": str(launch.token_file),
                     "Install and start the Windows connector logon task?": True,
                 }

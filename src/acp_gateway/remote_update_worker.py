@@ -1,9 +1,11 @@
 """Independent stdlib updater. Policy is local; requests contain no executable paths."""
 
+import hashlib
 import json
 import math
 import os
 import re
+import shutil
 import signal
 import sqlite3
 import subprocess
@@ -16,8 +18,10 @@ from uuid import uuid4
 
 if __package__:
     from acp_gateway.maintenance_worker import lease
+    from acp_gateway.update_delivery import official_image
     from acp_gateway.update_journal import Journal
 else:
+    from update_delivery import official_image
     from update_journal import Journal
     from update_lock import lease
 
@@ -76,7 +80,15 @@ def load_policy(path):
         or not re.fullmatch(r"[a-z][a-z0-9_-]{0,63}", policy.get("target", ""))
     ):
         raise ValueError("Invalid updater policy")
+    if type(policy.get("auto_refresh", False)) is not bool or policy.get(
+        "delivery", "local"
+    ) not in {"local", "official"}:
+        raise ValueError("Invalid updater delivery policy")
     required = ["spool_dir", "config", "env_file"]
+    if "image_env" in policy:
+        required.append("image_env")
+    if policy["backend"] == "docker" and policy.get("auto_refresh"):
+        required.append("refresh_tool")
     required += (
         ["entry", "result_dir"]
         if policy["backend"] == "uv"
@@ -116,7 +128,7 @@ def load_policy(path):
 
 def invoke(command, *, capture=False, timeout=900):
     with tempfile.TemporaryFile() as output:
-        result = subprocess.run(  # noqa: S603 — local policy and validated version/operation IDs
+        result = subprocess.run(  # noqa: S603 — validated local policy argv, no shell
             command,
             stdin=subprocess.DEVNULL,
             stdout=output if capture else subprocess.DEVNULL,
@@ -205,6 +217,37 @@ def uv_update(policy, row):
 
 
 def image_override(policy, image):
+    if not isinstance(image, str) or not IMAGE.fullmatch(image):
+        raise ValueError("Image pin must be immutable")
+    env = policy.get("image_env")
+    if env is not None:
+        env = Path(env)
+        if (
+            env.is_symlink()
+            or not env.is_absolute()
+            or (env.exists() and env.stat().st_size > 65536)
+        ):
+            raise ValueError("Invalid Compose image environment file")
+        contents = env.read_bytes() if env.exists() else b""
+        lines = contents.splitlines(keepends=True)
+        selected = [index for index, line in enumerate(lines) if line.startswith(b"ACPGW_IMAGE=")]
+        if len(selected) > 1:
+            raise ValueError("Ambiguous Compose image environment variable")
+        pin = b"ACPGW_IMAGE=" + image.encode("ascii") + b"\n"
+        if selected:
+            lines[selected[0]] = pin
+        else:
+            if contents and not contents.endswith(b"\n"):
+                lines.append(b"\n")
+            lines.append(pin)
+        with tempfile.NamedTemporaryFile(dir=env.parent, delete=False) as stream:
+            temporary_env = Path(stream.name)
+            stream.write(b"".join(lines))
+        try:
+            temporary_env.chmod(0o600)
+            temporary_env.replace(env)
+        finally:
+            temporary_env.unlink(missing_ok=True)
     path = Path(policy["override_file"])
     if path.is_symlink():
         raise ValueError("Updater override must not be a symlink")
@@ -250,8 +293,14 @@ def docker_update(policy, row):
     if not valid_intent(policy, row):
         return "failed", "conflict"
     image = policy["images"].get(row["version"])
+    if policy.get("delivery") == "official" and image is None:
+        image = official_image(row["version"])
+        if image is not None:
+            invoke([policy["docker"], "image", "pull", image], timeout=300)
     if image is None:
         return "failed", "version_not_allowed"
+    if row["expires"] <= time.time():
+        return "failed", "expired"
     invoke([policy["docker"], "image", "inspect", image], timeout=30)
     # Pin the old image ID before replacing any container or definition.
     container = invoke(
@@ -288,8 +337,8 @@ def docker_update(policy, row):
             sqlite3.connect(backup) as destination,
         ):
             source.backup(destination)
-        image_override(policy, image)
         changed = True
+        image_override(policy, image)
         docker_start(policy)
         docker_health(policy, row["version"])
         (Path(policy["spool_dir"]) / reservation_name).unlink(missing_ok=True)
@@ -366,6 +415,7 @@ def heartbeat(policy, stopped, instance):
                     "target": policy["target"],
                     "backend": policy["backend"],
                     "versions": list(policy.get("images", {})),
+                    "delivery": policy.get("delivery", "local"),
                     "published": time.time(),
                     "instance": instance,
                 }
@@ -375,7 +425,7 @@ def heartbeat(policy, stopped, instance):
         stopped.wait(2)
 
 
-def run(policy):
+def run(policy, *, policy_path=None):
     root = Path(policy["spool_dir"])
     root.mkdir(mode=0o700, parents=True, exist_ok=True)
     if root.is_symlink() or (
@@ -439,6 +489,16 @@ def run(policy):
                     ):
                         status, reason = execute(policy, row)
                         journal.transition(row["id"], ("running",), status, reason)
+                        if status == "succeeded" and policy_path is not None:
+                            try:
+                                if refresh_after_update(policy, row, policy_path):
+                                    return True
+                            except (OSError, ValueError, subprocess.SubprocessError):
+                                # Outcome is durable; helper delivery must never replay it.
+                                print(
+                                    "Updater helper refresh failed; inspect local readiness.",
+                                    file=sys.stderr,
+                                )
                 stopped.wait(0.5)
         finally:
             stopped.set()
@@ -449,9 +509,84 @@ def run(policy):
                 signal.signal(signum, handler)
 
 
+def refresh_after_update(policy, row, policy_path):
+    """Stage the updated helper from the installed package, never from the mailbox."""
+    if not policy.get("auto_refresh") or policy_path is None:
+        return False
+    if not valid_intent(policy, row):
+        raise ValueError("Invalid runtime refresh operation")
+    arguments = ["updater", "--policy", str(policy_path), "stage-runtime"]
+    if policy["backend"] == "uv":
+        cli(policy, *arguments)
+    else:
+        invoke(
+            [
+                policy["refresh_tool"],
+                "tool",
+                "run",
+                "--python",
+                "3.12",
+                "--from",
+                "acp-gateway==" + row["version"],
+                "acpgw",
+                *arguments,
+            ],
+            timeout=300,
+        )
+    return True
+
+
+def install_staged_runtime(runtime, spool):
+    """Called only after run() releases its worker lease; spool never chooses code."""
+    staged = runtime.with_name(runtime.name + ".next")
+    with lease(runtime.with_name(runtime.name + ".stage.lock"), exclusive=True):
+        if not staged.exists():
+            return False
+        if (
+            staged.is_symlink()
+            or runtime.is_symlink()
+            or (
+                os.name == "posix"
+                and (staged.stat().st_uid != os.getuid() or staged.stat().st_mode & 0o077)
+            )
+        ):
+            raise ValueError("Staged runtime must be private")
+        files = {
+            "worker.py",
+            "update_lock.py",
+            "update_journal.py",
+            "windows_acl.py",
+            "update_delivery.py",
+        }
+        manifest = read_json(staged / "manifest.json").get("files")
+        if not isinstance(manifest, dict) or set(manifest) != files:
+            raise ValueError("Invalid staged runtime manifest")
+        with lease(Path(spool) / "worker.lock", exclusive=True):
+            for name in files:
+                item = staged / name
+                if (
+                    item.is_symlink()
+                    or item.stat().st_size > 1048576
+                    or hashlib.sha256(item.read_bytes()).hexdigest() != manifest[name]
+                ):
+                    raise ValueError("Staged helper digest mismatch")
+            for name in files:
+                (staged / name).replace(runtime / name)
+            shutil.rmtree(staged)
+        return True
+
+
 def main():
     try:
-        run(load_policy(Path(sys.argv[1])))
+        policy_path = Path(sys.argv[1]).absolute()
+        policy = load_policy(policy_path)
+        if run(policy, policy_path=policy_path):
+            runtime = Path(__file__).absolute().parent
+            if not install_staged_runtime(runtime, policy["spool_dir"]):
+                raise ValueError("Updated helper was not staged; service recovery is required")
+            os.execv(  # noqa: S606 — verified private helper, same interpreter
+                sys.executable, [sys.executable, str(runtime / "worker.py"), str(policy_path)]
+            )
     except KeyboardInterrupt:
         return 130
     except (OSError, ValueError, sqlite3.Error, subprocess.SubprocessError):

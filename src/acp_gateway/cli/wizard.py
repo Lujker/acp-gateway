@@ -383,7 +383,105 @@ def _profiles(prompts, raw, values, role, *, allow_empty=False):
         raw.setdefault("connector", {})["enabled"] = True
 
 
-def _connection(prompts, state):
+def _connection(prompts, state, *, pairing_path=None):
+    from acp_gateway.connectors.pairing_client import PairingClient
+
+    method = prompts.choice(
+        "Connection method", ("owner approval", "advanced credential file"), "owner approval"
+    )
+    if method == "advanced credential file":
+        return _legacy_connection(prompts, state)
+    if pairing_path is None:
+        raise ValueError("a persistent pairing path is required")
+    client = PairingClient(pairing_path)
+    saved = client.load() if pairing_path.exists() else {}
+    if saved:
+        import time
+
+        finished = (
+            "connection" in saved
+            or saved.get("request", {}).get("expires", float("inf")) <= time.time()
+        )
+        # A credential can already be issued while its ACK was lost. Replacing
+        # that state would orphan the disabled computer and create a duplicate on
+        # the next attempt, so activation must be resumed or explicitly aborted.
+        unacknowledged = "issuance" in saved and "connection" not in saved
+        if unacknowledged:
+            print(
+                "An issued credential has not been acknowledged yet. Resume to finish "
+                "activation; do not start another pairing for this computer."
+            )
+            action = "resume"
+        else:
+            choices = ("resume", "start another") if finished else ("resume", "cancel")
+            action = prompts.choice("Existing pairing", choices, "resume")
+        if action == "start another":
+            print(
+                "The old binding and credential are kept. Revoke the old computer separately "
+                "if it is no longer yours; switching endpoints is not a revoke."
+            )
+            if not prompts.yes("Archive this completed/expired pairing and start another?"):
+                raise ValueError("Pairing kept unchanged")
+            client.reset(confirm=True)
+            saved = {}
+        elif action == "cancel":
+            asyncio.run(client.cancel())
+            raise ValueError("Pairing cancelled; rerun connect to create another request")
+    old = state.get("connection", {})
+    url = prompts.ask(
+        "Server connection URL",
+        saved.get("input_url", old.get("dispatcher_url", "")),
+        lambda value: _url(value if "://" in value else "wss://" + value),
+    )
+    allow_ws = False
+    if urlsplit(url).scheme == "ws":
+        print(
+            "WARNING: WS exposes applicant secrets, device credentials and conversations. "
+            "Pairing does not encrypt them."
+        )
+        allow_ws = prompts.yes("I accept unencrypted WS credentials and conversations?")
+        if not allow_ws:
+            raise ValueError("Choose WSS instead; no automatic downgrade is allowed")
+    owner = prompts.ask("Dispatcher owner ID", saved.get("owner_id", ""), _required)
+    name = prompts.ask("Computer display name", saved.get("name", socket.gethostname()), _required)
+    target = prompts.ask(
+        "Previous computer ID to rebind (empty for new)",
+        saved.get("target") or "",
+        lambda value: _identifier(value) if value else None,
+    )
+    if target:
+        print(
+            "Rebinding preserves history but revokes previous credentials and connections. "
+            "The owner must confirm this exact target."
+        )
+    print("Enrollment is durable; cancelling later setup does not undo an owner-approved binding.")
+    request = asyncio.run(client.begin(url, owner, name, target=target, allow_ws=allow_ws))
+    print(
+        f"Request: {request['request_id']}\n"
+        f"Compare: {request['verification']}\n"
+        f"Target: {request['target'] or 'NEW COMPUTER'}\n"
+        f"Expires: {request['expires']}"
+    )
+    print(
+        "On the dispatcher use pairing list/approve, or /pairing in the owner's Telegram. "
+        "Compare this exact request before approving."
+    )
+    while prompts.yes("Owner approved this exact request? Check now", True):
+        result = asyncio.run(client.finish())
+        if "computer_id" in result:
+            print("Device binding active. Agent and autostart readiness are separate checks.")
+            return result
+        if result.get("status") != "pending":
+            raise ValueError(
+                "Pairing "
+                + result.get("status", "unavailable")
+                + "; cancel or inspect the request before retrying"
+            )
+        print("Approval pending; no device access has been granted.")
+    raise ValueError("Approval pending; run acpgw connect again to resume this exact request")
+
+
+def _legacy_connection(prompts, state):
     old = state.get("connection", {})
     print("Dispatcher URL example: ws://YOUR_SERVER_IP:18766/acpgw/connect.")
     print("Use the enrolled computer ID and its privately copied key file.")
@@ -395,9 +493,9 @@ def _connection(prompts, state):
     if urlsplit(url).scheme == "ws":
         print(
             "WS sends enrollment keys and conversations without encryption. "
-            "Use only for the initial IP test."
+            "Pairing does not protect plaintext transport."
         )
-        if not prompts.yes("Use this unencrypted test connection?"):
+        if not prompts.yes("I accept unencrypted WS credentials and conversations?"):
             raise ValueError("Choose a WSS URL instead")
     connection = {
         "dispatcher_url": url,
@@ -418,6 +516,47 @@ def _connection(prompts, state):
             lambda v: normalize_pin(v) if v else None,
         )
     return connection
+
+
+def _pairing_owner_setup(prompts, cfg):
+    from acp_gateway.pairing import PairingService
+    from acp_gateway.storage.db import Store
+
+    data = cfg.settings.resolved_data_dir()
+    store = Store.open_in(data)
+    try:
+        pairing = PairingService(store, boundary=data / "pairing-boundary.json")
+        exists = store._conn.execute("SELECT 1 FROM pairing_owner").fetchone()
+        if exists:
+            owner = pairing.owner("local")
+        elif prompts.yes("Bootstrap connector pairing owner now?", True):
+            print(
+                "The Telegram allowlist is not owner authority. Explicitly choose "
+                "pairing approvers; empty keeps local CLI only."
+            )
+            ids = prompts.ask(
+                "Telegram pairing approver IDs (comma-separated; empty means local CLI only)",
+                "",
+                lambda value: _ids(value) if value else [],
+            )
+            if cfg.settings.telegram.enabled and any(
+                i not in cfg.settings.telegram.allowed_user_ids for i in ids
+            ):
+                raise ValueError("pairing approvers must also be on the Telegram allowlist")
+            owner = pairing.bootstrap(ids)
+        else:
+            print(
+                "Pairing owner not bootstrapped; use acpgw owner bootstrap locally "
+                "before connecting PCs."
+            )
+            return
+        print("Dispatcher owner ID: " + owner["owner_id"])
+        print(
+            "This public ID is not a password. Legacy rebind activation is separate "
+            "and never automatic."
+        )
+    finally:
+        store.close()
 
 
 def _settings_section(prompts, raw, key, model):
@@ -703,7 +842,11 @@ def _prepare_windows_connector(cfg, launch):
 def wizard(
     directory=None, *, config_file=None, env_file=None, prompts=None, section="all", role=None
 ):
-    if sys.platform == "win32" and _managed_running(config_file, "connector"):
+    if (
+        sys.platform == "win32"
+        and section != "connection"
+        and _managed_running(config_file, "connector")
+    ):
         raise ValueError(
             "Disable the connector task before editing settings: "
             "acpgw service --role connector disable"
@@ -825,7 +968,13 @@ def wizard(
                 raise ValueError("Choose loopback with nginx or provide TLS files")
     elif role == "connector" and section in {"all", "connection"}:
         raw.setdefault("connector", {})["enabled"] = False
-        state["connection"] = _connection(prompts, previous)
+        state["connection"] = _connection(
+            prompts,
+            previous,
+            pairing_path=config_file.parent
+            / ("." + config_file.name + ".pairing")
+            / "pending.json",
+        )
     if section in {"all", "agents"}:
         _profiles(prompts, raw, values, role, allow_empty=section == "agents")
     if (
@@ -835,7 +984,13 @@ def wizard(
     ):
         role = "connector"
         state["role"] = role
-        state["connection"] = _connection(prompts, previous)
+        state["connection"] = _connection(
+            prompts,
+            previous,
+            pairing_path=config_file.parent
+            / ("." + config_file.name + ".pairing")
+            / "pending.json",
+        )
         raw.setdefault("connector", {})["enabled"] = False
     if role != "connector" and section in {"all", "telegram"}:
         _telegram(prompts, raw, values)
@@ -938,6 +1093,51 @@ def wizard(
         print("Hermes configuration and its MCP token will be updated; other servers are kept.")
     if not prompts.yes("Save these settings?", True):
         print("Cancelled; configuration and services were not changed.")
+        return 0
+    if role == "connector" and section == "connection":
+        from acp_gateway.cli.connection_service import apply_connection_settings
+
+        if sys.platform == "win32":
+            _prepare_windows_connector(cfg, launch)
+        backup, managed = apply_connection_settings(
+            cfg, launch, files, originals, directory, prompts
+        )
+        print(
+            "Connection saved; installed service arguments refreshed."
+            if managed
+            else "Connection saved; no managed connector service is installed."
+        )
+        if (
+            not managed
+            and launch is not None
+            and prompts.yes("Install and start connector autostart now?", False)
+        ):
+            from acp_gateway.service import control, install
+
+            if sys.platform == "win32":
+                from acp_gateway.windows_service import SetupTask
+
+                SetupTask(cfg).apply(launch)
+            else:
+                install(cfg, launch=launch)
+                control("enable", role="connector")
+        if prompts.yes("Check agent and connection readiness now (no model calls)?", True):
+            check_connections(cfg, state)
+        print(
+            "Binding alone is not ready-agent acceptance. If an agent is missing/offline, "
+            "run acpgw agents configure/probe and finish its own authorization/backend "
+            "startup. No agent is installed silently."
+        )
+        print(
+            "Start: acpgw --config "
+            + str(config_file)
+            + " --env-file "
+            + str(env_file)
+            + (
+                " start. In Telegram select /agent, then explicitly /new; no active dialogue is "
+                "changed by pairing."
+            )
+        )
         return 0
     if active_roles:
         if "gateway" in active_roles:
@@ -1062,7 +1262,24 @@ def wizard(
                         _atomic(path, original)
                 control("start", role=running_role)
                 raise
+    if start_service or windows_task is not None:
+        from acp_gateway.update_bootstrap import ensure_updates
+
+        updater_role = "connector" if service_role == "connector" else "dispatcher"
+        try:
+            bootstrap = ensure_updates(cfg, role=updater_role)
+            print(
+                "Updater: "
+                + ("ready" if bootstrap.ready else bootstrap.reason)
+                + (f" ({bootstrap.policy})" if bootstrap.policy else "")
+            )
+        except (OSError, ValueError, subprocess.SubprocessError) as exc:
+            # Normal service setup already succeeded; updater provisioning is
+            # reported honestly and can be retried by the next application start.
+            print("Updater not ready: " + str(exc))
     if role == "server" and section == "all":
+        if settings.pairing.enabled:
+            _pairing_owner_setup(prompts, cfg)
         _enroll(prompts, cfg, directory)
     if role != "server" and section == "all":
         from types import SimpleNamespace
@@ -1094,6 +1311,17 @@ def wizard(
         "Check connections now (no model prompts or messages)?", True
     ):
         check_connections(cfg, state)
+    if role == "connector":
+        print(
+            "Binding alone is not ready-agent acceptance. Finish the agent's own "
+            "authorization/backend startup if unavailable; use acpgw agents "
+            "configure/probe. No agent is installed silently."
+        )
+        print(
+            "After the connector starts, select its /agent route in Telegram and "
+            "explicitly /new to create a dialogue. Pairing never switches an existing "
+            "active dialogue."
+        )
     command = ["acpgw", "--config", str(config_file), "--env-file", str(env_file), "start"]
     print("Run: " + shlex.join(command))
     if sys.platform == "win32" and role == "connector" and windows_task is None:

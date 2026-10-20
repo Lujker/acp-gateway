@@ -1,8 +1,11 @@
 """Compose the configured core and run one owner API per data directory."""
 
+import asyncio
+import contextlib
 import secrets
+import sqlite3
 import ssl
-from contextlib import contextmanager
+from contextlib import asynccontextmanager, contextmanager
 
 import uvicorn
 from filelock import FileLock, Timeout
@@ -14,8 +17,17 @@ from acp_gateway.channels.mcp import McpChannel
 from acp_gateway.config import AppConfig
 from acp_gateway.connectors.control import ControlDispatcher
 from acp_gateway.core import GatewayCore
-from acp_gateway.log import configure_logging
+from acp_gateway.log import configure_logging, get_logger
 from acp_gateway.storage import Store
+
+
+async def sweep_pairing(pairing, *, interval=30):
+    while True:
+        try:
+            pairing.cleanup()
+        except sqlite3.Error:
+            get_logger(__name__).warning("pairing expiry cleanup unavailable")
+        await asyncio.sleep(interval)
 
 
 def owner_token(config: AppConfig):
@@ -61,8 +73,24 @@ def configured_app(config: AppConfig):
     update_journal = None
     try:
         store = Store.open_in(data_dir)
+        from acp_gateway.pairing import PairingService
+
+        pairing = (
+            PairingService(
+                store,
+                boundary=data_dir / "pairing-boundary.json",
+                ttl=config.settings.pairing.request_ttl_seconds,
+                capacity=config.settings.pairing.max_requests,
+            )
+            if config.settings.pairing.enabled and config.settings.connector.enabled
+            else None
+        )
         dispatcher = (
-            ControlDispatcher(store.computers, connect_path=config.settings.connector.connect_path)
+            ControlDispatcher(
+                store.computers,
+                connect_path=config.settings.connector.connect_path,
+                pairing=pairing,
+            )
             if config.settings.connector.enabled
             else None
         )
@@ -109,14 +137,24 @@ def configured_app(config: AppConfig):
                     telegram_token.get_secret_value().encode(), other.get_secret_value().encode()
                 ):
                     raise ValueError("Telegram and other credentials must be different")
-            local_updates = LocalUpdates(config, role="dispatcher", target="dispatcher")
-            inventory = UpdateInventory(dispatcher, local_report=local_updates.report)
+            local_updates = LocalUpdates(
+                config,
+                role="dispatcher",
+                target="dispatcher",
+                idle_check=lambda: not any(core.maintenance_status().values()),
+            )
+            inventory = UpdateInventory(
+                dispatcher,
+                local_report=local_updates.report,
+                image_lookup=local_updates.version_allowed,
+            )
             update_journal = Journal(data_dir / "update-control.db")
             core.add_channel(
                 TelegramChannel(
                     config.settings.telegram,
                     telegram_token,
                     dispatcher=dispatcher,
+                    pairing=pairing,
                     update_inventory=inventory,
                     update_service=UpdateService(inventory, update_journal, local_updates),
                 )
@@ -133,10 +171,29 @@ def configured_app(config: AppConfig):
                 tls.minimum_version = ssl.TLSVersion.TLSv1_2
                 tls.load_cert_chain(listener.tls_cert, listener.tls_key)
 
-            def ingress():
-                return dispatcher.listen(listener.host, listener.port, tls=tls)
+            @asynccontextmanager
+            async def ingress():
+                async with dispatcher.listen(listener.host, listener.port, tls=tls) as server:
+                    sweeper = asyncio.create_task(sweep_pairing(pairing)) if pairing else None
+                    try:
+                        yield server
+                    finally:
+                        if sweeper:
+                            sweeper.cancel()
+                            with contextlib.suppress(asyncio.CancelledError):
+                                await sweeper
 
-        app = create_app(core, cli, token, mcp=mcp, ingress=ingress)
+        async def startup_updates():
+            from acp_gateway.update_bootstrap import ensure_updates
+
+            try:
+                result = await asyncio.to_thread(ensure_updates, config, role="dispatcher")
+                if not result.ready:
+                    get_logger(__name__).info("updater not ready", reason=result.reason)
+            except Exception:
+                get_logger(__name__).exception("updater provisioning failed")
+
+        app = create_app(core, cli, token, mcp=mcp, ingress=ingress, startup=startup_updates)
         app.state.dispatcher = dispatcher
         yield app
     finally:

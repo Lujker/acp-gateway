@@ -24,25 +24,30 @@ async def test_menu_versions_and_explicit_check_are_read_only(telegram):
     _, channel, session, server = telegram
     checks = []
     channel.update_inventory = UpdateInventory(
+        package_lookup=lambda version: True,
         local_report=report,
         release_lookup=lambda: checks.append(1) or Version("0.3.0"),
+        image_lookup=lambda version: None,
     )
     await feed(channel, 1, "/menu")
     menu = session.sent[-1]
     await click(channel, 2, menu, button(menu, "Обновления").callback_data)
     assert "Диспетчер: 0.2.0" in session.sent[-1].text
     assert "внешний updater" in session.sent[-1].text
-    assert "локального включения" in session.sent[-1].text
+    assert "локального включения" not in session.sent[-1].text
+    assert "автоматически" in session.sent[-1].text
     assert not checks
     card = session.sent[-1]
     await click(channel, 3, card, button(card, "Проверить версии").callback_data)
     assert "0.3.0" in session.sent[-1].text and checks == [1]
+    assert "не опубликован" in session.sent[-1].text
     assert not server.log
 
 
 async def test_unauthorized_chat_cannot_discover_versions_or_check_releases(telegram):
     _, channel, session, _ = telegram
     channel.update_inventory = UpdateInventory(
+        package_lookup=lambda version: True,
         local_report=lambda: pytest.fail("unauthorized discovery"),
         release_lookup=lambda: pytest.fail("unauthorized lookup"),
     )
@@ -67,7 +72,7 @@ async def test_release_error_and_old_offline_connectors_have_clear_status(telegr
         update_info=remote,
     )
     channel.update_inventory = UpdateInventory(
-        dispatcher, local_report=report, release_lookup=lookup
+        dispatcher, package_lookup=lambda version: True, local_report=report, release_lookup=lookup
     )
     await feed(channel, 1, "/updates_check")
     text = session.sent[-1].text
@@ -100,7 +105,9 @@ async def test_confirmed_update_buttons_are_private_and_admit_once(telegram, tmp
     )
     journal = Journal(tmp_path / "control.db")
     channel.update_inventory = UpdateInventory(
-        local_report=local.report, release_lookup=lambda: Version("0.3.0")
+        package_lookup=lambda version: True,
+        local_report=local.report,
+        release_lookup=lambda: Version("0.3.0"),
     )
     channel.update_service = UpdateService(channel.update_inventory, journal, local)
     try:
@@ -110,6 +117,8 @@ async def test_confirmed_update_buttons_are_private_and_admit_once(telegram, tmp
         confirmation = session.sent[-1]
         confirm = button(confirmation, "Подтвердить").callback_data
         assert "0.2.0 → 0.3.0" in confirmation.text
+        assert "продолжение диалога" in confirmation.text
+        assert "новая явная команда" in confirmation.text
         assert not spool.unfinished()
         await click(channel, 3, confirmation, confirm, user=OTHER)
         assert not spool.unfinished()

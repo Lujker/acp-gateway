@@ -34,7 +34,7 @@ def operations(tmp_path, monkeypatch):
     spool.set_worker(
         {"published": time.time(), "role": "dispatcher", "target": "dispatcher", "backend": "uv"}
     )
-    inventory = UpdateInventory(local_report=local.report)
+    inventory = UpdateInventory(package_lookup=lambda version: True, local_report=local.report)
     inventory.latest = "0.3.0"
     journal = Journal(tmp_path / "control.db")
     service = UpdateService(inventory, journal, local)
@@ -192,6 +192,7 @@ async def test_docker_version_must_be_prepared_and_local_policy_rechecked(operat
         "acp_gateway.update_service.installation_report",
         lambda **kw: info().model_copy(update={"manager": "docker"}),
     )
+    service.inventory.image_lookup = lambda version: "ghcr.io/lujker/acp-gateway@sha256:" + "a" * 64
     pulse = {
         "published": time.time(),
         "role": "dispatcher",
@@ -209,4 +210,60 @@ async def test_docker_version_must_be_prepared_and_local_policy_rechecked(operat
     spool.set_worker(pulse)
     result = await service.confirm("owner", row["id"])
     assert result["status"] == "failed" and result["reason"] == "version_not_allowed"
+    assert not spool.unfinished()
+
+
+async def test_unpublished_docker_version_cannot_create_confirmation(operations):
+    service, spool, _ = operations
+    service.local.report = lambda: info().model_copy(
+        update={"manager": "docker", "can_update": True}
+    )
+    service.local.version_allowed = lambda version: True
+    service.inventory.image_lookup = lambda version: None
+    with pytest.raises(GatewayError, match="артефакт"):
+        await service.prepare("owner", "dispatcher", "dispatcher")
+    assert not service.journal.recent(actor="owner")
+    assert not spool.unfinished()
+
+
+def test_official_worker_does_not_need_per_release_allowlist(operations, monkeypatch):
+    from acp_gateway import update_service
+
+    service, spool, _ = operations
+    spool.set_worker(
+        {
+            "published": time.time(),
+            "role": "dispatcher",
+            "target": "dispatcher",
+            "backend": "docker",
+            "versions": [],
+            "delivery": "official",
+        }
+    )
+    monkeypatch.setattr(
+        update_service,
+        "official_image",
+        lambda version: "ghcr.io/lujker/acp-gateway@sha256:" + "a" * 64,
+        raising=False,
+    )
+    assert service.local.version_allowed("0.3.0")
+
+
+def test_busy_admission_is_persisted_not_a_deferred_queue(operations):
+    _service, spool, cfg = operations
+    local = LocalUpdates(cfg, role="dispatcher", target="dispatcher", idle_check=lambda: False)
+    request = UpdateRequest(
+        epoch=uuid4(),
+        request=uuid4(),
+        operation=uuid4(),
+        action="execute",
+        actor="owner",
+        target_version="0.3.0",
+        current_version="0.2.0",
+        expires=time.time() + 60,
+    )
+    assert local.request(request).reason == "busy"
+    assert not spool.unfinished()
+    local.idle_check = lambda: True
+    assert local.request(request).status == "failed"
     assert not spool.unfinished()

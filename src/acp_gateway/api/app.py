@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
 from contextlib import AsyncExitStack, asynccontextmanager
 from typing import Annotated
@@ -61,13 +62,20 @@ def _sse(kind: str, data) -> str:
 
 
 def create_app(
-    core: GatewayCore, cli: CliChannel, token: SecretStr, *, mcp=None, ingress=None
+    core: GatewayCore,
+    cli: CliChannel,
+    token: SecretStr,
+    *,
+    mcp=None,
+    ingress=None,
+    startup=None,
 ) -> FastAPI:
     if not token.get_secret_value():
         raise ValueError("the owner API token is required")
 
     @asynccontextmanager
     async def lifespan(app):
+        background = None
         try:
             async with AsyncExitStack() as stack:
                 if mcp is not None:
@@ -75,8 +83,16 @@ def create_app(
                 await core.start()
                 if ingress is not None:
                     await stack.enter_async_context(ingress())
+                if startup is not None:
+                    # Never delay health or owner control on provisioning: the
+                    # selected updater may still be finishing an application update.
+                    background = asyncio.create_task(startup())
                 yield
         finally:
+            if background is not None:
+                background.cancel()
+                with contextlib.suppress(asyncio.CancelledError):
+                    await background
             await core.close()
 
     app = FastAPI(lifespan=lifespan, docs_url=None, redoc_url=None, openapi_url=None)

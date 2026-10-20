@@ -54,6 +54,7 @@ def test_init_policy_records_exact_paths_and_no_secrets_or_start(provision, tmp_
         == 0
     )
     value = json.loads(policy.read_text())
+    assert value["auto_refresh"] is True
     assert value["target"] == "home" and value["role"] == "connector"
     assert value["config"] == str(config) and value["env_file"] == str(env)
     assert value["result_dir"] == str(tmp_path / "platform-data/updates/installation")

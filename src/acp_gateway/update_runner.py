@@ -20,21 +20,41 @@ def start_updater(policy):
         ensure_private_directory(Path(settings["spool_dir"]))
     directory = Path(tempfile.mkdtemp(prefix="acpgw-updater-"))
     copy_runtime(directory)
-    os.execv(  # noqa: S606 — copied stdlib helper and base interpreter, no shell
+    os.execv(  # noqa: S606 — copied helper and base interpreter
         sys._base_executable, [sys._base_executable, str(directory / "worker.py"), str(policy)]
     )
     return 0
 
 
-def copy_runtime(directory):
-    from acp_gateway import maintenance_worker, remote_update_worker, update_journal, windows_acl
+def runtime_sources():
+    from acp_gateway import (
+        maintenance_worker,
+        remote_update_worker,
+        update_delivery,
+        update_journal,
+        windows_acl,
+    )
 
-    for source, name in (
+    return (
         (remote_update_worker, "worker.py"),
         (update_journal, "update_journal.py"),
         (maintenance_worker, "update_lock.py"),
         (windows_acl, "windows_acl.py"),
-    ):
+        (update_delivery, "update_delivery.py"),
+    )
+
+
+def runtime_current(directory):
+    return all(
+        (directory / name).is_file()
+        and not (directory / name).is_symlink()
+        and (directory / name).read_bytes() == Path(source.__file__).read_bytes()
+        for source, name in runtime_sources()
+    )
+
+
+def copy_runtime(directory):
+    for source, name in runtime_sources():
         target = directory / name
         target.write_bytes(Path(source.__file__).read_bytes())
         target.chmod(0o600)
@@ -64,6 +84,7 @@ def init_policy(policy, config, env_file, *, role):
     value = {
         "version": 1,
         "backend": "uv",
+        "auto_refresh": True,
         "role": role,
         "target": target,
         "spool_dir": str(
