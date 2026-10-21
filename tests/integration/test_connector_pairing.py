@@ -242,10 +242,9 @@ async def test_wss_uses_normal_ca_and_hostname_validation_no_pin_or_downgrade(
 ):
     import ssl
 
-    from tests.fakes.certs import make_cert
-
     from acp_gateway.connectors.pairing_client import PairingClient
     from acp_gateway.pairing import PairingService
+    from fakes.certs import make_cert
 
     cert, key = make_cert(tmp_path, ca=True, hostname="localhost")
     tls = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
