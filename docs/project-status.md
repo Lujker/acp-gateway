@@ -3,14 +3,14 @@
 [Documentation](README.md) · [Roadmap and current queue](../road-map.md)
 
 This is a short orientation for readers, not a replacement for the roadmap
-or acceptance journals. Planning snapshot: **2026-10-20**; source/release candidate is **0.2.2**.
+or acceptance journals. Planning snapshot: **2026-10-21**; stable release and source are **0.2.2**.
 
 ## Versions
 
 | Track | State |
 | --- | --- |
-| Release candidate `0.2.2` | Connector-first pairing, out-of-box updater, CLI artifact gate and recovery fixes; automated suite 1734 passed/38 skipped; [release notes](releases/0.2.2.md), [upgrade](setup/update-0.2.2.ru.md) |
-| Stable `0.2.1` | Published GitHub/PyPI/GHCR; Telegram updates, independent updater lifecycle, watcher/env fixes, context/recovery controls; [publication](releases/0.2.1-publication.md), [upgrade](setup/update-0.2.1.ru.md) |
+| Stable `0.2.2` | Connector-first pairing, out-of-box updater, CLI artifact gate and recovery fixes; published GitHub/PyPI/GHCR; automated suite 1734 passed/38 skipped; [publication](releases/0.2.2-publication.md), [release notes](releases/0.2.2.md), [upgrade](setup/update-0.2.2.ru.md) |
+| Previous stable `0.2.1` | Telegram updates, independent updater lifecycle, watcher/env fixes, context/recovery controls; [publication](releases/0.2.1-publication.md), [upgrade](setup/update-0.2.1.ru.md) |
 | Previous stable `0.2.0` | Install through uv/PyPI; independent setup sections, Telegram computer/job dashboards, controls and approvals, dialogue execution modes, managed update with service recovery, Docker dispatcher behind a host reverse proxy |
 | Previous candidates `0.2.0rc1`–`0.2.0rc8` | Published prereleases; upgrade with `acpgw update --stable --with-services` |
 
