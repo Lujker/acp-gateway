@@ -7,6 +7,7 @@ import os
 import re
 from pathlib import Path
 
+from acp_gateway.cli.setup_asyncio import run as run_setup
 from acp_gateway.discovery.hermes import (
     ROLES,
     HermesDiscoveryError,
@@ -75,22 +76,24 @@ def run(args) -> int:
                 if not secret:
                     raise ValueError("the selected secret environment variable is empty")
             rows = [
-                asyncio.run(
+                run_setup(
                     probe_goose(
                         args.url,
                         secret=secret,
                         fingerprint=args.tls_fingerprint,
                         timeout=args.timeout,
-                    )
+                    ),
+                    operation="goose-probe",
                 )
             ]
         else:
             if args.url or args.secret_env or args.tls_fingerprint:
                 raise ValueError("Goose endpoint options cannot be used with Hermes")
-            rows = asyncio.run(
+            rows = run_setup(
                 probe_hermes(
                     args.lock_dir or default_lock_dir(), role=args.role, timeout=args.timeout
-                )
+                ),
+                operation="hermes-probe",
             )
     except ValueError as exc:
         print(f"error: {exc}")

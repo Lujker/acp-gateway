@@ -22,6 +22,7 @@ from dotenv import dotenv_values
 from acp_gateway.agents import AgentClient
 from acp_gateway.agents.errors import AuthenticationFailed, TLSFingerprintMismatch
 from acp_gateway.cli.client import api_url
+from acp_gateway.cli.setup_asyncio import run as run_setup
 from acp_gateway.cli.wizard import STATE, _snapshot, _state, _yaml
 from acp_gateway.config import find_config_file, is_loopback_host, load_config
 from acp_gateway.connectors.control import normalize_pin, read_credential, validate_url
@@ -362,7 +363,7 @@ def collect(config_file=None, env_file=None, *, live=False, timeout=5):
                 )
         if live:
             try:
-                asyncio.run(_acp_check(cfg, profile, timeout))
+                run_setup(_acp_check(cfg, profile, timeout), operation="doctor-acp")
                 add(
                     "agent:" + profile.address,
                     "ok",

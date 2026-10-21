@@ -1,4 +1,5 @@
 import secrets
+from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
 import pytest
@@ -44,7 +45,7 @@ async def test_telegram_approver_is_explicit_not_entire_allowlist(tmp_path):
     channel = TelegramChannel(
         TelegramSettings(allowed_user_ids=[123, 999]), SecretStr("123:fake"), pairing=pairing
     )
-    channel._send = AsyncMock()
+    channel._send = AsyncMock(return_value=SimpleNamespace(message_id=1))
     assert await channel._pairing_command(123, "/pairing", "")
     assert req["verification"] in channel._send.call_args.args[1]
     assert await channel._pairing_command(

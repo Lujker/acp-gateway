@@ -421,6 +421,7 @@ async def test_command_menu_is_registered_at_start_without_sending_messages(tele
 
 
 async def test_menu_failure_retries_and_cancellation_is_not_swallowed(monkeypatch):
+    from types import SimpleNamespace
     from unittest.mock import AsyncMock
 
     from acp_gateway.channels import telegram as module
@@ -430,7 +431,11 @@ async def test_menu_failure_retries_and_cancellation_is_not_swallowed(monkeypatc
     register = AsyncMock(side_effect=[RuntimeError("offline"), None])
     pause = AsyncMock(side_effect=[None, asyncio.CancelledError()])
     monkeypatch.setattr(channel, "_register_commands", register)
-    monkeypatch.setattr(module.asyncio, "sleep", pause)
+    # Patch this module only: mutating asyncio.sleep also intercepts background
+    # mock-agent server threads and consumes this test's finite side effects.
+    local_asyncio = SimpleNamespace(**vars(asyncio))
+    local_asyncio.sleep = pause
+    monkeypatch.setattr(module, "asyncio", local_asyncio)
     try:
         with pytest.raises(asyncio.CancelledError):
             await channel._menus()
