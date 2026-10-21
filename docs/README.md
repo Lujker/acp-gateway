@@ -18,6 +18,7 @@ Historical documents are not current installation instructions.
 | Run the dispatcher in Docker behind the host's reverse proxy, or move a native dispatcher into Docker | [Docker dispatcher (Russian)](setup/vps-docker.ru.md) |
 | Configure autostart | [Services](setup/service.md) |
 | Upgrade Docker dispatcher and uv connectors to 0.2.2 | [Upgrade instructions (Russian)](setup/update-0.2.2.ru.md) |
+| Release notes and publication evidence 0.2.2 | [Release notes](releases/0.2.2.md), [publication](releases/0.2.2-publication.md) |
 | Updates out of the box (working source) | [Normal setup and first start](setup/updates-out-of-box.md) |
 | Updates out of the box (0.2.2): dispatcher and connectors | [Normal setup and first start](setup/updates-out-of-box.md) |
 | Telegram updates in the 0.2.1 manual opt-in path | [Independent updater setup](setup/remote-updates.md) |
