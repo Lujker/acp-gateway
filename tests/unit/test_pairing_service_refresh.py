@@ -68,10 +68,9 @@ def test_service_arguments_refresh_preserves_selected_paths_and_restores_on_fail
 
 
 def test_connection_section_calls_coordinator(tmp_path, monkeypatch, capsys):
-    from tests.fakes.setup_prompts import save_answers
-
     from acp_gateway.cli import connection_service
     from acp_gateway.cli import wizard as w
+    from fakes.setup_prompts import save_answers
 
     config = tmp_path / "config.yaml"
     config.write_text("agents: []\n")

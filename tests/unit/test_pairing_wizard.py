@@ -3,10 +3,10 @@ import secrets
 from unittest.mock import AsyncMock
 
 import pytest
-from tests.fakes.setup_prompts import Answers
 
 from acp_gateway.cli import wizard as w
 from acp_gateway.connectors.pairing_client import PairingClient
+from fakes.setup_prompts import Answers
 
 
 def test_connector_connection_ordinary_flow_never_asks_for_key_or_yaml(
@@ -85,10 +85,9 @@ def test_connect_on_fresh_pc_opens_full_connector_setup(tmp_path, monkeypatch):
 
 
 def test_server_setup_bootstraps_only_explicit_pairing_approvers(tmp_path, monkeypatch, capsys):
-    from tests.fakes.setup_prompts import save_answers
-
     from acp_gateway.pairing import PairingService
     from acp_gateway.storage.db import Store
+    from fakes.setup_prompts import save_answers
 
     monkeypatch.setattr(w, "_managed_running", lambda *a: False)
     monkeypatch.setattr(w, "_check_ports", lambda *a: None)
@@ -116,9 +115,8 @@ def test_server_setup_bootstraps_only_explicit_pairing_approvers(tmp_path, monke
 
 
 def test_unacknowledged_issuance_is_resumed_instead_of_replaced(tmp_path, monkeypatch):
-    from tests.fakes.setup_prompts import Answers
-
     from acp_gateway.cli import wizard as w
+    from fakes.setup_prompts import Answers
 
     path = tmp_path / ".config.yaml.pairing"
     PairingClient(path).save(
