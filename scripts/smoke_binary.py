@@ -136,7 +136,7 @@ def main():
         run("computers", "revoke", "smoke")
         revoked = json.loads(run("computers", "list"))
         require(
-            not revoked[0]["enabled"] and revoked[0]["generation"] == 2,
+            not revoked[0]["enabled"] and revoked[0]["generation"] == 3,
             "computer revocation failed",
         )
         tokens = dotenv_values(env_file)
