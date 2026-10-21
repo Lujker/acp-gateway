@@ -37,6 +37,7 @@ from acp_gateway.channels.telegram_context import ContextCard
 from acp_gateway.channels.telegram_dashboard import Dashboard
 from acp_gateway.channels.telegram_errors import error_card
 from acp_gateway.channels.telegram_format import FORMAT_VERSION, answer_chunks, plain_html
+from acp_gateway.channels.telegram_pairing import PairingCards
 from acp_gateway.channels.telegram_shortcuts import Shortcuts
 from acp_gateway.channels.telegram_ui import PANEL_CONTEXT, Panels
 from acp_gateway.channels.telegram_updates import Updates
@@ -171,7 +172,7 @@ class _Updates(BaseMiddleware):
         return await handler(event, data)
 
 
-class TelegramChannel(Updates, Shortcuts, ContextCard, WorkCards, Dashboard, Channel):
+class TelegramChannel(PairingCards, Updates, Shortcuts, ContextCard, WorkCards, Dashboard, Channel):
     name = "telegram"
     can_approve = True
 
@@ -264,6 +265,10 @@ class TelegramChannel(Updates, Shortcuts, ContextCard, WorkCards, Dashboard, Cha
             asyncio.create_task(self._events()),
             asyncio.create_task(self._deliver()),
         ]
+        if self.pairing is not None:
+            self._tasks.append(
+                asyncio.create_task(self._pairing_notifications(), name="telegram-pairing")
+            )
         if self.settings.status_enabled:
             self._tasks.append(asyncio.create_task(self._update_statuses()))
         if self.update_service is not None:
@@ -940,23 +945,11 @@ class TelegramChannel(Updates, Shortcuts, ContextCard, WorkCards, Dashboard, Cha
                 text = "Owner ID: " + owner["owner_id"]
             elif command == "/pairing":
                 rows = self.pairing.pending(actor)
-                lines = [
-                    "Compare this exact request and target with the applicant PC. Never "
-                    "approve an unsolicited request."
-                ]
-                for row in rows[:10]:
-                    lines.append(
-                        f"Request: {row['request_id']}\n"
-                        f"PC: {row['name']}\n"
-                        f"Target: {row['target'] or 'NEW COMPUTER'}\n"
-                        f"Compare: {row['verification']}\n"
-                        f"Expires: {row['expires']}\n"
-                        f"/pair_approve {row['request_id']} {row['verification']}\n"
-                        f"/pair_deny {row['request_id']} {row['verification']}"
-                    )
-                if not rows:
-                    lines.append("No pending requests.")
-                text = "\n\n".join(lines)
+                if rows:
+                    for row in rows[:10]:
+                        await self._send_pairing_card(chat, row["request_id"], explicit=True)
+                    return True
+                text = "No pending requests."
             else:
                 parts = argument.split()
                 if len(parts) != 2:
@@ -971,9 +964,7 @@ class TelegramChannel(Updates, Shortcuts, ContextCard, WorkCards, Dashboard, Cha
                 )
         except ValueError as exc:
             text = str(exc)
-        from html import escape
-
-        await self._send(chat, escape(text))
+        await self._send(chat, text)
         return True
 
     async def _command(self, chat: int, text: str):
@@ -1453,6 +1444,9 @@ class TelegramChannel(Updates, Shortcuts, ContextCard, WorkCards, Dashboard, Cha
     async def _callback(self, query: CallbackQuery):
         message = query.message
         if not isinstance(message, Message) or not self._authorized(query.from_user, message.chat):
+            return
+        if (query.data or "").startswith("p:"):
+            await self._pairing_callback(query)
             return
         if (query.data or "").startswith("u:"):
             await self._ui_callback(query)

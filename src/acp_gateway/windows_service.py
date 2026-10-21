@@ -271,12 +271,48 @@ try {
         if ($task.State -eq 4) {
             Assert-Private $meta.controlDirectory $true
             $runtime = [IO.Path]::Combine($meta.controlDirectory, 'connector-control.json')
-            Assert-Private $runtime $false
-            if ((Get-Item -LiteralPath $runtime).Length -gt 1024) { throw 'Invalid control record' }
-            $record = [IO.File]::ReadAllText($runtime) | ConvertFrom-Json
-            if ($record.version -ne 1 -or $record.controlId -cne $meta.controlId -or
-                $record.instance -cnotmatch '^[a-f0-9]{32}$') { throw 'Invalid task instance' }
-            $instance = $record.instance
+            # Scheduler reports Running before Python has published its private IPC.
+            # Wait only for absence, never for invalid/untrusted records to become valid.
+            $deadline = [DateTime]::UtcNow.AddSeconds(20)
+            $maintenanceXml = $task.Xml
+            while ($null -eq $instance) {
+                $task = $folder.GetTask($name)
+                if ($task.Xml -cne $maintenanceXml -or $task.State -ne 4 -or
+                    $task.GetInstances(0).Count -gt 1) {
+                    throw 'Connector task changed during startup; maintenance refused; retry later'
+                }
+                if (Test-Path -LiteralPath $runtime) {
+                    try {
+                        Assert-Private $runtime $false
+                        if ((Get-Item -LiteralPath $runtime).Length -gt 1024) {
+                            throw 'Invalid control record'
+                        }
+                        $record = [IO.File]::ReadAllText($runtime) | ConvertFrom-Json
+                        if ($null -eq $record) { throw 'Invalid control record' }
+                    } catch {
+                        # Publication/cleanup can race the existence check, as in stop.
+                        if (Test-Path -LiteralPath $runtime) { throw }
+                        $record = $null
+                    }
+                    if ($null -ne $record) {
+                        if ($record.version -ne 1 -or $record.controlId -cne $meta.controlId -or
+                            $record.instance -cnotmatch '^[a-f0-9]{32}$') {
+                            throw 'Invalid task instance'
+                        }
+                        $instance = $record.instance
+                        break
+                    }
+                }
+                if ([DateTime]::UtcNow -ge $deadline) {
+                    throw ('Connector startup did not publish connector-control.json; ' +
+                        'inspect connector logs and retry maintenance')
+                }
+                Start-Sleep -Milliseconds 200
+            }
+            if ($task.Xml -cne $maintenanceXml -or $task.State -ne 4 -or
+                $task.GetInstances(0).Count -ne 1) {
+                throw 'Connector task changed during startup; maintenance refused; retry later'
+            }
         }
         @{installed=$true; enabled=$task.Enabled; state=[int]$task.State;
           definition=$normalized; controlId=$meta.controlId;
@@ -296,7 +332,8 @@ try {
           stopMode=$stopMode} | ConvertTo-Json -Compress
     }
 } catch {
-    [Console]::Error.WriteLine($_.Exception.Message)
+    # Keep errors separate from PowerShell's host-generated CLIXML on stderr.
+    @{error=$_.Exception.Message} | ConvertTo-Json -Compress
     exit 1
 }
 """
@@ -323,11 +360,21 @@ def _request(action, **values):
             "Task Scheduler operation timed out; inspect the task before retrying"
         ) from None
     if result.returncode:
-        # PowerShell can echo source and dynamic values in its error record.
-        # Our script writes only the exception message, still redact before display.
+        # Host progress/error records may be serialized as CLIXML even when
+        # the script catches the exception. Prefer our structured message; never
+        # expose raw host records (which can include source and dynamic values).
         from acp_gateway.log import redact_text
 
-        raise ValueError("Task Scheduler: " + redact_text(result.stderr.strip()))
+        message = result.stderr.strip()
+        if not message or "CLIXML" in message or "<Objs" in message:
+            message = "operation failed; inspect connector logs and Task Scheduler before retrying"
+        try:
+            failure = json.loads(result.stdout)
+            if isinstance(failure, dict) and isinstance(failure.get("error"), str):
+                message = failure["error"] or message
+        except (ValueError, TypeError):
+            pass
+        raise ValueError("Task Scheduler: " + redact_text(message))
     try:
         data = json.loads(result.stdout)
         if not isinstance(data, dict) or not isinstance(data.get("installed"), bool):

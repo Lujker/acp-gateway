@@ -1,16 +1,25 @@
 """Read-only Hermes selection shared by setup and doctor. No agent mutations."""
 
-import asyncio
 import os
 import platform
 from pathlib import Path
 
 from acp_gateway.cli.probe import probe_hermes
+from acp_gateway.cli.setup_asyncio import run as run_setup
 from acp_gateway.discovery.hermes import ROLES, default_lock_dir
 
 
 def inspect(directory: Path, *, role=None, profile=None, timeout=5):
-    rows = asyncio.run(probe_hermes(directory, role=role, timeout=timeout))
+    """Synchronous entry for setup selection and doctor."""
+    return run_setup(
+        inspect_async(directory, role=role, profile=profile, timeout=timeout),
+        operation="hermes-inspect",
+    )
+
+
+async def inspect_async(directory: Path, *, role=None, profile=None, timeout=5):
+    """Inspect on the caller's loop, including configured-profile validation."""
+    rows = await probe_hermes(directory, role=role, timeout=timeout)
     if profile is not None:
         for row in rows:
             if row["status"] == "ready" and profile not in row["profiles"]:

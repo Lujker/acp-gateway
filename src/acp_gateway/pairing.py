@@ -192,7 +192,7 @@ class PairingService:
                 return self._public(row)
             if row["state"] != "pending":
                 raise ValueError("request already resolved")
-            if row["target"]:
+            if approve and row["target"]:
                 self._target_owner(row)
                 target = self.conn.execute(
                     "SELECT generation FROM computers WHERE computer_id=?", (row["target"],)
@@ -204,6 +204,56 @@ class PairingService:
             )
             self._audit(request_id, state, actor)
             return {**self._public(row), "state": state}
+
+    def claim_notification(self, actor, namespace, request_id, *, explicit=False):
+        """Reserve a card before network I/O; ambiguous sends are never auto-replayed."""
+        owner = self.owner(actor)
+        if not actor.startswith("telegram:"):
+            raise ValueError("Telegram owner authorization required")
+        with self._transaction():
+            row = self._row(request_id)
+            if row["owner_id"] != owner["owner_id"] or row["state"] != "pending":
+                raise ValueError("pairing request unavailable or resolved")
+            self.conn.execute(
+                "INSERT OR IGNORE INTO pairing_notifications "
+                "(request_id,namespace,actor,state,retry_at) VALUES (?,?,?,'pending',0)",
+                (request_id, namespace, actor),
+            )
+            token = secrets.token_hex(16)
+            cursor = self.conn.execute(
+                "UPDATE pairing_notifications SET state='unknown',token=?,message_id=NULL "
+                "WHERE request_id=? AND namespace=? AND actor=? "
+                "AND (? OR (state='pending' AND retry_at<=?))",
+                (token, request_id, namespace, actor, explicit, self.clock()),
+            )
+            return {**self._public(row), "token": token} if cursor.rowcount else None
+
+    def settle_notification(
+        self, actor, namespace, token, state, *, message_id=None, retry_after=0
+    ):
+        self.owner(actor)
+        if state not in {"delivered", "pending", "failed", "unknown"}:
+            raise ValueError("invalid notification state")
+        self.conn.execute(
+            "UPDATE pairing_notifications SET state=?,message_id=?,retry_at=? "
+            "WHERE token=? AND namespace=? AND actor=? AND state='unknown'",
+            (state, message_id, self.clock() + max(1, retry_after), token, namespace, actor),
+        )
+
+    def decide_notification(self, actor, namespace, token, message_id, *, approve):
+        self.owner(actor)
+        row = self.conn.execute(
+            "SELECT r.request_id,r.verification FROM pairing_notifications n "
+            "JOIN pairing_requests r ON r.request_id=n.request_id "
+            "WHERE n.actor=? AND n.namespace=? AND n.token=? AND n.message_id=? "
+            "AND n.state='delivered'",
+            (actor, namespace, token, message_id),
+        ).fetchone()
+        if row is None:
+            raise ValueError("Pairing card is stale; open /pairing to compare again.")
+        # The token identifies immutable request metadata, never a mutable UI selection.
+        # decide() serializes decisions and checks owner, expiry and target generation.
+        return self.decide(actor, row["request_id"], row["verification"], approve=approve)
 
     def _bound(self, request_id, device_code, *, allow_terminal=False):
         digest = self._applicant(device_code)

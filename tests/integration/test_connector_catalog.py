@@ -126,7 +126,7 @@ async def test_catalog_without_server_profiles_survives_restart(relay, tmp_path,
         core = restored.state.core
         assert "work/goose" in core.agents
         assert not core.agent("work/goose").connected
-        assert core.store.schema_version == 9
+        assert core.store.schema_version == 10
         assert core.store.sessions(Conversation("cli", "default", "work/goose"))
         assert len(await core.channels["mcp"].server.list_tools()) == 6
         async with restored.router.lifespan_context(restored):

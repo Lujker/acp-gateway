@@ -24,6 +24,7 @@ from dotenv import dotenv_values
 from pydantic import ValidationError
 
 from acp_gateway import paths
+from acp_gateway.cli.setup_asyncio import run as run_setup
 from acp_gateway.cli.setup_sections import SECTIONS
 from acp_gateway.config import (
     AgentProfile,
@@ -425,7 +426,7 @@ def _connection(prompts, state, *, pairing_path=None):
             client.reset(confirm=True)
             saved = {}
         elif action == "cancel":
-            asyncio.run(client.cancel())
+            run_setup(client.cancel(), operation="enrollment-cancel")
             raise ValueError("Pairing cancelled; rerun connect to create another request")
     old = state.get("connection", {})
     url = prompts.ask(
@@ -455,7 +456,10 @@ def _connection(prompts, state, *, pairing_path=None):
             "The owner must confirm this exact target."
         )
     print("Enrollment is durable; cancelling later setup does not undo an owner-approved binding.")
-    request = asyncio.run(client.begin(url, owner, name, target=target, allow_ws=allow_ws))
+    request = run_setup(
+        client.begin(url, owner, name, target=target, allow_ws=allow_ws),
+        operation="enrollment-begin",
+    )
     print(
         f"Request: {request['request_id']}\n"
         f"Compare: {request['verification']}\n"
@@ -467,7 +471,7 @@ def _connection(prompts, state, *, pairing_path=None):
         "Compare this exact request before approving."
     )
     while prompts.yes("Owner approved this exact request? Check now", True):
-        result = asyncio.run(client.finish())
+        result = run_setup(client.finish(), operation="enrollment-finish")
         if "computer_id" in result:
             print("Device binding active. Agent and autostart readiness are separate checks.")
             return result
@@ -709,12 +713,14 @@ async def _check_agents(cfg):
             print(f"{profile.address}: routed agent; check after its computer connects")
             continue
         if profile.backend == "hermes":
-            from acp_gateway.cli.hermes_setup import inspect
+            from acp_gateway.cli.hermes_setup import inspect_async
             from acp_gateway.discovery.hermes import default_lock_dir
 
             attach = profile.hermes
-            row = inspect(
-                attach.lock_dir or default_lock_dir(), role=attach.role, profile=attach.profile
+            row = (
+                await inspect_async(
+                    attach.lock_dir or default_lock_dir(), role=attach.role, profile=attach.profile
+                )
             )[0]
             print(
                 f"{profile.address}: Hermes {row['status']} "
@@ -737,7 +743,7 @@ async def _check_agents(cfg):
 
 
 def check_connections(cfg, state):
-    asyncio.run(_check_agents(cfg))
+    run_setup(_check_agents(cfg), operation="checks")
     if state["role"] == "server":
         print("Remote agents are discovered automatically; inspect acpgw computers status.")
     if state["role"] == "connector" and not state.get("connection"):
