@@ -1,6 +1,7 @@
 """Controlled file-IPC failure contracts, never native OS manager operations."""
 
 import asyncio
+import json
 import threading
 from types import FunctionType, SimpleNamespace
 
@@ -161,3 +162,147 @@ async def test_acl_publication_barrier_documents_uncertain_timeout(
                 await asyncio.gather(client_job, return_exceptions=True)
             task.cancel()
             await asyncio.gather(task, return_exceptions=True)
+
+
+@pytest.fixture
+async def ack_watcher(tmp_path, monkeypatch, controller):
+    """Step real file IPC one completed watcher iteration at a time."""
+    clock = SimpleNamespace(value=1000.0)
+    counts = dict.fromkeys(maintenance.FIELDS, 0)
+    controller.managers["hermes"] = SimpleNamespace(
+        maintenance_status=lambda: counts,
+        sessions=lambda: [],
+        journal=lambda handle: {"handle": handle},
+        retire=lambda handle: {"retired": handle},
+    )
+    applies, replies = [], []
+    state = SimpleNamespace(fail=True, clock=clock, applies=applies, replies=replies)
+    atomic = maintenance._atomic
+    apply, session_control = controller.apply, controller.session_control
+    ticks, proceed = asyncio.Queue(), asyncio.Semaphore(0)
+
+    def record_apply(*args, **kwargs):
+        applies.append((args, kwargs))
+        return apply(*args, **kwargs)
+
+    def record_session(*args, **kwargs):
+        applies.append((args, kwargs))
+        return session_control(*args, **kwargs)
+
+    def response_writer(path, content):
+        if path.name == maintenance.RESPONSE:
+            replies.append(json.loads(content))
+            if state.fail:
+                raise PermissionError("injected ACK failure")
+        return atomic(path, content)
+
+    async def tick(_interval):
+        ticks.put_nowait(None)
+        await proceed.acquire()
+
+    async def cycle(request):
+        atomic(tmp_path / maintenance.REQUEST, json.dumps(request).encode())
+        proceed.release()
+        async with asyncio.timeout(3):
+            await ticks.get()
+
+    monkeypatch.setattr(controller, "apply", record_apply)
+    monkeypatch.setattr(controller, "session_control", record_session)
+    monkeypatch.setattr(maintenance, "_atomic", response_writer)
+    monkeypatch.setattr(maintenance, "time", SimpleNamespace(time=lambda: clock.value))
+    monkeypatch.setattr(
+        maintenance, "asyncio", SimpleNamespace(**(vars(maintenance.asyncio) | {"sleep": tick}))
+    )
+    task = asyncio.create_task(maintenance.watch(tmp_path, "a" * 32, controller))
+    try:
+        async with asyncio.timeout(3):
+            await ticks.get()
+        state.cycle = cycle
+        state.request = {
+            "version": 1,
+            "instance": "a" * 32,
+            "request": "1" * 32,
+            "operation": "prepare",
+            "expires": 1010.0,
+        }
+        yield state
+    finally:
+        task.cancel()
+        await asyncio.gather(task, return_exceptions=True)
+
+
+@pytest.mark.parametrize(
+    ("operation", "change"),
+    [
+        ("prepare", {"operation": "resume"}),
+        ("prepare", {"token": "2" * 32}),
+        ("prepare", {"force": True}),
+        ("prepare", {"restart_uncertain": True}),
+        ("journal", {"agent": "other"}),
+        ("journal", {"handle": "3" * 32}),
+        ("prepare", {"expires": 1020.0}),
+    ],
+    ids=["operation", "token", "force", "restart-uncertain", "agent", "handle", "expiry"],
+)
+async def test_pending_ack_requires_exact_effective_identity(ack_watcher, operation, change):
+    watcher = ack_watcher
+    request = watcher.request | {"operation": operation, "agent": "hermes", "handle": "2" * 32}
+    await watcher.cycle(request)
+    assert len(watcher.applies) == len(watcher.replies) == 1
+    assert watcher.replies[0]["status"] == 200
+
+    watcher.fail = False
+    await watcher.cycle(request | change)
+    assert len(watcher.replies) == 1, "mutated request received the cached ACK"
+    assert len(watcher.applies) == 1
+
+    # The original, still-valid request can recover its ACK; omitted defaults
+    # and unrelated wire fields do not change the effective controller call.
+    retry = request | {"force": False, "restart_uncertain": False, "ignored": "metadata"}
+    await watcher.cycle(retry)
+    assert watcher.replies == [watcher.replies[0], watcher.replies[0]]
+    assert len(watcher.applies) == 1
+    await watcher.cycle(retry)
+    assert len(watcher.replies) == 2
+    assert len(watcher.applies) == 1
+
+
+async def test_pending_ack_cannot_be_revived_after_original_expiry(ack_watcher):
+    watcher = ack_watcher
+    await watcher.cycle(watcher.request)
+    assert len(watcher.replies) == len(watcher.applies) == 1
+    watcher.fail = False
+    watcher.clock.value = watcher.request["expires"] + 1
+    await watcher.cycle(watcher.request)
+    await watcher.cycle(watcher.request | {"expires": watcher.clock.value + 10})
+    assert len(watcher.replies) == len(watcher.applies) == 1
+
+
+@pytest.mark.parametrize("first_write_fails", [False, True])
+async def test_processed_id_tombstone_survives_intervening_request(ack_watcher, first_write_fails):
+    watcher = ack_watcher
+    watcher.fail = first_write_fails
+    await watcher.cycle(watcher.request)
+    assert len(watcher.applies) == 1
+    assert watcher.replies[0]["status"] == 200
+    watcher.fail = False
+    await watcher.cycle(
+        watcher.request | {"request": "2" * 32, "operation": "resume", "force": True}
+    )
+    assert len(watcher.replies) == len(watcher.applies) == 2
+    assert watcher.replies[-1]["status"] == 200
+    await watcher.cycle(watcher.request | {"operation": "resume", "force": True})
+    assert len(watcher.applies) == 2, "processed ID reapplied a mutated operation"
+    assert len(watcher.replies) == 2
+    await watcher.cycle(watcher.request)
+    assert len(watcher.applies) == len(watcher.replies) == 2
+
+
+async def test_pending_ack_distinguishes_json_argument_types(ack_watcher):
+    watcher = ack_watcher
+    request = watcher.request | {"token": True}
+    await watcher.cycle(request)
+    assert watcher.replies[0]["status"] == 200
+    watcher.fail = False
+    await watcher.cycle(request | {"token": 1})
+    assert len(watcher.replies) == len(watcher.applies) == 1

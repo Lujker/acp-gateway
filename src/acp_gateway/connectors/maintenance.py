@@ -102,8 +102,9 @@ class ConnectorMaintenance:
 async def watch(directory, instance, controller, *, interval=0.2):
     import json
 
-    last = None
+    processed = set()
     pending_response = None
+    pending_identity = None
     publish_failed = False
     try:
         while True:
@@ -140,23 +141,43 @@ async def watch(directory, instance, controller, *, interval=0.2):
                     and type(request.get("force", False)) is bool
                     and type(request.get("restart_uncertain", False)) is bool
                 )
-                if valid and (request["request"] != last or pending_response is not None):
-                    if request["request"] != last:
-                        last = request["request"]
+                if not valid:
+                    await asyncio.sleep(interval)
+                    continue
+                operation = request["operation"]
+                session_operation = operation in {"sessions", "journal", "retire"}
+                args = (
+                    (request.get("agent"), request.get("handle"))
+                    if session_operation
+                    else (
+                        request.get("token"),
+                        request.get("force", False),
+                        request.get("restart_uncertain", False),
+                    )
+                )
+                # JSON preserves argument types (True must not equal 1) while
+                # normalizing object key order and the defaults above.
+                identity = (
+                    request["request"],
+                    operation,
+                    json.dumps(args, sort_keys=True),
+                    request["expires"],
+                )
+                if request["request"] not in processed or (
+                    pending_response is not None and identity == pending_identity
+                ):
+                    if request["request"] not in processed:
+                        # Keep ID tombstones for this watcher lifetime, even if
+                        # another request replaces the single pending reply.
+                        processed.add(request["request"])
+                        pending_identity = identity
                         # No await between the activity check and closing admission.
                         try:
-                            if request["operation"] in {"sessions", "journal", "retire"}:
-                                result = controller.session_control(
-                                    request["operation"],
-                                    request.get("agent"),
-                                    request.get("handle"),
-                                )
+                            if session_operation:
+                                result = controller.session_control(operation, *args)
                             else:
                                 result = controller.apply(
-                                    request["operation"],
-                                    request.get("token"),
-                                    force=request.get("force", False),
-                                    restart_uncertain=request.get("restart_uncertain", False),
+                                    operation, args[0], force=args[1], restart_uncertain=args[2]
                                 )
                             pending_response = {"status": 200, "result": result}
                         except (ValueError, AgentUnavailable, KeyError, TypeError):
@@ -168,9 +189,9 @@ async def watch(directory, instance, controller, *, interval=0.2):
                                     )
                                 },
                             }
-                        pending_response.update(instance=instance, request=last)
-                    # Preserve the result if publication fails. Replaying the
-                    # operation could reserve twice or lose the original token.
+                        pending_response.update(instance=instance, request=request["request"])
+                    # Retry only the identical, still-valid request, including
+                    # its original expiry. Never reapply after a failed write.
                     await asyncio.to_thread(
                         _atomic, directory / RESPONSE, json.dumps(pending_response).encode()
                     )
