@@ -33,6 +33,9 @@ Historical documents are not current installation instructions.
 | CLI and local HTTP/SSE API | [Gateway](setup/gateway.md) |
 | Expose agents to Hermes through MCP | [Hermes MCP](setup/hermes.md) |
 | Connect existing Hermes Desktop | [Hermes attach](setup/hermes-attach.md) |
+| Test the experimental managed Codex CLI source adapter | [Codex managed](setup/codex-managed.md) |
+| Test the experimental managed Claude Code CLI source adapter | [Claude Code managed](setup/claude-code-managed.md) |
+| Run a managed Codex/Claude CLI inside explicit WSL from Windows | [Managed agents in WSL](setup/windows-wsl-managed.md) |
 | Configure a direct Goose connection | [Work Goose](setup/work-goose.md), [Goose attach](setup/goose-attach.md) |
 | Manage agent tools and host setup | [Host CLI](setup/host-cli.md) |
 | Inspect health and logs | [Observability](setup/observability.md) |
@@ -55,6 +58,10 @@ Historical documents are not current installation instructions.
   a delivered integration or a replacement for the current engineering queue.
 
 - [Roadmap](../road-map.md): the single status board; the final section is the current queue.
+- [Codex/Claude resumption checkpoint (Russian)](plans/p4.13-resumption.ru.md):
+  implemented source, test evidence, pending live acceptance and native chat list/attach.
+- [Work mode for remote development P4.13.1 (Russian)](plans/p4.13-work-mode.ru.md):
+  approved plan for safe/work agent profiles with native auto mode, cancel and resume; not implemented.
 - [Decision journal](../road-notes.md): dated findings and owner decisions.
 - [Future AI-agent practicum and business brief (Russian)](items/business-practicum.ru.md):
   approved educational concept, pilot gates and open economics; not a launched

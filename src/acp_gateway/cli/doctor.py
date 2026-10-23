@@ -12,6 +12,7 @@ import os
 import socket
 import ssl
 import stat
+import sys
 import tempfile
 from pathlib import Path
 from urllib.parse import urlsplit
@@ -306,6 +307,133 @@ def collect(config_file=None, env_file=None, *, live=False, timeout=5):
                 "info",
                 "Routed executor; inspect acpgw computers status on the server",
             )
+            continue
+        managed = (
+            getattr(profile, profile.backend)
+            if profile.backend in {"codex", "claude_code"}
+            else None
+        )
+        wsl = getattr(managed, "wsl", None)
+        if wsl is not None:
+            import shutil
+
+            target = f"WSL {wsl.distribution}/{wsl.user}"
+            fix = (
+                "acpgw agents configure; verify the explicit WSL distribution/user and Linux "
+                "executable/PATH and working directory. Check CLI login separately."
+            )
+            if sys.platform != "win32":
+                add("agent:" + profile.address, "error", target + " requires Windows", fix)
+            elif not shutil.which("wsl.exe"):
+                add("agent:" + profile.address, "error", target + " launcher unavailable", fix)
+            elif not live:
+                add(
+                    "agent:" + profile.address,
+                    "info",
+                    target + ": target-side executable/cwd not checked; no child or model started",
+                    fix,
+                )
+            else:
+                try:
+                    run_setup(
+                        _acp_check(cfg, profile, timeout),
+                        operation=(
+                            "doctor-codex" if profile.backend == "codex" else "doctor-claude-code"
+                        ),
+                    )
+                    add(
+                        "agent:" + profile.address,
+                        "ok",
+                        target + ": initialize succeeded; no session, thread or model call",
+                        fix,
+                    )
+                except Exception:
+                    add(
+                        "agent:" + profile.address,
+                        "error",
+                        target + ": initialize failed",
+                        fix,
+                    )
+            continue
+        if profile.backend == "claude_code":
+            import shutil
+
+            fix = (
+                "acpgw agents configure; verify Claude Code executable/PATH and working directory "
+                "in this OS. Check CLI login separately."
+            )
+            if not Path(profile.default_cwd).is_dir():
+                add(
+                    "cwd:" + profile.address,
+                    "error",
+                    "Local Claude Code working directory does not exist",
+                    fix,
+                )
+            if not shutil.which(profile.claude_code.executable):
+                add(
+                    "agent:" + profile.address,
+                    "error",
+                    "Managed Claude Code executable not found",
+                    fix,
+                )
+            elif not live:
+                add(
+                    "agent:" + profile.address,
+                    "info",
+                    "Managed Claude Code; no child or model started",
+                    fix,
+                )
+            else:
+                try:
+                    run_setup(_acp_check(cfg, profile, timeout), operation="doctor-claude-code")
+                    add(
+                        "agent:" + profile.address,
+                        "ok",
+                        "Claude Code initialize succeeded; no session or model call",
+                        fix,
+                    )
+                except Exception:
+                    add(
+                        "agent:" + profile.address,
+                        "error",
+                        "Managed Claude Code initialize failed",
+                        fix,
+                    )
+            continue
+        if profile.backend == "codex":
+            import shutil
+
+            fix = (
+                "acpgw agents configure; verify Codex executable/PATH and working directory "
+                "in this OS. Check CLI login separately."
+            )
+            if not Path(profile.default_cwd).is_dir():
+                add(
+                    "cwd:" + profile.address,
+                    "error",
+                    "Local Codex working directory does not exist",
+                    fix,
+                )
+            if not shutil.which(profile.codex.executable):
+                add("agent:" + profile.address, "error", "Managed Codex executable not found", fix)
+            elif not live:
+                add(
+                    "agent:" + profile.address,
+                    "info",
+                    "Managed Codex; no child or model started",
+                    fix,
+                )
+            else:
+                try:
+                    run_setup(_acp_check(cfg, profile, timeout), operation="doctor-codex")
+                    add(
+                        "agent:" + profile.address,
+                        "ok",
+                        "Codex initialize succeeded; no thread or model call",
+                        fix,
+                    )
+                except Exception:
+                    add("agent:" + profile.address, "error", "Managed Codex initialize failed", fix)
             continue
         if profile.backend == "hermes":
             from acp_gateway.cli.hermes_setup import inspect

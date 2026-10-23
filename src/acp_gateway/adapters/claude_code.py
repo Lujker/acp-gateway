@@ -1,0 +1,691 @@
+"""Owned Claude Code stream-json conversations; no attach, replay or disk resume.
+
+Manual native permission mode is mandatory. This boundary is not a filesystem
+sandbox. Only explicitly surfaced, once-only human tool decisions are forwarded.
+"""
+
+from __future__ import annotations
+
+import asyncio
+import contextlib
+import json
+import os
+from typing import TYPE_CHECKING
+from uuid import uuid4
+
+from acp import PROTOCOL_VERSION
+
+from acp_gateway.agents.errors import AgentUnavailable
+from acp_gateway.connectors.policy import LocalAgentPolicy, LocalPolicyError
+
+if TYPE_CHECKING:
+    from acp_gateway.config import ClaudeCodeSettings
+
+MAX_FRAME = 262_144
+MAX_EVENTS = 128
+MAX_REQUESTS = 32
+TOOLS = "Read,Glob,Grep,Edit,Write,Bash"
+
+
+class ClaudeCodeAcpTransport:
+    def __init__(self, settings: ClaudeCodeSettings, policy: LocalAgentPolicy):
+        self.settings, self.policy = settings, policy
+        self.closed = asyncio.Event()
+        self._closing = None
+        self._out = asyncio.Queue(MAX_EVENTS)
+        self._requests = {}
+        self._children = {}
+        self._sessions = {}
+        self._session_lock = asyncio.Lock()
+        self._turns = {}
+        self._permissions = {}
+        self._initialized = False
+        self.uncertain = 0
+        self.admission = None
+        self.child_reservation = None
+
+    @classmethod
+    async def open(cls, settings: ClaudeCodeSettings, policy: LocalAgentPolicy):
+        stream = cls(settings, policy)
+        try:
+            stream._warm = await stream._spawn(policy.allowed_cwds[0])
+            stream.process = stream._warm["process"]
+            return stream
+        except BaseException:
+            await stream.close()
+            raise
+
+    async def _spawn(self, cwd):
+        if len(self._children) >= self.settings.max_sessions:
+            raise AgentUnavailable("managed Claude Code process capacity exceeded")
+        release = self.child_reservation() if self.child_reservation is not None else None
+        try:
+            return await self._spawn_owned(cwd)
+        finally:
+            if release is not None:
+                release()
+
+    async def _spawn_owned(self, cwd):
+        sid = str(uuid4())
+        allowed = {
+            "PATH",
+            "HOME",
+            "USERPROFILE",
+            "SYSTEMROOT",
+            "WINDIR",
+            "COMSPEC",
+            "PATHEXT",
+            "TEMP",
+            "TMP",
+            "TMPDIR",
+            "LOCALAPPDATA",
+            "APPDATA",
+            "LANG",
+            "LC_ALL",
+            "CLAUDE_CONFIG_DIR",
+            "XDG_CONFIG_HOME",
+            "XDG_DATA_HOME",
+        }
+        env = {k: v for k, v in os.environ.items() if k.upper() in allowed}
+        argv = [
+            self.settings.executable,
+            "--print",
+            "--verbose",
+            "--input-format",
+            "stream-json",
+            "--output-format",
+            "stream-json",
+            "--permission-mode",
+            "manual",
+            "--permission-prompt-tool",
+            "stdio",
+            "--strict-mcp-config",
+            "--mcp-config",
+            '{"mcpServers":{}}',
+            "--setting-sources",
+            "",
+            "--settings",
+            json.dumps({"disableAllHooks": True, "permissions": {"ask": TOOLS.split(",")}}),
+            f"--session-id={sid}",
+            "--include-partial-messages",
+            "--no-session-persistence",
+            "--no-chrome",
+            "--disable-slash-commands",
+            "--safe-mode",
+            "--tools",
+            TOOLS,
+            "--max-turns",
+            str(self.settings.max_turns),
+        ]
+        if self.settings.model is not None:
+            argv += ["--model", self.settings.model]
+        try:
+            if self.settings.wsl is not None:
+                from acp_gateway.adapters.wsl import spawn_wsl
+
+                process = await spawn_wsl(
+                    self.settings.wsl,
+                    argv,
+                    cwd=cwd,
+                    agent_home_env="CLAUDE_CONFIG_DIR",
+                    limit=MAX_FRAME,
+                )
+            else:
+                process = await asyncio.create_subprocess_exec(
+                    *argv,
+                    stdin=asyncio.subprocess.PIPE,
+                    stdout=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.PIPE,
+                    cwd=cwd,
+                    env=env,
+                    limit=MAX_FRAME,
+                )
+        except (OSError, ValueError, RuntimeError):
+            raise AgentUnavailable("managed Claude Code executable could not be started") from None
+        child = {
+            "process": process,
+            "sid": sid,
+            "cwd": cwd,
+            "lock": asyncio.Lock(),
+            "control_ids": set(),
+        }
+        self._children[sid] = child
+        child["stderr"] = asyncio.create_task(self._drain_stderr(process))
+        rid = uuid4().hex
+        await self._write(
+            child,
+            {
+                "type": "control_request",
+                "request_id": rid,
+                "request": {"subtype": "initialize", "hooks": None},
+            },
+        )
+        try:
+            frame = await asyncio.wait_for(self._frame(child), self.settings.request_timeout)
+            response = frame.get("response", {})
+            if (
+                frame.get("type") != "control_response"
+                or response.get("request_id") != rid
+                or response.get("subtype") != "success"
+                or not isinstance(response.get("response"), dict)
+            ):
+                raise ValueError
+        except Exception:
+            raise AgentUnavailable("managed Claude Code initialization failed") from None
+        child["reader"] = asyncio.create_task(self._read(child))
+        return child
+
+    async def _frame(self, child):
+        line = await child["process"].stdout.readline()
+        if not line or len(line) > MAX_FRAME or not line.endswith(b"\n"):
+            raise ConnectionError("managed Claude Code stream unavailable")
+        frame = json.loads(line)
+        if not isinstance(frame, dict):
+            raise ValueError
+        return frame
+
+    async def _write(self, child, frame, *, permission=None):
+        data = (json.dumps(frame, ensure_ascii=False) + "\n").encode()
+        if len(data) > MAX_FRAME or self.closed.is_set():
+            raise ConnectionError("managed Claude Code stream unavailable")
+        async with child["lock"]:
+            if permission is not None:
+                local_id, pending = permission
+                owner, turn, _, _ = pending
+                sid = child["sid"]
+                if (
+                    self.closed.is_set()
+                    or self._permissions.get(local_id) is not pending
+                    or owner is not child
+                    or self._children.get(sid) is not child
+                    or self._sessions.get(sid) is not child
+                    or self._turns.get(sid) is not turn
+                    or turn["done"].done()
+                ):
+                    return
+                # Commit once, without yielding between validation and stdin.write.
+                del self._permissions[local_id]
+            child["process"].stdin.write(data)
+            await asyncio.wait_for(child["process"].stdin.drain(), self.settings.request_timeout)
+
+    async def _drain_stderr(self, process):
+        while await process.stderr.read(4096):
+            pass
+
+    def _emit(self, frame):
+        self._out.put_nowait({"jsonrpc": "2.0", **frame})
+
+    async def send(self, message):
+        if self.closed.is_set():
+            raise ConnectionError("managed Claude Code stream closed")
+        try:
+            if "method" not in message:
+                await self._permission_response(message)
+                return
+            clean = self.policy.prepare(message)
+            if self.admission is not None:
+                self.admission()
+            rid = clean.get("id")
+            if rid is None or rid in self._requests or len(self._requests) >= MAX_REQUESTS:
+                raise LocalPolicyError("unsupported or duplicate Claude Code ACP request")
+            self._requests[rid] = asyncio.create_task(self._request(clean))
+        except Exception:
+            await self.close()
+            raise
+
+    async def _request(self, message):
+        rid, method, params = message["id"], message["method"], message["params"]
+        try:
+            if method == "initialize":
+                if self._initialized or params["protocolVersion"] != PROTOCOL_VERSION:
+                    raise ValueError
+                self._initialized = True
+                result = {
+                    "protocolVersion": PROTOCOL_VERSION,
+                    "agentInfo": {"name": "claude-code-managed", "version": "1"},
+                    "agentCapabilities": {
+                        "loadSession": False,
+                        "sessionCapabilities": {"list": {}},
+                        "_meta": {
+                            "acp-gateway": {
+                                "cancel": False,
+                                "coldResume": False,
+                                "conversationMode": "dedicated",
+                            }
+                        },
+                    },
+                }
+            elif not self._initialized:
+                raise ValueError
+            elif method == "session/new":
+                async with self._session_lock:
+                    if len(self._sessions) >= self.settings.max_sessions:
+                        raise ValueError
+                    if self._warm is not None and self._warm["cwd"] == params["cwd"]:
+                        child, self._warm = self._warm, None
+                    else:
+                        child = await self._spawn(params["cwd"])
+                    self._sessions[child["sid"]] = child
+                result = {"sessionId": child["sid"]}
+            elif method == "session/list":
+                result = {
+                    "sessions": [
+                        {"sessionId": sid, "cwd": child["cwd"]}
+                        for sid, child in self._sessions.items()
+                        if child["cwd"] == params["cwd"]
+                    ]
+                }
+            elif method == "session/prompt":
+                result = await self._prompt(params)
+            else:
+                self._emit(
+                    {
+                        "id": rid,
+                        "error": {"code": -32601, "message": "Claude Code method unavailable"},
+                    }
+                )
+                return
+            self._emit({"id": rid, "result": result})
+        except Exception:
+            self._schedule_close()
+        finally:
+            self._requests.pop(rid, None)
+
+    def _text(self, sid, text):
+        if not isinstance(text, str):
+            raise ValueError
+        self._emit(
+            {
+                "method": "session/update",
+                "params": {
+                    "sessionId": sid,
+                    "update": {
+                        "sessionUpdate": "agent_message_chunk",
+                        "content": {"type": "text", "text": text},
+                    },
+                },
+            }
+        )
+
+    async def _prompt(self, params):
+        sid = params["sessionId"]
+        if sid not in self._sessions or sid in self._turns:
+            raise ValueError
+        child = self._sessions[sid]
+        turn = {
+            "done": asyncio.get_running_loop().create_future(),
+            "text": False,
+            "streamed": set(),
+            "completed": set(),
+            "message_id": None,
+        }
+        self._turns[sid] = turn
+        try:
+            await self._write(
+                child,
+                {
+                    "type": "user",
+                    "session_id": sid,
+                    "parent_tool_use_id": None,
+                    "message": {
+                        "role": "user",
+                        "content": "\n".join(b["text"] for b in params["prompt"]),
+                    },
+                },
+            )
+            await asyncio.wait_for(turn["done"], self.settings.turn_timeout)
+            return {"stopReason": "end_turn"}
+        except BaseException:
+            self.uncertain = max(1, self.uncertain)
+            raise
+        finally:
+            self._turns.pop(sid, None)
+            turn["done"].cancel()
+            if turn["done"].done() and not turn["done"].cancelled():
+                turn["done"].exception()
+
+    def _withdraw(self, child, native_id=None):
+        for local_id, (owner, _, rid, _) in list(self._permissions.items()):
+            if owner is child and (native_id is None or native_id == rid):
+                del self._permissions[local_id]
+                self._emit(
+                    {
+                        "method": "session/update",
+                        "params": {
+                            "sessionId": child["sid"],
+                            "update": {
+                                "sessionUpdate": "tool_call_update",
+                                "toolCallId": local_id,
+                                "status": "failed",
+                                "_meta": {"acp-gateway": {"permissionWithdrawn": True}},
+                            },
+                        },
+                    }
+                )
+
+    async def _control_reply(self, child, rid, response, *, permission=None):
+        await self._write(
+            child,
+            {
+                "type": "control_response",
+                "response": {"subtype": "success", "request_id": rid, "response": response},
+            },
+            permission=permission,
+        )
+
+    async def _approval(self, child, turn, frame):
+        rid, request = frame["request_id"], frame["request"]
+        if not isinstance(rid, str) or not rid or len(rid) > 128:
+            raise ValueError
+        if rid in child["control_ids"] or len(child["control_ids"]) >= MAX_EVENTS:
+            raise ValueError
+        child["control_ids"].add(rid)
+        if request.get("subtype") != "can_use_tool":
+            await self._write(
+                child,
+                {
+                    "type": "control_response",
+                    "response": {
+                        "subtype": "error",
+                        "request_id": rid,
+                        "error": "Unsupported control request",
+                    },
+                },
+            )
+            return
+        local_id = "claude-permission-" + uuid4().hex
+        tool, data = request.get("tool_name"), request.get("input")
+        fields = {
+            "Read": ("file_path",),
+            "Glob": ("pattern",),
+            "Grep": ("pattern",),
+            "Bash": ("command",),
+            "Write": ("file_path", "content"),
+            "Edit": ("file_path", "old_string", "new_string"),
+        }
+        valid = (
+            isinstance(tool, str)
+            and tool in fields
+            and isinstance(data, dict)
+            and (tool != "Bash" or data.get("run_in_background", False) is False)
+            and all(isinstance(data.get(key), str) for key in fields.get(tool, ()))
+            and all(
+                data.get(key, "").strip()
+                for key in fields.get(tool, ())
+                if key not in {"content", "old_string", "new_string"}
+            )
+            and isinstance(request.get("tool_use_id"), str)
+            and bool(request["tool_use_id"])
+            and request.get("agent_id") is None
+            and request.get("parent_tool_use_id") is None
+            and request.get("session_id", child["sid"]) == child["sid"]
+            and frame.get("session_id", child["sid"]) == child["sid"]
+        )
+        if turn is None or turn["done"].done() or not valid:
+            await self._control_reply(
+                child, rid, {"behavior": "deny", "message": "Denied by gateway"}
+            )
+            return
+        if len(self._permissions) >= MAX_REQUESTS:
+            raise ValueError
+        self._permissions[local_id] = (child, turn, rid, request["input"])
+        self._emit(
+            {
+                "id": local_id,
+                "method": "session/request_permission",
+                "params": {
+                    "sessionId": child["sid"],
+                    "toolCall": {
+                        "toolCallId": local_id,
+                        "title": "Claude Code " + request["tool_name"],
+                        "status": "pending",
+                        "kind": {
+                            "Bash": "execute",
+                            "Edit": "edit",
+                            "Write": "edit",
+                            "Read": "read",
+                            "Glob": "search",
+                            "Grep": "search",
+                        }[tool],
+                        "rawInput": {
+                            "tool_name": request["tool_name"],
+                            "tool_use_id": request["tool_use_id"],
+                            "input": request["input"],
+                            "cwd": child["cwd"],
+                        },
+                    },
+                    "options": [
+                        {"optionId": "accept", "name": "Allow once", "kind": "allow_once"},
+                        {"optionId": "decline", "name": "Deny", "kind": "reject_once"},
+                    ],
+                },
+            }
+        )
+
+    async def _permission_response(self, message):
+        local_id = message.get("id")
+        pending = self._permissions.get(local_id)
+        if pending is None:
+            return
+        child, turn, rid, original = pending
+        if self._turns.get(child["sid"]) is not turn or turn["done"].done():
+            return
+        outcome = message.get("result", {}).get("outcome", {})
+        response = {"behavior": "deny", "message": "Denied by gateway"}
+        if "error" not in message and outcome.get("outcome") == "selected":
+            if outcome.get("optionId") == "accept":
+                response = {"behavior": "allow", "updatedInput": original}
+            elif outcome.get("optionId") != "decline":
+                raise LocalPolicyError("Claude Code permits once-only approval choices")
+        await self._control_reply(child, rid, response, permission=(local_id, pending))
+
+    async def _read(self, child):
+        sid = child["sid"]
+        try:
+            while True:
+                frame = await self._frame(child)
+                turn = self._turns.get(sid)
+                if frame.get("type") == "control_cancel_request":
+                    self._withdraw(child, frame["request_id"])
+                    continue
+                if frame.get("type") == "control_request":
+                    await self._approval(child, turn, frame)
+                    continue
+                if (
+                    turn is None
+                    or turn["done"].done()
+                    or frame.get("session_id") != sid
+                    or frame.get("parent_tool_use_id") is not None
+                ):
+                    continue
+                if frame.get("type") == "stream_event":
+                    event = frame["event"]
+                    if event.get("type") == "message_start":
+                        mid = event["message"]["id"]
+                        if not isinstance(mid, str) or not mid or len(mid) > 128:
+                            raise ValueError
+                        turn["message_id"] = mid
+                    elif (
+                        event.get("type") == "content_block_delta"
+                        and event.get("delta", {}).get("type") == "text_delta"
+                    ):
+                        mid = turn["message_id"]
+                        if mid is None or len(turn["streamed"]) >= MAX_EVENTS:
+                            raise ValueError
+                        if mid not in turn["completed"]:
+                            self._text(sid, event["delta"]["text"])
+                            turn["text"] = True
+                            turn["streamed"].add(mid)
+                elif frame.get("type") == "assistant":
+                    if frame.get("error"):
+                        raise ValueError("managed Claude Code assistant failed")
+                    mid = frame["message"]["id"]
+                    if mid in turn["completed"]:
+                        continue
+                    if len(turn["completed"]) >= MAX_EVENTS:
+                        raise ValueError
+                    turn["completed"].add(mid)
+                    if mid in turn["streamed"]:
+                        continue
+                    for block in frame["message"]["content"]:
+                        if block.get("type") == "text":
+                            self._text(sid, block["text"])
+                            turn["text"] = True
+                elif frame.get("type") == "result":
+                    self._withdraw(child)
+                    if frame.get("subtype") != "success" or frame.get("is_error") is not False:
+                        raise ValueError
+                    if not turn["text"] and isinstance(frame.get("result"), str):
+                        self._text(sid, frame["result"])
+                    turn["done"].set_result(None)
+        except asyncio.CancelledError:
+            pass
+        except Exception:
+            self._schedule_close()
+
+    async def receive(self):
+        if not self._out.empty():
+            return self._out.get_nowait()
+        if self.closed.is_set():
+            return None
+        read = asyncio.create_task(self._out.get())
+        closed = asyncio.create_task(self.closed.wait())
+        try:
+            done, _ = await asyncio.wait({read, closed}, return_when=asyncio.FIRST_COMPLETED)
+            return read.result() if read in done else None
+        finally:
+            read.cancel()
+            closed.cancel()
+            await asyncio.gather(read, closed, return_exceptions=True)
+
+    def _schedule_close(self):
+        if self._closing is None:
+            self.uncertain = max(
+                self.uncertain, sum(not t["done"].done() for t in self._turns.values())
+            )
+            self.closed.set()
+            self._closing = asyncio.create_task(self._shutdown())
+
+    async def close(self):
+        self._schedule_close()
+        await asyncio.shield(self._closing)
+
+    async def _shutdown(self):
+        self._permissions.clear()
+        tasks = [
+            *self._requests.values(),
+            *(
+                task
+                for c in self._children.values()
+                for key in ("stderr", "reader")
+                if (task := c.get(key)) is not None
+            ),
+        ]
+        for task in tasks:
+            task.cancel()
+        await asyncio.gather(*tasks, return_exceptions=True)
+        for child in self._children.values():
+            process = child["process"]
+            if self.settings.wsl is not None:
+                from acp_gateway.adapters.wsl import close_wsl
+
+                if await close_wsl(process) is False:
+                    self.uncertain = max(self.uncertain, 1)
+                continue
+            process.stdin.close()
+            transport = process._transport
+            for fd in (1, 2):
+                pipe = transport.get_pipe_transport(fd)
+                if pipe is not None:
+                    pipe.close()
+            if process.returncode is None:
+                with contextlib.suppress(ProcessLookupError):
+                    process.terminate()
+                try:
+                    await asyncio.wait_for(process.wait(), 2)
+                except TimeoutError:
+                    with contextlib.suppress(ProcessLookupError):
+                        process.kill()
+                    await process.wait()
+            transport.close()
+            with contextlib.suppress(BrokenPipeError, ConnectionResetError):
+                await asyncio.wait_for(process.stdin.wait_closed(), 2)
+
+
+class ClaudeCodeProcessManager:
+    """Account only for owned processes; retain uncertainty after binding loss."""
+
+    def __init__(self, settings: ClaudeCodeSettings, policy: LocalAgentPolicy):
+        self.settings, self.policy = settings, policy
+        self.maintenance_reserved = False
+        self._streams = set()
+        self._opening = 0
+        self._spawning = 0
+        self._idle = asyncio.Event()
+        self._idle.set()
+        self._uncertain = 0
+
+    def check_admission(self):
+        if self.maintenance_reserved:
+            raise AgentUnavailable("Connector reserved for maintenance")
+
+    def _prune(self):
+        for stream in list(self._streams):
+            if stream._closing is not None and stream._closing.done():
+                self._uncertain += stream.uncertain
+                self._streams.remove(stream)
+
+    def _capacity(self):
+        self.check_admission()
+        self._prune()
+        if (
+            self._opening + self._spawning + sum(len(s._children) for s in self._streams)
+            >= self.settings.max_sessions
+        ):
+            raise AgentUnavailable("managed Claude Code process capacity exceeded")
+
+    def _reserve_child(self):
+        self._capacity()
+        self._spawning += 1
+        self._idle.clear()
+
+        def release():
+            self._spawning -= 1
+            if not self._opening and not self._spawning:
+                self._idle.set()
+
+        return release
+
+    async def open(self):
+        self._capacity()
+        self._opening += 1
+        self._idle.clear()
+        try:
+            stream = await ClaudeCodeAcpTransport.open(self.settings, self.policy)
+            if self.maintenance_reserved:
+                await stream.close()
+                self.check_admission()
+            stream.admission = self.check_admission
+            stream.child_reservation = self._reserve_child
+            self._streams.add(stream)
+            return stream
+        finally:
+            self._opening -= 1
+            if not self._opening and not self._spawning:
+                self._idle.set()
+
+    def maintenance_status(self):
+        self._prune()
+        return {
+            "pending_requests": sum(len(s._requests) for s in self._streams),
+            "pending_approvals": sum(len(s._permissions) for s in self._streams),
+            "running_sessions": sum(len(s._turns) for s in self._streams),
+            "uncertain_sessions": self._uncertain + sum(s.uncertain for s in self._streams),
+            "opening": self._opening + self._spawning,
+        }
+
+    async def close(self):
+        self.maintenance_reserved = True
+        await self._idle.wait()
+        await asyncio.gather(*(s.close() for s in self._streams))
+        self._prune()

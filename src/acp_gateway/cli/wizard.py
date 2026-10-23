@@ -235,32 +235,201 @@ def _env_contents(original, values):
     return ("\n".join(lines) + "\n").encode()
 
 
+def _linux_path(value):
+    from acp_gateway.config import _wsl_path
+
+    return _wsl_path(value)
+
+
+def _managed_environment(prompts, old, backend, environment):
+    from acp_gateway.config import WslSettings
+
+    settings = old.copy()
+    previous = settings.get("wsl")
+    if environment == "native":
+        settings.pop("wsl", None)
+        if previous is not None:
+            settings["executable"] = "codex" if backend == "codex" else "claude"
+        return settings
+    values = dict(previous or {})
+
+    def field(name, value):
+        candidate = {"distribution": "distribution", "user": "user", **values, name: value}
+        return WslSettings.model_validate(candidate).model_dump(mode="json")[name]
+
+    for name, label in (
+        ("distribution", "WSL distribution (explicit name)"),
+        ("user", "WSL Linux user (non-root)"),
+        ("python", "WSL Python (absolute Linux path)"),
+    ):
+        values[name] = prompts.ask(
+            label,
+            values.get(name, "/usr/bin/python3" if name == "python" else ""),
+            lambda value, name=name: field(name, value),
+        )
+    values["agent_home"] = prompts.ask(
+        "WSL agent home (none uses target default)",
+        values.get("agent_home") or "none",
+        lambda value: field("agent_home", None if value == "none" else value),
+    )
+    values["path"] = prompts.ask(
+        "WSL PATH directories (comma-separated; empty uses explicit executable only)",
+        ",".join(values.get("path", [])),
+        lambda value: field("path", [v.strip() for v in value.split(",") if v.strip()]),
+    )
+    settings["wsl"] = WslSettings.model_validate(values).model_dump(mode="json", exclude_none=True)
+    if previous is None:
+        settings["executable"] = ""
+    print(
+        f"WSL {values['distribution']}/{values['user']}: syntax only; target-side executable/cwd "
+        "validation runs under this explicit identity at runtime. No distribution/account "
+        "discovery, install or login is performed."
+    )
+    return settings
+
+
+def _codex(prompts, old):
+    from acp_gateway.config import CodexSettings
+
+    initial = dict(old)
+    pending_executable = initial.pop("executable", None)
+    settings = CodexSettings.model_validate(
+        {k: v for k, v in initial.items() if k != "wsl"}
+    ).model_dump(mode="json")
+    settings["wsl"] = initial.get("wsl")
+    if pending_executable is not None:
+        settings["executable"] = pending_executable
+
+    def field(name, value):
+        return CodexSettings.model_validate({**settings, name: value}).model_dump(mode="json")[name]
+
+    settings["executable"] = prompts.ask(
+        "Codex Linux executable (absolute POSIX path)"
+        if settings.get("wsl") is not None
+        else "Codex executable name or absolute path",
+        settings["executable"],
+        lambda value: field("executable", value),
+    )
+    settings["model"] = prompts.ask(
+        "Codex model (none uses CLI default)",
+        settings["model"] or "none",
+        lambda value: field("model", None if value == "none" else value),
+    )
+    print("Codex read-only is the conservative default; workspace-write permits project edits.")
+    settings["sandbox"] = prompts.choice(
+        "Codex sandbox", ("read-only", "workspace-write"), settings["sandbox"]
+    )
+    if settings.get("wsl") is None and not shutil.which(settings["executable"]):
+        print(
+            "Codex executable not found in this OS. Install Codex separately if needed, "
+            "add it to PATH or select an existing absolute path; setup does not install it."
+        )
+    print(
+        "Codex uses its own CLI login on this computer. Complete login separately if needed; "
+        "setup does not read or change accounts. No model call is made."
+    )
+    return CodexSettings.model_validate(settings).model_dump(mode="json", exclude_none=True)
+
+
+def _claude_code(prompts, old):
+    from acp_gateway.config import ClaudeCodeSettings
+
+    initial = dict(old)
+    pending_executable = initial.pop("executable", None)
+    settings = ClaudeCodeSettings.model_validate(
+        {k: v for k, v in initial.items() if k != "wsl"}
+    ).model_dump(mode="json")
+    settings["wsl"] = initial.get("wsl")
+    if pending_executable is not None:
+        settings["executable"] = pending_executable
+
+    def field(name, value):
+        return ClaudeCodeSettings.model_validate({**settings, name: value}).model_dump(mode="json")[
+            name
+        ]
+
+    settings["executable"] = prompts.ask(
+        "Claude Code Linux executable (absolute POSIX path)"
+        if settings.get("wsl") is not None
+        else "Claude Code executable name or absolute path",
+        settings["executable"],
+        lambda value: field("executable", value),
+    )
+    settings["model"] = prompts.ask(
+        "Claude Code model (none uses CLI default)",
+        settings["model"] or "none",
+        lambda value: field("model", None if value == "none" else value),
+    )
+    if settings.get("wsl") is None and not shutil.which(settings["executable"]):
+        print(
+            "Claude Code executable not found in this OS. Install it separately if needed, "
+            "add it to PATH or select an existing absolute path; setup does not install it."
+        )
+    print(
+        "Claude Code uses its own CLI login on this computer. Complete login separately if needed; "
+        "setup does not read or change accounts. No model call is made."
+    )
+    print("Native manual permissions are not an OS sandbox and do not guarantee read-only access.")
+    return ClaudeCodeSettings.model_validate(settings).model_dump(mode="json", exclude_none=True)
+
+
 def _agent(prompts, values, *, routed=False, old=None):
     old = old or {}
     result = old.copy()
-    kind = prompts.choice("Agent type", ("goose", "hermes", "generic"), old.get("kind", "goose"))
+    default_kind = old.get("kind", "goose")
+    if (
+        not routed
+        and default_kind in {"codex", "claude_code"}
+        and (old.get(default_kind) or {}).get("wsl") is not None
+    ):
+        default_kind += "-wsl"
+    if not routed:
+        print("Codex/Claude: plain agent type = native (default); -wsl = explicit WSL environment.")
+    selected = prompts.choice(
+        "Agent type",
+        ("goose", "hermes", "generic", "codex", "claude_code")
+        + (() if routed else ("codex-wsl", "claude_code-wsl")),
+        default_kind,
+    )
+    environment = "wsl" if selected.endswith("-wsl") else "native"
+    kind = selected.removesuffix("-wsl")
     if old.get("kind") != kind:
         result.pop("session_mode", None)
-    default_alias = "hermes" if kind == "hermes" else "goose"
+    default_alias = (
+        "claude" if kind == "claude_code" else kind if kind in {"hermes", "codex"} else "goose"
+    )
+    managed_settings = None
+    if not routed and kind in {"codex", "claude_code"}:
+        managed_settings = _managed_environment(
+            prompts, (old.get(kind) or {}) if old.get("kind") == kind else {}, kind, environment
+        )
+    wsl = managed_settings is not None and managed_settings.get("wsl") is not None
     print("Working directory is the real project folder used for agent sessions.")
     if routed:
         print("Legacy route: use the exact directory configured on the remote computer.")
+    elif wsl:
+        print("Choose a Linux cwd in the explicit WSL distribution/user; not checked on this host.")
     else:
         print("Choose an existing folder here; this does not sandbox agent file access.")
     result.update(
         {
             "alias": prompts.ask("Agent alias", old.get("alias", default_alias), _alias),
-            "title": prompts.ask("Display name", old.get("title") or kind.capitalize()),
+            "title": prompts.ask(
+                "Display name",
+                old.get("title") or ("Claude Code" if kind == "claude_code" else kind.capitalize()),
+            ),
             "kind": kind,
             "default_cwd": prompts.ask(
-                "Working directory on the agent computer",
-                old.get("default_cwd", str(Path.home())),
-                _required if routed else _working_directory,
+                "Linux working directory in WSL"
+                if wsl
+                else "Working directory on the agent computer",
+                old.get("default_cwd", "" if wsl else str(Path.home())),
+                _required if routed else _linux_path if wsl else _working_directory,
             ),
         }
     )
     # Switching connection type must not retain the former transport fields.
-    for key in ("backend", "computer_id", "hermes"):
+    for key in ("backend", "computer_id", "hermes", "codex", "claude_code"):
         result.pop(key, None)
     if routed:
         for key in ("url", "secret_env", "tls_fingerprint", "allow_insecure_transport"):
@@ -269,6 +438,28 @@ def _agent(prompts, values, *, routed=False, old=None):
             backend="connector",
             computer_id=prompts.ask("Computer ID", old.get("computer_id", "home"), _identifier),
         )
+    elif result["kind"] == "claude_code":
+        for key in (
+            "url",
+            "secret_env",
+            "tls_fingerprint",
+            "allow_insecure_transport",
+            "session_mode",
+        ):
+            result.pop(key, None)
+        result.update(backend="claude_code", claude_code=_claude_code(prompts, managed_settings))
+        return AgentProfile.model_validate(result).model_dump(mode="json", exclude_none=True)
+    elif result["kind"] == "codex":
+        for key in (
+            "url",
+            "secret_env",
+            "tls_fingerprint",
+            "allow_insecure_transport",
+            "session_mode",
+        ):
+            result.pop(key, None)
+        result.update(backend="codex", codex=_codex(prompts, managed_settings))
+        return AgentProfile.model_validate(result).model_dump(mode="json", exclude_none=True)
     elif result["kind"] == "hermes":
         from acp_gateway.cli.hermes_setup import select
 
@@ -300,7 +491,7 @@ def _agent(prompts, values, *, routed=False, old=None):
             return AgentProfile.model_validate(result).model_dump(mode="json", exclude_none=True)
         while True:
             result["url"] = prompts.ask(
-                "ACP URL", old.get("url", "ws://127.0.0.1:3284/acp"), _required
+                "ACP URL", old.get("url") or "ws://127.0.0.1:3284/acp", _required
             )
             name = old.get("secret_env") or "AGENT_" + result["alias"].upper() + "_SECRET"
             secret = prompts.ask("Agent secret (empty if none)", values.get(name, ""), secret=True)
@@ -331,7 +522,7 @@ def _agent(prompts, values, *, routed=False, old=None):
 
 
 def _profiles(prompts, raw, values, role, *, allow_empty=False):
-    agents = raw.get("agents", [])
+    agents = list(raw.get("agents", []))
     if agents:
         print("Existing agents: " + ", ".join(a["alias"] for a in agents))
         action = prompts.choice(
@@ -342,9 +533,19 @@ def _profiles(prompts, raw, values, role, *, allow_empty=False):
     if action == "edit":
         for index, agent in enumerate(agents):
             if prompts.yes("Edit " + agent["alias"] + "?"):
-                agents[index] = _agent(
-                    prompts, values, routed=agent.get("backend") == "connector", old=agent
-                )
+                while True:
+                    profile = _agent(
+                        prompts, values, routed=agent.get("backend") == "connector", old=agent
+                    )
+                    address = AgentProfile.model_validate(profile).address
+                    if any(
+                        i != index and AgentProfile.model_validate(other).address == address
+                        for i, other in enumerate(agents)
+                    ):
+                        print("That address already exists; choose another alias or computer ID.")
+                        continue
+                    agents[index] = profile
+                    break
     if action == "replace":
         agents = []
         action = "add"
@@ -371,15 +572,17 @@ def _profiles(prompts, raw, values, role, *, allow_empty=False):
             agents.append(profile)
             if not prompts.yes("Add another agent?"):
                 break
-    raw["agents"] = agents
     if not agents and not allow_empty:
         raise ValueError("At least one agent profile is required")
     if role == "connector" and any(
-        a.get("backend", "remote") not in {"remote", "hermes"} for a in agents
+        a.get("backend", "remote") not in {"remote", "hermes", "codex", "claude_code"}
+        for a in agents
     ):
         raise ValueError(
-            "A computer connector needs local ACP or Hermes profiles; choose replace to change role"
+            "A computer connector needs local ACP, Hermes, Codex or Claude Code profiles; "
+            "choose replace to change role"
         )
+    raw["agents"] = agents
     if any(a.get("backend") == "connector" for a in agents):
         raw.setdefault("connector", {})["enabled"] = True
 
@@ -735,9 +938,44 @@ async def _check_agents(cfg):
         )
         try:
             await asyncio.wait_for(client.connect(), 12)
-            print(f"{profile.address}: ACP initialize passed (no session or prompt sent)")
+            if profile.backend == "claude_code":
+                print(
+                    f"{profile.address}: Claude Code initialize passed "
+                    "(no session or model call made)"
+                )
+                print("CLI login and model availability are not verified by initialization.")
+            elif profile.backend == "codex":
+                print(f"{profile.address}: Codex initialize passed (no thread or model call made)")
+                print("CLI login and model availability are not verified by initialization.")
+            else:
+                print(f"{profile.address}: ACP initialize passed (no session or prompt sent)")
         except Exception:
-            print(f"{profile.address}: ACP check failed; verify listener, secret and TLS")
+            managed = (
+                profile.claude_code
+                if profile.backend == "claude_code"
+                else profile.codex
+                if profile.backend == "codex"
+                else None
+            )
+            wsl = getattr(managed, "wsl", None)
+            where = (
+                f"in WSL {wsl.distribution}/{wsl.user}" if wsl is not None else "on this computer"
+            )
+            if profile.backend == "claude_code":
+                print(
+                    f"{profile.address}: Claude Code initialize failed; "
+                    "verify the executable name/PATH "
+                    f"or absolute path and working directory {where}. Check CLI "
+                    "installation and login separately; setup does not install or change accounts."
+                )
+            elif profile.backend == "codex":
+                print(
+                    f"{profile.address}: Codex initialize failed; verify the executable name/PATH "
+                    f"or absolute path and working directory {where}. Check Codex CLI "
+                    "installation and login separately; setup does not install or change accounts."
+                )
+            else:
+                print(f"{profile.address}: ACP check failed; verify listener, secret and TLS")
         finally:
             await client.close()
 

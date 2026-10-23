@@ -13,7 +13,7 @@ def local_policies(config):
     profiles = config.settings.agents
     if not profiles:
         raise ValueError("configure at least one local agent before registering a computer")
-    if any(p.backend not in {"remote", "hermes"} for p in profiles):
+    if any(p.backend not in {"remote", "hermes", "codex", "claude_code"} for p in profiles):
         raise ValueError("a computer connector requires direct local agent profiles")
     missing = config.missing_agent_secrets()
     if missing:

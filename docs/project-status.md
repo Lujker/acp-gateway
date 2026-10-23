@@ -41,6 +41,46 @@ connectors (owner acceptance 2026-10-15). See
 
 ## Current work and limits
 
+**P4.13 is PARTIAL (source only):** managed Codex CLI/App Server and Claude Code
+CLI adapters, configuration/setup/doctor and connector relay wiring are implemented.
+They are not in published 0.2.2. The final post-review-fix WSL suite passed
+**1985 tests, 42 skipped**; native Windows Claude config/setup/bridge checks passed
+**128 tests** with a synthetic subprocess peer. Independent re-review accepted
+both Claude fixes; this is not live model/Telegram/Desktop acceptance.
+Both paths use dedicated new dialogues and once/deny approvals. Claude has one
+native child per conversation, explicit ask rules, no persisted native history,
+no cold resume and no safe native-turn cancellation; manual permissions are not
+an OS sandbox. Windows subprocess peer tests and real WSL Claude initialize-only
+smoke do not establish live authenticated Windows/model/Telegram support.
+Per the owner's decision, joint live Codex/Claude acceptance on the Windows host
+and WSL is deferred until after this implementation. The known short-lived Codex
+startup `git.exe` directory lock remains open. No Desktop shared attach, native
+chat catalogue/import or Telegram native attach-by-ID is implemented.
+See [Codex configuration](setup/codex-managed.md),
+[Claude Code configuration](setup/claude-code-managed.md) and
+[implementation evidence](items/connector-harness-adapters.ru.md).
+For resuming this uncommitted source work, use the
+[handoff and acceptance plan](plans/p4.13-resumption.ru.md); documentation recording
+does not start live acceptance or change production.
+
+**Windows-host connector → explicit WSL is implemented in unreleased source for
+new managed chats.** Configuration/setup/doctor and owned Linux supervision are
+wired; independent review of S1/L1/L2/L3 fixes was accepted on 2026-10-22.
+Parent real installed-CLI initialize succeeded for both backends (exit 0, no
+cleanup uncertainty, no prompts); Windows→WSL focused tests passed 135/34 skipped.
+Final post-format full WSL suite passed **2148 tests,48 skipped**; this
+source-checkout managed-launch substage is complete. The broader native
+Windows unit run is **not green**. On 2026-10-23 the owner authorized local
+full Windows runs without the strict isolation runner; the next comparison is
+main versus the feature branch. Stop and report if a test actually mutates
+services or Task Scheduler tasks. See the
+[current owner directive](plans/p4.13-resumption.ru.md#owner-directive-2026-10-23). No native catalogue/ID/live Desktop attachment, authenticated
+model or Telegram acceptance follows from these checks. See the
+[WSL guide](setup/windows-wsl-managed.md),
+[current checkpoint](plans/p4.13-resumption.ru.md#windows-wsl-current-checkpoint)
+and [evidence journal](items/connector-harness-adapters.ru.md).
+
+
 The owner provisionally closed outstanding Telegram and operational acceptance
 on 2026-10-16. Reopen those checks only when the owner or another user reports a
 problem. This decision does not claim that all previously listed scenarios passed.
@@ -77,9 +117,13 @@ transition is explicit and is not activated by installing 0.2.2.
   installs and RC versions are outside this MVP. Version 0.2.0 lacks the feature.
 - Built-in basic OS/agent actions plus user scripts/modules, and connector-owned
   tasks/schedules, remain deferred. No shutdown/restart actions were added.
-- [VK](items/vk-bot.ru.md), [Goose parity](items/goose-alternative.ru.md) and multi-user
-  are future directions; their relative order is not selected. CLI/Desktop/platform
-  coverage is a target matrix, not an assertion that every combination works.
+- Current order (owner decision 2026-10-23): Windows fixes and main comparison,
+  safe/work profiles with cancel/resume, live acceptance and release, then native
+  chat listing/stored resume (4a), then research into live shared attachment (4b).
+  4a can ship without 4b. The later choice is minimal [VK](items/vk-bot.ru.md)
+  versus multi-user; [Goose parity](items/goose-alternative.ru.md) is CONDITIONAL.
+  See the [canonical queue](../road-map.md#9-очередь-дальнейшей-разработки).
+  CLI/Desktop/platform coverage remains a target, not verified support.
 - Public client API/mobile and additional adapters remain [planned work](../road-map.md).
 
 ## Control and data boundaries
