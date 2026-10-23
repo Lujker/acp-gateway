@@ -1276,3 +1276,22 @@ isolation guard (около 1500 строк, четыре цикла ревью)
 `rtk proxy uv run --frozen ruff format --check` — 372 files already formatted.
 Далее — проверка состава индекса, WIP-коммит/push ветки и отдельный ACK-1.
 Isolation guard заморожен; live/model/release/deploy не начинались.
+
+
+## ACK-1 — 2026-10-23, review pending
+Pending ACK привязан к operation, эффективным аргументам (с различением JSON-типов) и исходному expires; ID остаются tombstone до остановки watcher, повторного apply нет.
+RED: `rtk proxy uv run --frozen pytest tests/unit/test_connector_maintenance_ack.py -k exact_effective_identity -q` — 7 failed (изменённый запрос получал старый ACK); GREEN — 7 passed.
+RED: тот же модуль, `-k "original_expiry or tombstone" -q` — 2 failed / 1 passed (повторный apply после другого ID); GREEN — 3 passed. `-k json_argument_types -q` — 1 failed → 1 passed.
+Один scoped прогон на платформу: цели `tests/unit/test_connector_maintenance.py tests/unit/test_connector_maintenance_ack.py -q`; отдельные платформенные basetemp, WSL temp/HOME на Linux FS.
+WSL: `rtk proxy uv run --frozen pytest` с этими целями — 35 passed, 4.14s; Windows Python 3.12.13: `rtk proxy dist/rc8-verification/windows-venv/Scripts/python.exe -m pytest` с теми же целями и PYTHONPATH на текущий src — 35 passed, 23.07s.
+`rtk proxy uv run --frozen ruff check src/acp_gateway/connectors/maintenance.py tests/unit/test_connector_maintenance_ack.py` — All checks passed; `ruff format --check` тех же файлов — 2 files already formatted; `git diff --check` — успешно.
+ACL/freshness 5s/client budgets не менялись. Slow ACL/late ACK, cancellation in to_thread, external SQLite handle и прежний REQUEST replace race остаются вне этого исправления; tombstone только в памяти watcher.
+Статус: review pending — одно независимое ревью родителем; без commit/push. Isolation guard не менялся; ACL-backend, baseline, work-mode, live и release не запускались.
+
+
+## ACK-1 принят — 2026-10-23
+Независимое security/logic ревью: PASS, блокирующих замечаний нет; source diff после ревью не менялся.
+Результаты исполнителя приняты без дублирования: WSL 35 passed, Windows 35 passed; lint/format/diff-check успешны.
+Исправление закрывает подмену cached ACK изменённым запросом и повторный apply обработанного ID; durable exactly-once не заявляется.
+Неблокирующий тест retry отказа 409 оставлен улучшением, не условием закрытия ACK-1.
+Изменения сохраняются отдельным коммитом в рабочей ветке; следующий шаг — ACL-backend A, без baseline/work-mode/live/release.
