@@ -308,8 +308,8 @@ class AgentClient:
         self._log.info(
             "agent connected",
             endpoint=(
-                "local-hermes"
-                if self.profile.backend == "hermes"
+                f"local-{self.profile.backend}"
+                if self.profile.backend in {"hermes", "codex", "claude_code"}
                 else self.profile.acp_endpoint
                 if self._transport_factory is None
                 else "injected"
@@ -322,6 +322,20 @@ class AgentClient:
         """Open one stream; injected factories own authentication and endpoint policy."""
         if self._transport_factory is not None:
             return await self._transport_factory(), None
+        if self.profile.backend == "claude_code":
+            from acp_gateway.adapters.claude_code import ClaudeCodeAcpTransport
+            from acp_gateway.connectors.policy import LocalAgentPolicy
+
+            return await ClaudeCodeAcpTransport.open(
+                self.profile.claude_code, LocalAgentPolicy.from_profile(self.profile)
+            ), None
+        if self.profile.backend == "codex":
+            from acp_gateway.adapters.codex import CodexAcpTransport
+            from acp_gateway.connectors.policy import LocalAgentPolicy
+
+            return await CodexAcpTransport.open(
+                self.profile.codex, LocalAgentPolicy.from_profile(self.profile)
+            ), None
         if self.profile.backend == "hermes":
             from acp_gateway.adapters.hermes import HermesDedicatedClient
             from acp_gateway.adapters.hermes_acp import HermesAcpTransport
@@ -475,7 +489,7 @@ class AgentClient:
         if self._bindings.get(session_id, {}).get("restore") == "connector-live":
             return "restore-required"
         if (
-            self.profile.kind == "hermes"
+            self.profile.kind in {"hermes", "codex", "claude_code"}
             or self._bindings.get(session_id, {}).get("restore") == "disabled"
         ):
             return "restore-unavailable"
@@ -483,6 +497,11 @@ class AgentClient:
 
     async def load_session(self, session_id: str, cwd: str | None = None) -> None:
         """Attach an existing session to this connection; its history replay is dropped."""
+        if self.profile.kind in {"codex", "claude_code"}:
+            raise SessionNotFound(
+                f"{self.profile.display_name} cold resume is unavailable; "
+                "explicitly create a new session"
+            )
         if session_id in self._model_uncertain:
             raise SessionBusy("Model selection outcome is unknown; no automatic retry")
         await self.ensure_connected()
@@ -669,6 +688,13 @@ class AgentClient:
 
         Closing the iterator before the end cancels the turn on the agent.
         """
+        if self.profile.kind in {"codex", "claude_code"} and (
+            not self.connected or session_id not in self._attached or session_id in self._uncertain
+        ):
+            raise SessionNotFound(
+                f"{self.profile.display_name} dialogue is unavailable or uncertain; "
+                "no automatic replay"
+            )
         if session_id in self._model_operations or session_id in self._model_uncertain:
             raise SessionBusy("Model operation is pending or its outcome is unknown")
         binding = self._bindings.get(session_id, {})
@@ -723,6 +749,11 @@ class AgentClient:
             )
         finally:
             try:
+                if not finished and self.profile.kind in {"codex", "claude_code"}:
+                    # Closing our owned child is not an assertion of exact-turn cancellation.
+                    self._uncertain.add(session_id)
+                    self._attached.discard(session_id)
+                    await self._abandon(transport)
                 if not finished and not request.done():
                     self._uncertain.add(session_id)
                     with contextlib.suppress(Exception):
@@ -738,8 +769,9 @@ class AgentClient:
                     self._uncertain.add(session_id)
                     self._attached.discard(session_id)
                     request.cancel()
-                elif (
-                    not finished and self._bindings.get(session_id, {}).get("restore") == "disabled"
+                elif not finished and (
+                    self.profile.kind in {"codex", "claude_code"}
+                    or self._bindings.get(session_id, {}).get("restore") == "disabled"
                 ):
                     # A failed Hermes result does not prove upstream work stopped.
                     self._uncertain.add(session_id)
@@ -867,7 +899,13 @@ class AgentClient:
             await self._abandon(transport)
             raise TransportDisconnected(f"lost connection to {self.profile.display_name}") from exc
         except TimeoutError as exc:
+            if self.profile.kind in {"codex", "claude_code"}:
+                await self._abandon(transport)
             raise AgentUnavailable(f"{self.profile.display_name} did not answer in time") from exc
+        except asyncio.CancelledError:
+            if self.profile.kind in {"codex", "claude_code"}:
+                await self._abandon(transport)
+            raise
         except RequestError as exc:
             if not_found is not None:
                 raise SessionNotFound(not_found) from exc

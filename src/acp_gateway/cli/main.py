@@ -392,6 +392,11 @@ def _build_parser() -> argparse.ArgumentParser:
     return parser
 
 
+def _managed_environment(settings):
+    wsl = getattr(settings, "wsl", None)
+    return f" in WSL {wsl.distribution}/{wsl.user}" if wsl is not None else " on this computer"
+
+
 def _cmd_config_check(cfg: AppConfig) -> int:
     s = cfg.settings
     print(f"config file: {cfg.config_path or '(none, defaults)'}")
@@ -420,8 +425,24 @@ def _cmd_config_check(cfg: AppConfig) -> int:
             print(f"    route: {agent.address} (computer credentials remain on the computer)")
         elif agent.backend == "hermes":
             print(f"    attach: local Hermes/{agent.hermes.profile}; dedicated conversations")
+        elif agent.backend == "claude_code":
+            print(
+                "    managed: local Claude Code; native manual permissions, not an OS sandbox; "
+                "dedicated sessions, no cold resume; acpgw agents configure"
+            )
+        elif agent.backend == "codex":
+            print(
+                f"    managed: local Codex; sandbox: {agent.codex.sandbox}; "
+                "dedicated sessions, no cold resume (experimental manual YAML)"
+            )
         else:
             print(f"    url: {agent.url}  tls: {tls}")
+        if agent.backend in {"codex", "claude_code"}:
+            wsl = getattr(getattr(agent, agent.backend), "wsl", None)
+            if wsl is not None:
+                print(f"    environment: WSL {wsl.distribution}/{wsl.user}; Linux cwd below")
+            else:
+                print("    environment: native")
         print(f"    secret: {secret}  cwd: {agent.default_cwd}")
         if agent.backend == "remote":
             print(f"    endpoint: {agent.acp_endpoint}  session mode: {agent.session_mode or '-'}")

@@ -71,6 +71,22 @@ def run(config, args):
 
         async def local_factory(alias):
             maintenance.check_admission()
+            if clients[alias].profile.backend == "claude_code":
+                from acp_gateway.adapters.claude_code import ClaudeCodeProcessManager
+
+                if alias not in managers:
+                    managers[alias] = ClaudeCodeProcessManager(
+                        clients[alias].profile.claude_code, policies[alias]
+                    )
+                return PolicyTransport(await managers[alias].open(), policies[alias])
+            if clients[alias].profile.backend == "codex":
+                from acp_gateway.adapters.codex import CodexProcessManager
+
+                if alias not in managers:
+                    managers[alias] = CodexProcessManager(
+                        clients[alias].profile.codex, policies[alias]
+                    )
+                return PolicyTransport(await managers[alias].open(), policies[alias])
             if clients[alias].profile.backend == "hermes":
                 from acp_gateway.adapters.hermes_sessions import HermesSessionManager
 

@@ -102,7 +102,7 @@ def test_protocol_error_is_not_a_shutdown_failure(monkeypatch, caplog):
         ("wizard", {"enrollment-cancel", "enrollment-begin", "enrollment-finish", "checks"}),
         ("hermes_setup", {"hermes-inspect"}),
         ("probe", {"goose-probe", "hermes-probe"}),
-        ("doctor", {"doctor-acp"}),
+        ("doctor", {"doctor-acp", "doctor-codex", "doctor-claude-code"}),
     ],
 )
 def test_all_setup_async_boundaries_use_owned_runner(module, operations):

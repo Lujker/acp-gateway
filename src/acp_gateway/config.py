@@ -119,11 +119,157 @@ class HermesAttachSettings(_Section):
         return value
 
 
+def _wsl_path(value: str) -> str:
+    """Validate a target-side Linux path without host filesystem lookups."""
+    from pathlib import PurePosixPath
+
+    if (
+        not value
+        or len(value) > 4096
+        or not value.isprintable()
+        or not value.startswith("/")
+        or value.startswith("//")
+        or "\\" in value
+        or ":" in value
+        or ".." in PurePosixPath(value).parts
+    ):
+        raise ValueError("WSL execution requires an absolute Linux path without traversal")
+    return value
+
+
+class WslSettings(_Section):
+    """Explicit Linux execution identity, owned by the Windows connector."""
+
+    distribution: str = Field(min_length=1, max_length=128)
+    user: str = Field(min_length=1, max_length=32)
+    python: str = Field(default="/usr/bin/python3", min_length=1, max_length=4096)
+    home: str | None = Field(default=None, min_length=1, max_length=4096)
+    agent_home: str | None = Field(default=None, min_length=1, max_length=4096)
+    path: list[str] = Field(default_factory=list, max_length=16)
+
+    @field_validator("distribution")
+    @classmethod
+    def _distribution(cls, value: str) -> str:
+        if value != value.strip() or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._ -]*", value):
+            raise ValueError("WSL distribution must be an explicit safe name")
+        return value
+
+    @field_validator("user")
+    @classmethod
+    def _user(cls, value: str) -> str:
+        if value == "root" or not re.fullmatch(r"[a-z_][a-z0-9_-]*", value):
+            raise ValueError("WSL execution requires an explicit non-root Linux user")
+        return value
+
+    @field_validator("python", "home", "agent_home")
+    @classmethod
+    def _path(cls, value: str | None) -> str | None:
+        return None if value is None else _wsl_path(value)
+
+    @field_validator("path")
+    @classmethod
+    def _search_paths(cls, values: list[str]) -> list[str]:
+        return [_wsl_path(value) for value in values]
+
+
+class CodexSettings(_Section):
+    wsl: WslSettings | None = None
+    executable: str = Field(default="codex", min_length=1, max_length=4096)
+    model: str | None = Field(default=None, min_length=1, max_length=128)
+    sandbox: Literal["read-only", "workspace-write"] = "read-only"
+
+    @model_validator(mode="after")
+    def _wsl_executable(self):
+        if self.wsl is not None:
+            _wsl_path(self.executable)
+        return self
+
+    request_timeout: float = Field(default=30, gt=0, le=300, allow_inf_nan=False)
+    turn_timeout: float = Field(default=600, gt=0, le=3600, allow_inf_nan=False)
+
+    @field_validator("executable")
+    @classmethod
+    def _executable(cls, value):
+        from pathlib import PurePosixPath, PureWindowsPath
+
+        if (
+            not value.isprintable()
+            or value.startswith("-")
+            or "://" in value
+            or value.startswith(("//", "\\"))
+            or any(c.isspace() for c in PureWindowsPath(value).name)
+            or any(c in value for c in "\"'`;|&<>")
+        ):
+            raise ValueError("Codex executable must be a local executable name or absolute path")
+        if not (
+            PurePosixPath(value).is_absolute() or PureWindowsPath(value).is_absolute()
+        ) and not re.fullmatch(r"[A-Za-z0-9_-][A-Za-z0-9_.-]*", value):
+            raise ValueError("Codex executable must be a local executable name or absolute path")
+        return value
+
+    @field_validator("model")
+    @classmethod
+    def _model(cls, value):
+        if value is not None and not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._:/-]*", value):
+            raise ValueError("invalid Codex model identifier")
+        return value
+
+
+class ClaudeCodeSettings(_Section):
+    wsl: WslSettings | None = None
+    executable: str = Field(default="claude", min_length=1, max_length=4096)
+    model: str | None = Field(default=None, min_length=1, max_length=128)
+    request_timeout: float = Field(default=30, gt=0, le=300, allow_inf_nan=False)
+    turn_timeout: float = Field(default=600, gt=0, le=3600, allow_inf_nan=False)
+
+    max_turns: int = Field(default=16, ge=1, le=100)
+    max_sessions: int = Field(default=8, ge=1, le=32)
+
+    @model_validator(mode="after")
+    def _wsl_executable(self):
+        if self.wsl is not None:
+            _wsl_path(self.executable)
+        return self
+
+    @field_validator("executable")
+    @classmethod
+    def _executable(cls, value):
+        from pathlib import PurePosixPath, PureWindowsPath
+
+        if (
+            not value.isprintable()
+            or value.startswith("-")
+            or "://" in value
+            or value.startswith(("//", "\\"))
+            or any(c.isspace() for c in PureWindowsPath(value).name)
+            or any(c in value for c in "\"'`;|&<>")
+        ):
+            raise ValueError(
+                "Claude Code executable must be a local executable name or absolute path"
+            )
+        if not (
+            PurePosixPath(value).is_absolute() or PureWindowsPath(value).is_absolute()
+        ) and not re.fullmatch(r"[A-Za-z0-9_-][A-Za-z0-9_.-]*", value):
+            raise ValueError(
+                "Claude Code executable must be a local executable name or absolute path"
+            )
+        return value
+
+    @field_validator("model")
+    @classmethod
+    def _model(cls, value):
+        if value is not None and not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._:/-]*", value):
+            raise ValueError("invalid Claude Code model identifier")
+        return value
+
+
 class AgentProfile(_Section):
     alias: str = Field(pattern=r"^[a-z][a-z0-9_]{0,31}$")
     title: str | None = None
-    kind: Literal["goose", "generic", "hermes"] = "generic"
-    backend: Literal["remote", "connector", "hermes"] = "remote"
+    kind: Literal["goose", "generic", "hermes", "codex", "claude_code"] = "generic"
+    backend: Literal["remote", "connector", "hermes", "codex", "claude_code"] = "remote"
+    claude_code: ClaudeCodeSettings | None = None
+    codex: CodexSettings | None = None
     hermes: HermesAttachSettings | None = None
     computer_id: str | None = Field(default=None, pattern=r"^[a-z][a-z0-9_-]{0,63}$")
     url: str = ""
@@ -184,6 +330,77 @@ class AgentProfile(_Section):
 
     @model_validator(mode="after")
     def _check_transport(self) -> AgentProfile:
+        if self.backend == "claude_code":
+            from acp_gateway.connectors.policy import LocalPolicyError, _cwd
+
+            if (
+                self.kind != "claude_code"
+                or self.hermes is not None
+                or self.codex is not None
+                or any(
+                    (
+                        self.computer_id,
+                        self.url,
+                        self.secret_env,
+                        self.tls_fingerprint,
+                        self.allow_insecure_transport,
+                        self.session_mode,
+                    )
+                )
+            ):
+                raise ValueError(
+                    "Claude Code requires kind: claude_code and local managed settings only"
+                )
+            try:
+                _cwd(self.default_cwd)
+            except LocalPolicyError:
+                raise ValueError("Claude Code requires an absolute local cwd") from None
+            if self.claude_code is None:
+                self.claude_code = ClaudeCodeSettings()
+            if self.claude_code.wsl is not None:
+                _wsl_path(self.default_cwd)
+            return self
+        if self.claude_code is not None or (
+            self.kind == "claude_code" and self.backend != "connector"
+        ):
+            raise ValueError(
+                "Claude Code settings require backend: claude_code; relay profiles use kind only"
+            )
+        if self.kind == "claude_code" and (
+            self.session_mode or self.hermes is not None or self.codex is not None
+        ):
+            raise ValueError("Claude Code relay profiles cannot configure other native transports")
+        if self.backend == "codex":
+            from acp_gateway.connectors.policy import LocalPolicyError, _cwd
+
+            if (
+                self.kind != "codex"
+                or self.hermes is not None
+                or any(
+                    (
+                        self.computer_id,
+                        self.url,
+                        self.secret_env,
+                        self.tls_fingerprint,
+                        self.allow_insecure_transport,
+                        self.session_mode,
+                    )
+                )
+            ):
+                raise ValueError("Codex requires kind: codex and local managed settings only")
+            try:
+                _cwd(self.default_cwd)
+            except LocalPolicyError:
+                raise ValueError("Codex requires an absolute local cwd") from None
+            if self.codex is None:
+                self.codex = CodexSettings()
+            if self.codex.wsl is not None:
+                _wsl_path(self.default_cwd)
+            return self
+        if self.codex is not None or (self.kind == "codex" and self.backend != "connector"):
+            raise ValueError("Codex settings require backend: codex; relay profiles use kind only")
+        if self.kind == "codex" and (self.session_mode or self.hermes is not None):
+            raise ValueError("Codex relay profiles cannot configure session modes or Hermes")
         if self.backend == "hermes":
             if self.kind != "hermes":
                 raise ValueError("backend: hermes requires kind: hermes")

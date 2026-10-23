@@ -24,7 +24,7 @@ class _Model(BaseModel):
 class AgentManifest(_Model):
     alias: AgentAlias
     display_name: Annotated[str, Field(min_length=1, max_length=128)]
-    kind: Literal["goose", "generic", "hermes"] | None = None
+    kind: Literal["goose", "generic", "hermes", "codex", "claude_code"] | None = None
     default_cwd: Annotated[str, Field(min_length=1, max_length=4096)] | None = None
     session_mode: Annotated[str, Field(min_length=1, max_length=256)] | None = None
 

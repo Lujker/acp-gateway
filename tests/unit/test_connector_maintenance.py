@@ -18,6 +18,79 @@ from acp_gateway.connectors.maintenance import (
 )
 
 
+@pytest.fixture(autouse=True)
+def _local_ipc_acl(tmp_path, monkeypatch):
+    """Behavior seam only: real file IPC, no PowerShell or OS-manager calls.
+
+    Clone the atomic writer's import scope rather than modifying shared modules.
+    The directory helper keeps its real traversal and calls a fixture-only checker.
+    Native DACL policy is covered separately in test_windows_acl.py.
+    """
+    import builtins
+    from pathlib import Path
+    from types import FunctionType
+
+    from acp_gateway import windows_acl
+    from acp_gateway.cli import connector_maintenance, wizard
+    from acp_gateway.connectors import maintenance
+
+    root = tmp_path.resolve(strict=True)
+    calls = []
+    seam = SimpleNamespace(calls=calls, before_check=lambda: None)
+
+    def check(files, *, directories=(), purpose=None):
+        seam.before_check()
+        for path in (*files, *directories):
+            path = Path(path)
+            assert path.is_absolute() and path.resolve(strict=True).is_relative_to(root)
+            for part in (path, *path.parents):
+                if part == root.parent:
+                    break
+                info = part.lstat()
+                assert not part.is_symlink()
+                assert not getattr(info, "st_file_attributes", 0) & 0x400
+            calls.append(path.name)
+        return None
+
+    ensure = FunctionType(
+        windows_acl.ensure_private_directory.__code__,
+        {**windows_acl.ensure_private_directory.__globals__, "check_private_paths": check},
+    )
+    acl = SimpleNamespace(check_private_paths=check, ensure_private_directory=ensure)
+
+    def local_import(name, globals=None, locals=None, fromlist=(), level=0):
+        if name == "acp_gateway.windows_acl" and level == 0:
+            return acl
+        return builtins.__import__(name, globals, locals, fromlist, level)
+
+    atomic = FunctionType(
+        wizard._atomic.__code__,
+        {
+            **wizard._atomic.__globals__,
+            "sys": SimpleNamespace(platform="win32"),
+            "__builtins__": {**vars(builtins), "__import__": local_import},
+        },
+    )
+
+    async def drained_to_thread(function, /, *args, **kwargs):
+        job = asyncio.create_task(asyncio.to_thread(function, *args, **kwargs))
+        try:
+            return await asyncio.shield(job)
+        except asyncio.CancelledError:
+            # The OS write must finish before watcher cleanup removes STATUS.
+            await job
+            raise
+
+    monkeypatch.setattr(
+        maintenance,
+        "asyncio",
+        SimpleNamespace(**(vars(asyncio) | {"to_thread": drained_to_thread})),
+    )
+    monkeypatch.setattr(maintenance, "_atomic", atomic)
+    monkeypatch.setattr(connector_maintenance, "_atomic", atomic)
+    yield seam
+
+
 @pytest.fixture
 def controller():
     return ConnectorMaintenance([SimpleNamespace(alias="hermes", backend="hermes")], {})

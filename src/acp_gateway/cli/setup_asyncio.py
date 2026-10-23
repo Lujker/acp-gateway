@@ -28,6 +28,8 @@ _OPERATIONS = frozenset(
         "goose-probe",
         "hermes-probe",
         "doctor-acp",
+        "doctor-codex",
+        "doctor-claude-code",
     }
 )
 

@@ -46,7 +46,7 @@ class ConnectorMaintenance:
         counts = dict.fromkeys(FIELDS, 0)
         unsupported = 0
         for profile in self.profiles:
-            if profile.backend != "hermes":
+            if profile.backend not in {"hermes", "codex", "claude_code"}:
                 unsupported += 1
             elif profile.alias in self.managers:
                 for key, value in self.managers[profile.alias].maintenance_status().items():
@@ -60,7 +60,8 @@ class ConnectorMaintenance:
 
     def session_control(self, operation, alias, handle=None):
         manager = self.managers.get(alias)
-        if manager is None:
+        profile = next((p for p in self.profiles if p.alias == alias), None)
+        if manager is None or profile is None or profile.backend != "hermes":
             raise ValueError("Unknown local Hermes alias or no live manager")
         if operation == "sessions":
             return {"agent": alias, "sessions": manager.sessions()}
@@ -102,6 +103,7 @@ async def watch(directory, instance, controller, *, interval=0.2):
     import json
 
     last = None
+    pending_response = None
     publish_failed = False
     try:
         while True:
@@ -131,7 +133,6 @@ async def watch(directory, instance, controller, *, interval=0.2):
                     and request.get("instance") == instance
                     and isinstance(request.get("request"), str)
                     and re.fullmatch(r"[a-f0-9]{32}", request["request"])
-                    and request["request"] != last
                     and type(request.get("expires")) in (int, float)
                     and time.time() <= request["expires"] <= time.time() + 30
                     and request.get("operation")
@@ -139,33 +140,41 @@ async def watch(directory, instance, controller, *, interval=0.2):
                     and type(request.get("force", False)) is bool
                     and type(request.get("restart_uncertain", False)) is bool
                 )
-                if valid:
-                    last = request["request"]
-                    # No await between the activity check and closing admission.
-                    try:
-                        if request["operation"] in {"sessions", "journal", "retire"}:
-                            result = controller.session_control(
-                                request["operation"], request.get("agent"), request.get("handle")
-                            )
-                        else:
-                            result = controller.apply(
-                                request["operation"],
-                                request.get("token"),
-                                force=request.get("force", False),
-                                restart_uncertain=request.get("restart_uncertain", False),
-                            )
-                        response = {"status": 200, "result": result}
-                    except (ValueError, AgentUnavailable, KeyError, TypeError):
-                        response = {
-                            "status": 409,
-                            "result": {
-                                "detail": "Connector maintenance refused; inspect activity status"
-                            },
-                        }
-                    response.update(instance=instance, request=last)
+                if valid and (request["request"] != last or pending_response is not None):
+                    if request["request"] != last:
+                        last = request["request"]
+                        # No await between the activity check and closing admission.
+                        try:
+                            if request["operation"] in {"sessions", "journal", "retire"}:
+                                result = controller.session_control(
+                                    request["operation"],
+                                    request.get("agent"),
+                                    request.get("handle"),
+                                )
+                            else:
+                                result = controller.apply(
+                                    request["operation"],
+                                    request.get("token"),
+                                    force=request.get("force", False),
+                                    restart_uncertain=request.get("restart_uncertain", False),
+                                )
+                            pending_response = {"status": 200, "result": result}
+                        except (ValueError, AgentUnavailable, KeyError, TypeError):
+                            pending_response = {
+                                "status": 409,
+                                "result": {
+                                    "detail": (
+                                        "Connector maintenance refused; inspect activity status"
+                                    )
+                                },
+                            }
+                        pending_response.update(instance=instance, request=last)
+                    # Preserve the result if publication fails. Replaying the
+                    # operation could reserve twice or lose the original token.
                     await asyncio.to_thread(
-                        _atomic, directory / RESPONSE, json.dumps(response).encode()
+                        _atomic, directory / RESPONSE, json.dumps(pending_response).encode()
                     )
+                    pending_response = None
             except (OSError, ValueError, TypeError, RecursionError):
                 pass
             await asyncio.sleep(interval)
