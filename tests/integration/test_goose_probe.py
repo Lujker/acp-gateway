@@ -26,7 +26,9 @@ async def test_goose_probe_initializes_only_with_recorded_sdk_contract(monkeypat
 
 async def test_goose_probe_tls_requires_exact_pin_without_persisting(tmp_path):
     value = secrets.token_urlsafe(32)
-    cert, key = make_cert(tmp_path)
+    probe_directory = tmp_path / "probe"
+    probe_directory.mkdir()
+    cert, key = make_cert(probe_directory)
     with FakeGooseServer(value, certfile=cert, keyfile=key) as server:
         url = server.url("wss")
         assert (await probe_goose(url, secret=value))["status"] == "auth-required"
@@ -38,7 +40,7 @@ async def test_goose_probe_tls_requires_exact_pin_without_persisting(tmp_path):
             "status"
         ] == "ready"
         assert server.log == ["initialize"]
-    assert sorted(p.name for p in tmp_path.iterdir()) == ["cert-False.pem", "key-False.pem"]
+    assert sorted(p.name for p in probe_directory.iterdir()) == ["cert-False.pem", "key-False.pem"]
 
 
 @pytest.mark.parametrize("reply", ["normal", "wrong_agent", "bad_version", "too_large", "timeout"])
