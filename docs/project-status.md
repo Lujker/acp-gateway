@@ -41,6 +41,16 @@ connectors (owner acceptance 2026-10-15). See
 
 ## Current work and limits
 
+**Owner decision, 2026-10-23: paused; documentation only.** P4.13 remains PARTIAL.
+The next implementation substage, only after an explicit request to resume, is
+P4.13.1 safe/work profiles with cancel and persisted resume (OPEN, not started).
+Targeted main comparison is accepted as sufficient to proceed; incomplete full-main
+baseline and remaining Windows/interop issues stay documented debt, not a gate.
+No further baseline runs, implementation, live acceptance or installation changes
+are authorized during this pause. See the
+[current checkpoint](plans/p4.13-resumption.ru.md#owner-directive-2026-10-23).
+The test counts below are historical, not a current all-green suite.
+
 **P4.13 is PARTIAL (source only):** managed Codex CLI/App Server and Claude Code
 CLI adapters, configuration/setup/doctor and connector relay wiring are implemented.
 They are not in published 0.2.2. The final post-review-fix WSL suite passed
@@ -59,7 +69,7 @@ chat catalogue/import or Telegram native attach-by-ID is implemented.
 See [Codex configuration](setup/codex-managed.md),
 [Claude Code configuration](setup/claude-code-managed.md) and
 [implementation evidence](items/connector-harness-adapters.ru.md).
-For resuming this uncommitted source work, use the
+For resuming the committed but unreleased source work, use the
 [handoff and acceptance plan](plans/p4.13-resumption.ru.md); documentation recording
 does not start live acceptance or change production.
 
@@ -71,8 +81,10 @@ cleanup uncertainty, no prompts); Windows→WSL focused tests passed 135/34 skip
 Final post-format full WSL suite passed **2148 tests,48 skipped**; this
 source-checkout managed-launch substage is complete. The broader native
 Windows unit run is **not green**. On 2026-10-23 the owner authorized local
-full Windows runs without the strict isolation runner; the next comparison is
-main versus the feature branch. Stop and report if a test actually mutates
+full Windows runs without the strict isolation runner. The later main/branch
+comparison is partial; its accepted targeted results and unresolved debt are
+recorded in the current checkpoint. More baseline work is not the next step.
+Stop and report if a test actually mutates
 services or Task Scheduler tasks. See the
 [current owner directive](plans/p4.13-resumption.ru.md#owner-directive-2026-10-23). No native catalogue/ID/live Desktop attachment, authenticated
 model or Telegram acceptance follows from these checks. See the
