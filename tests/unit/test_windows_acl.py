@@ -1,8 +1,8 @@
 import asyncio
-import base64
 import json
 import secrets
 import subprocess
+import sys
 import threading
 from types import SimpleNamespace
 
@@ -44,49 +44,60 @@ def test_untrusted_parent_prevents_creation(tmp_path, monkeypatch):
     assert not (tmp_path / "new").exists()
 
 
-def test_fixed_script_checks_batched_paths_without_shell(monkeypatch, tmp_path):
+def test_fixed_native_child_checks_batched_paths_without_shell(monkeypatch, tmp_path):
+    import multiprocessing
+
+    monkeypatch.setattr(sys, "frozen", True, raising=False)
     captured = {}
 
-    def run(argv, **kwargs):
-        captured.update(argv=argv, **kwargs)
-        return SimpleNamespace(returncode=0, stdout='{"private":true}')
+    class Connection:
+        def send_bytes(self, data):
+            captured["reply"] = data
 
-    monkeypatch.setattr(windows_acl.shutil, "which", lambda name: "powershell.exe")
-    monkeypatch.setattr(windows_acl.subprocess, "run", run)
+        def poll(self, timeout):
+            captured["timeout"] = timeout
+            return True
+
+        def recv_bytes(self, maxlength):
+            assert maxlength == 7
+            return b"private"
+
+        def close(self):
+            pass
+
+    class Process:
+        exitcode = 0
+
+        def __init__(self, *, target, args, daemon):
+            captured.update(target=target, args=args, daemon=daemon)
+
+        def start(self):
+            pass
+
+        def join(self, timeout):
+            assert timeout <= 1
+
+        def is_alive(self):
+            return False
+
+        def close(self):
+            pass
+
+    def context(method):
+        assert method == "spawn"
+        return SimpleNamespace(Pipe=lambda duplex: (Connection(), Connection()), Process=Process)
+
+    def forbidden(*args, **kwargs):
+        pytest.fail("PowerShell must not be started")
+
+    monkeypatch.setattr(multiprocessing, "get_context", context)
+    monkeypatch.setattr(subprocess, "run", forbidden)
     paths = [tmp_path / 'token & $(throw "injection")', tmp_path / "record.json"]
     windows_acl.check_private_paths(paths, directories=[tmp_path])
-    assert json.loads(captured["input"]) == {
-        "files": list(map(str, paths)),
-        "directories": [str(tmp_path)],
-    }
-    assert base64.b64decode(captured["argv"][-1]).decode("utf-16-le") == windows_acl.SCRIPT
-    assert captured["creationflags"] == getattr(subprocess, "CREATE_NO_WINDOW", 0)
-    assert "shell" not in captured
-    assert captured["timeout"] == 10
-
-
-@pytest.mark.parametrize("failure", ["missing", "start", "timeout", "denied", "json", "shape"])
-def test_acl_verification_fails_closed_without_echoing_input(monkeypatch, failure):
-    value = secrets.token_urlsafe(32)
-    monkeypatch.setattr(
-        windows_acl.shutil, "which", lambda name: None if failure == "missing" else name
-    )
-
-    def run(argv, **kwargs):
-        if failure == "start":
-            raise OSError(value)
-        if failure == "timeout":
-            raise subprocess.TimeoutExpired(argv, 10, output=value)
-        return SimpleNamespace(
-            returncode=1 if failure == "denied" else 0,
-            stdout=value if failure == "json" else '{"private":false}',
-            stderr=value,
-        )
-
-    monkeypatch.setattr(windows_acl.subprocess, "run", run)
-    with pytest.raises(ValueError) as exc:
-        windows_acl.check_private_paths([value])
-    assert value not in str(exc.value)
+    assert captured["target"] is windows_acl._verify_child
+    assert captured["args"][0] == {"files": list(map(str, paths)), "directories": [str(tmp_path)]}
+    assert captured["daemon"] is True
+    assert captured["timeout"] <= 10
 
 
 async def test_discovery_preflight_does_not_block_event_loop(monkeypatch, tmp_path):
@@ -106,3 +117,63 @@ async def test_discovery_preflight_does_not_block_event_loop(monkeypatch, tmp_pa
         timer.cancel()
         released.set()
     assert rows[0]["status"] == "missing"
+
+
+def test_interpreter_child_has_fixed_entry_and_timeout(monkeypatch, tmp_path):
+    captured = {}
+
+    def run(argv, **kwargs):
+        captured.update(argv=argv, **kwargs)
+        return SimpleNamespace(returncode=0, stdout='{"private":true}')
+
+    monkeypatch.setattr(subprocess, "run", run)
+    windows_acl.check_private_paths([tmp_path / 'a & $(throw "injection")'], directories=[tmp_path])
+    assert captured["argv"] == [
+        sys.executable,
+        "-I",
+        str(windows_acl.Path(windows_acl.__file__).absolute()),
+    ]
+    assert captured["timeout"] == 10
+    assert "shell" not in captured
+    assert json.loads(captured["input"])["directories"] == [str(tmp_path)]
+
+
+@pytest.mark.parametrize("failure", ["start", "timeout", "denied", "json", "shape"])
+def test_native_verification_fails_closed_without_echoing_input(monkeypatch, failure):
+    value = secrets.token_urlsafe(32)
+
+    def run(argv, **kwargs):
+        if failure == "start":
+            raise OSError(value)
+        if failure == "timeout":
+            raise subprocess.TimeoutExpired(argv, 10, output=value)
+        return SimpleNamespace(
+            returncode=1 if failure == "denied" else 0,
+            stdout=value if failure == "json" else '{"private":false}',
+        )
+
+    monkeypatch.setattr(subprocess, "run", run)
+    with pytest.raises(ValueError) as exc:
+        windows_acl.check_private_paths([value])
+    assert value not in str(exc.value)
+
+
+@pytest.mark.parametrize("denied", [False, True])
+def test_standalone_verifier_response_is_sanitized(monkeypatch, capsys, denied):
+    import io
+
+    value = secrets.token_urlsafe(32)
+    monkeypatch.setattr(
+        sys, "stdin", io.StringIO(json.dumps({"files": [value], "directories": []}))
+    )
+
+    def verify(payload):
+        assert payload["files"] == [value]
+        if denied:
+            raise OSError(value)
+
+    monkeypatch.setattr(windows_acl, "_verify_paths", verify)
+    assert windows_acl._verifier_main() == int(denied)
+    output = capsys.readouterr()
+    assert output.err == ""
+    assert output.out == ("" if denied else '{"private":true}\n')

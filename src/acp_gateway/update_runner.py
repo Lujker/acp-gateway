@@ -32,14 +32,16 @@ def runtime_sources():
         remote_update_worker,
         update_delivery,
         update_journal,
-        windows_acl,
+        updater_windows_acl,
     )
 
     return (
         (remote_update_worker, "worker.py"),
         (update_journal, "update_journal.py"),
         (maintenance_worker, "update_lock.py"),
-        (windows_acl, "windows_acl.py"),
+        # The copied stdlib worker runs under the independent base interpreter,
+        # not the replaceable application's pywin32-enabled environment.
+        (updater_windows_acl, "windows_acl.py"),
         (update_delivery, "update_delivery.py"),
     )
 

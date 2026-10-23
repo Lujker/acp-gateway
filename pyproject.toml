@@ -29,6 +29,7 @@ dependencies = [
     "pydantic>=2.10",
     "pydantic-settings[yaml]>=2.8",
     "python-dotenv>=1.0",
+    "pywin32>=311; sys_platform == 'win32'",
     "structlog>=25.1",
     "colorama>=0.4.6; sys_platform == 'win32'",
     "uvicorn>=0.34",

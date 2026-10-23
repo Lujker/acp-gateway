@@ -1,5 +1,7 @@
 import asyncio
 import json
+import subprocess
+import sys
 import time
 from types import SimpleNamespace
 
@@ -19,7 +21,7 @@ from acp_gateway.connectors.maintenance import (
 
 
 @pytest.fixture(autouse=True)
-def _local_ipc_acl(tmp_path, monkeypatch):
+def _local_ipc_acl(tmp_path, monkeypatch, request):
     """Behavior seam only: real file IPC, no PowerShell or OS-manager calls.
 
     Clone the atomic writer's import scope rather than modifying shared modules.
@@ -86,6 +88,16 @@ def _local_ipc_acl(tmp_path, monkeypatch):
         "asyncio",
         SimpleNamespace(**(vars(asyncio) | {"to_thread": drained_to_thread})),
     )
+    if getattr(request, "param", "behavior") == "native":
+        original = subprocess.run
+
+        def forbidden(argv, **kwargs):
+            assert all("powershell" not in arg.lower() for arg in argv)
+            return original(argv, **kwargs)
+
+        monkeypatch.setattr(subprocess, "run", forbidden)
+        yield None
+        return
     monkeypatch.setattr(maintenance, "_atomic", atomic)
     monkeypatch.setattr(connector_maintenance, "_atomic", atomic)
     yield seam
@@ -96,6 +108,19 @@ def controller():
     return ConnectorMaintenance([SimpleNamespace(alias="hermes", backend="hermes")], {})
 
 
+@pytest.mark.parametrize(
+    "_local_ipc_acl",
+    [
+        "behavior",
+        pytest.param(
+            "native",
+            marks=pytest.mark.skipif(
+                sys.platform != "win32", reason="real Windows ACL maintenance acceptance"
+            ),
+        ),
+    ],
+    indirect=True,
+)
 async def test_live_local_ipc_reserves_and_resumes_without_owner_api(tmp_path, controller):
     with FileLock(tmp_path / "connector.lock"), control_record(tmp_path) as instance:
         task = asyncio.create_task(watch(tmp_path, instance, controller, interval=0.01))
@@ -106,6 +131,9 @@ async def test_live_local_ipc_reserves_and_resumes_without_owner_api(tmp_path, c
                     await asyncio.sleep(0.01)
             prepared = await asyncio.to_thread(client.request, "POST", "/maintenance/prepare")
             assert prepared.status_code == 200
+            published = json.loads((tmp_path / STATUS).read_bytes())["published"]
+            assert 0 <= time.time() - published < 5
+            print(f"maintenance status age={time.time() - published:.3f}s")
             token = prepared.json()["token"]
             assert controller.status()["reserved"]
             with pytest.raises(Exception, match="reserved"):
@@ -214,6 +242,19 @@ def test_uncertain_ack_never_permits_active_or_unsupported_work(controller, fiel
     assert not controller.status()["reserved"]
 
 
+@pytest.mark.parametrize(
+    "_local_ipc_acl",
+    [
+        "behavior",
+        pytest.param(
+            "native",
+            marks=pytest.mark.skipif(
+                sys.platform != "win32", reason="real Windows ACL maintenance acceptance"
+            ),
+        ),
+    ],
+    indirect=True,
+)
 async def test_uncertain_restart_ack_crosses_live_ipc_and_still_reserves_atomically(
     tmp_path, controller
 ):
@@ -233,6 +274,9 @@ async def test_uncertain_restart_ack_crosses_live_ipc_and_still_reserves_atomica
                 client.request, "POST", "/maintenance/prepare", json={"restart_uncertain": True}
             )
             assert prepared.status_code == 200
+            published = json.loads((tmp_path / STATUS).read_bytes())["published"]
+            assert 0 <= time.time() - published < 5
+            print(f"maintenance status age={time.time() - published:.3f}s")
             assert controller.status()["reserved"] and counts["uncertain_sessions"] == 1
             with pytest.raises(Exception, match="reserved"):
                 controller.check_admission()
@@ -241,6 +285,19 @@ async def test_uncertain_restart_ack_crosses_live_ipc_and_still_reserves_atomica
             await asyncio.gather(task, return_exceptions=True)
 
 
+@pytest.mark.parametrize(
+    "_local_ipc_acl",
+    [
+        "behavior",
+        pytest.param(
+            "native",
+            marks=pytest.mark.skipif(
+                sys.platform != "win32", reason="real Windows ACL maintenance acceptance"
+            ),
+        ),
+    ],
+    indirect=True,
+)
 async def test_activity_write_failure_is_logged_and_watcher_recovers(
     tmp_path, controller, monkeypatch
 ):
@@ -271,6 +328,9 @@ async def test_activity_write_failure_is_logged_and_watcher_recovers(
             client = LocalClient(tmp_path, timeout=5)
             response = await asyncio.to_thread(client.request, "POST", "/maintenance/prepare")
             assert response.status_code == 200
+            published = json.loads((tmp_path / STATUS).read_bytes())["published"]
+            assert 0 <= time.time() - published < 5
+            print(f"maintenance status age={time.time() - published:.3f}s")
         finally:
             task.cancel()
             await asyncio.gather(task, return_exceptions=True)
