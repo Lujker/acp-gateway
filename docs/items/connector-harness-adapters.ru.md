@@ -1295,3 +1295,36 @@ ACL/freshness 5s/client budgets не менялись. Slow ACL/late ACK, cancel
 Исправление закрывает подмену cached ACK изменённым запросом и повторный apply обработанного ID; durable exactly-once не заявляется.
 Неблокирующий тест retry отказа 409 оставлен улучшением, не условием закрытия ACK-1.
 Изменения сохраняются отдельным коммитом в рабочей ветке; следующий шаг — ACL-backend A, без baseline/work-mode/live/release.
+
+
+## ACL-backend A — 2026-10-23, review pending
+Read-only pywin32 verifier: фиксированный standalone child `sys.executable -I windows_acl.py`, JSON stdin, прежний timeout 10s/kill/reap; frozen entry сохраняет bounded spawn с join/terminate/kill. Policy, freshness 5s, client budgets и ACK-1 не изменены; pywin32 объявлен прямой Windows-зависимостью.
+RED: `rtk proxy uv run --frozen pytest tests/unit/test_windows_acl.py::test_fixed_native_child_checks_batched_paths_without_shell -q` — 1 failed (PowerShell); GREEN — 1 passed. Generic spawn дал 3 native IPC failures (status age 7.153s/409/deadline); fixed entry — 3 passed без ослабления checks.
+Parity: точная копия прежнего SCRIPT в tests-only oracle проверена против HEAD; 64 реальных descriptor-case (32×file/directory) + 4 missing/junction comparisons, 0 различий; owner/absent-DACL/error branches дополнены synthetic-тестами. Object ACE и inherit-only нормализуются как .NET, callback Allow проверяется по mask; неизвестные ACE fail closed.
+Windows A/B, одна file+directory batch Python 3.12.13: PowerShell 1.139834s → fixed native child 0.424801s (−62.73%); отвергнутый generic-spawn prototype 0.711589s. Финальные 3 native maintenance IPC cases прошли, status age 1.902/1.955/2.022s < 5s, production PowerShell starts = 0; это evidence для win-f04/f05/f06, закрытие после review.
+Цели: `T="tests/unit/test_windows_acl.py tests/unit/test_windows_acl_native.py tests/unit/test_connector_maintenance.py tests/unit/test_hermes_discovery.py tests/unit/test_windows_setup_paths.py tests/unit/test_credential_windows_boundary.py"`; WSL: `HOME=/tmp/p413-acl-home TMPDIR=/tmp rtk proxy uv run --frozen pytest $T -q -s --basetemp=/tmp/p413-acl-final-wsl -o cache_dir=/tmp/p413-acl-cache-wsl --durations=5` — 72 passed, 1 failed, 76 skipped, 4.72s.
+Windows: `R=//wsl.localhost/Ubuntu-22.04/home/user/projects/acp-gateway; P=$R/dist/rc8-verification/windows-venv/Scripts/python.exe; PYTHONPATH="$R/src" TMP="$TMPDIR" TEMP="$TMPDIR" "C:/Program Files/rtk/rtk.exe" proxy "$P" -m pytest $(printf "$R/%s " $T) -q -s --basetemp="$TMPDIR/p413-acl-final-win" -o cache_dir="$TMPDIR/p413-acl-cache-win" --durations=5` — 144 passed, 1 failed, 4 skipped, 146.37s; TMPDIR — собственный Windows scratch, не system temp.
+Единственный общий failure — старый тест считал весь tmp_path пустым вопреки autouse environment directories; assertion перенесён в собственный output/. Только `tests/unit/test_windows_setup_paths.py::test_atomic_acl_failure_writes_no_secret_and_keeps_original -q` повторён теми же launchers с отдельными repaired basetemp: Windows 1 passed (11.55s), WSL 1 passed (0.92s). Итог уникального scope: Windows 145 passed/4 skipped, WSL 73 passed/76 skipped; широкого повторного прогона нет.
+`rtk proxy uv run --frozen ruff check` — All checks passed; `rtk proxy uv run --frozen ruff format --check` — 374 files already formatted; `rtk git diff --check` — успешно. Production/source после этих scoped проверок не менялся; isolation guard заморожен.
+Статус: review pending, без commit/push; frozen binary startup/latency не проверены собранным артефактом, arbitrary remote FS и прежние cancellation/SQLite/REQUEST-replace риски вне шага. Baseline/work-mode/live/model/release/deploy не начинались.
+
+
+## ACL-backend A — 2026-10-23, единственный review-fix, re-review pending
+Первое ACL-ревью не принято: copied independent updater запускался base Python без pywin32 и отказывал на load_policy; прежняя запись review pending не означает PASS.
+Только copied runtime явно выбирает updater_windows_acl.py как windows_acl.py: сохранён прежний bounded PowerShell verifier из ce580af, policy/timeout 10s/error-contract без изменений; application/IPC остаётся native pywin32 child без fallback.
+RED Windows: `PYTHONPATH="$R/src" "C:/Program Files/rtk/rtk.exe" proxy "$R/dist/rc8-verification/windows-venv/Scripts/python.exe" -m pytest "$R/tests/unit/test_updater_acl_runtime.py::test_policy_load_under_isolated_base_interpreter" -q --basetemp="$TMPDIR/updater-acl-red"` — 1 failed, private owned policy отвергнут copied native helper.
+GREEN/scoped Windows: тот же launcher, `tests/unit/test_updater_acl_runtime.py -q --basetemp="$TMPDIR/updater-acl-green"` — 3 passed, 9.60s; R — текущий checkout, TMPDIR — owned Windows scratch.
+Probe запускает sys._base_executable -I, подтверждает отсутствие acp_gateway/win32api и игнорирование poisoned PYTHONPATH: реальный private file/directory принят, public ACL test-owned файла отвергнут. Timeout test fail-closed; copy_runtime/runtime_current consistency и stale detection покрыты.
+WSL: `TMPDIR=/tmp rtk proxy uv run --frozen python -m pytest tests/unit/test_updater_acl_runtime.py -q --basetemp=/tmp/acpgw-updater-acl-review-fix` — 2 passed, 1 skipped, 0.09s; HOME/temp из autouse fixture на Linux FS.
+`rtk proxy uv run --frozen ruff check src/acp_gateway/update_runner.py src/acp_gateway/updater_windows_acl.py tests/unit/test_updater_acl_runtime.py` — All checks passed; `ruff format --check` тех же путей — 3 files already formatted; `git diff --check` — успешно.
+Без dependency bundling/global install/смены interpreter; worker main, update, services/Scheduler не запускались, guard и прочие пункты не менялись; ACL corpus/maintenance/A-B не повторялись. Возврат родителю на финальное re-review, без commit/push; новый blocker — эскалация владельцу.
+
+
+## ACL-backend A принят — 2026-10-23
+Финальное независимое ревью после одного fix-cycle: PASS, security/logic findings отсутствуют; production после проверок не менялся.
+Основной application/IPC verifier — bounded pywin32 child; независимый copied updater явно сохраняет прежний stdlib/PowerShell support, без fallback в hot path.
+Приняты 68 oracle comparisons без расхождений, Windows A/B 1.139834s → 0.424801s; win-f04/f05/f06 закрыты по реальным IPC cases с status age 1.902/1.955/2.022s <5s и 0 PowerShell starts в hot path.
+Исходные scoped результаты: Windows 144 passed/1 failed/4 skipped, WSL 72 passed/1 failed/76 skipped; исправленный test-only assertion отдельно 1 passed на каждой OS, общего повторного green-run не было.
+Fix updater: Windows 3 passed; WSL 2 passed/1 skipped; результаты приняты без дублирования, lint/format/diff-check успешны.
+Frozen binary latency не проверялась; deferred SQLite/to_thread/REQUEST-replace риски сохранены.
+Следующий шаг — baseline main/ветка на Windows и полный WSL ветки, без work-mode/live/release.

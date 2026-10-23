@@ -42,7 +42,9 @@ def test_relative_runtime_paths_are_rejected(tmp_path, field):
 def test_atomic_acl_failure_writes_no_secret_and_keeps_original(tmp_path, monkeypatch):
     monkeypatch.setattr(sys, "platform", "win32")
     monkeypatch.setattr(windows_acl, "ensure_private_directory", lambda path: None)
-    target = tmp_path / "settings.env"
+    directory = tmp_path / "output"
+    directory.mkdir()
+    target = directory / "settings.env"
     target.write_bytes(b"original")
 
     def reject(files, **kwargs):
@@ -54,7 +56,7 @@ def test_atomic_acl_failure_writes_no_secret_and_keeps_original(tmp_path, monkey
     with pytest.raises(ValueError, match="private ACL"):
         w._atomic(target, b"secret")
     assert target.read_bytes() == b"original"
-    assert list(tmp_path.iterdir()) == [target]
+    assert list(directory.iterdir()) == [target]
 
 
 def test_snapshot_acl_failure_prevents_read(tmp_path, monkeypatch):
