@@ -9,11 +9,15 @@ S1/L1/L2/L3 defect was found in the revised BEGIN/CLEAN and final-drain mechanis
 This does not establish a sandbox, authenticated model/channel acceptance, or an
 overall green Windows suite. See the item journal for evidence and limits.
 
-It lets one Windows connector start **new** managed Codex CLI or Claude Code CLI
+It lets one Windows connector start managed Codex CLI or Claude Code CLI
 conversations in an explicitly selected WSL distribution and Linux user, instead
 of requiring a second gateway/connector installed inside WSL.
 
-It does **not** provide native chat catalogue, resume by native ID, attachment to
+Safe/work profiles and resume of this connector profile's own persisted chats are
+implemented in source; see the backend guides. Native history and gateway binding
+must both remain available. Unknown work or unconfirmed WSL cleanup fences resume.
+
+It does **not** provide native chat catalogue, import of arbitrary native IDs, attachment to
 an already open CLI/Desktop conversation, or Desktop shared control. Those remain
 separate, unproven scopes.
 

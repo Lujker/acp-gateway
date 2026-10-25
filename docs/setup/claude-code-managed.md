@@ -3,11 +3,11 @@
 [Documentation](../README.md) · [P4.13 scope and evidence](../items/connector-harness-adapters.ru.md)
 
 This is a source-checkout feature, **not part of published ACP Gateway 0.2.2**.
-The managed CLI implementation, automated verification and independent review
-are complete for this restricted source substage. Final full WSL suite:
-**1985 passed, 42 skipped**; native Windows combined synthetic-peer/config/setup
-suite: **128 passed**. Live authenticated Windows/WSL and Telegram acceptance
-remain deferred; these checks are not a production release or Desktop support.
+Safe/work profiles, cancellation and scoped persisted resume are implemented in
+source. Current scoped checks and independent review are recorded in the
+[evidence journal](../items/connector-harness-adapters.ru.md). Live authenticated
+Windows/WSL and Telegram acceptance remains a separate next step; synthetic peers
+do not establish a production release or Desktop support.
 
 The adapter launches a dedicated native Claude Code `stream-json` child per
 conversation and uses the existing AgentClient, connector relay and human approval
@@ -24,8 +24,9 @@ described in [managed Codex/Claude inside WSL](windows-wsl-managed.md).
 - Authenticate the CLI locally through its normal workflow before live testing.
   Gateway setup does not install it, sign in, switch accounts or copy credentials
   to the dispatcher. Initialize success alone does not prove login/model access.
-- Use a separate test configuration, env file, data directory and disposable project;
-  do not replace production services for the experiment.
+- Use explicit configuration, env and data paths and a disposable project. Live
+  acceptance and installation updates follow the owner-approved
+  [acceptance plan](../plans/p4.13-work-mode.ru.md#6-живая-приёмка--следующий-пункт-не-этот).
 - On Windows, choose the native executable, not the Desktop UI launcher or a
   PowerShell/npm shell wrapper. An absolute `claude.exe` path can be used if PATH
   does not resolve the native executable. Native Windows tests currently use a
@@ -33,7 +34,7 @@ described in [managed Codex/Claude inside WSL](windows-wsl-managed.md).
 
 A child receives an allowlisted environment with the local HOME/USERPROFILE and
 Claude config location. Arbitrary gateway, Telegram, provider-key and proxy env
-variables are not forwarded. User/project settings sources, hooks, slash commands,
+variables are not forwarded. In safe, user/project settings sources, hooks, slash commands,
 Chrome integration and additional MCP configuration are disabled by launch flags;
 this is deliberately narrower than an ordinary interactive CLI configuration.
 Managed host policy can still restrict the native CLI. This is **not an OS sandbox**.
@@ -42,7 +43,7 @@ Managed host policy can still restrict the native CLI. This is **not an OS sandb
 
 Run `acpgw setup` or `acpgw agents configure` with explicit test config/env paths.
 Choose **claude_code**, an alias (default `claude`), the real project directory,
-CLI executable and optional model (`none` keeps the CLI default). Existing custom
+CLI executable, optional model (`none` keeps the CLI default) and safe/work mode. Existing custom
 request/turn timeouts and limits are preserved on edit. Switching agent kinds
 removes incompatible transport settings. Routed profiles ask for computer/cwd,
 not a local executable or account secret on the dispatcher.
@@ -58,6 +59,7 @@ agents:
     default_cwd: /home/user/projects/disposable-project
     claude_code:
       executable: /home/user/.local/bin/claude
+      mode: safe  # work selects native automatic permissions and user settings
       request_timeout: 30
       turn_timeout: 600
       max_turns: 16
@@ -103,7 +105,7 @@ Use the existing new-dialogue and prompt workflow in [CLI](gateway.md) or
 UUID. Completed turns can continue that same live conversation; another dialogue
 does not share its history. Merely listing owned handles does not run a model.
 
-The native process uses manual permission mode plus explicit ask rules for the
+In safe, the native process uses manual permission mode plus explicit ask rules for the
 fixed tool surface: Read, Glob, Grep, Edit, Write and Bash. Approved requests use
 the exact original input once, or are denied. Native cancellation/revocation,
 expired requests, incomplete/foreign data and unsupported background actions do
@@ -117,16 +119,41 @@ these approvals **do not restrict all filesystem/network access like an OS sandb
 Once you approve Bash, that command has the user's host authority; review the full
 command and input before approving it.
 
+## Work profile, restart and cancellation
+
+Safe remains the default. `mode: work` selects native `--permission-mode auto`,
+default tools (including web tools and subagents), user/project/local settings,
+CLAUDE.md, skills, plugins, hooks and MCP. It uses the user's real agent profile;
+setup does not create a separate agent home. Hooks and MCP therefore run with
+the user's authority when tasks arrive through Telegram. Native auto review is
+model judgment, not a sandbox. Remaining permission questions still go through
+once-only allow/deny, including additional native tools.
+
+Work defaults to `max_turns: 100` and `turn_timeout: 3600`; safe defaults remain
+16 and 600. Explicit values are preserved. Setup can create both profiles with
+separate aliases; choose the profile in Telegram. `/mode` controls dispatcher
+approvals independently and does not switch the native permission profile.
+
+Both profiles now save native sessions. After a confirmed clean connector restart,
+ACP `session/load` launches `--resume` with the original UUID and cwd. Native
+history lives in Claude's profile; local gateway bindings live under the connector
+data directory's `pins/managed-sessions`. Preserve both. Bindings check profile,
+mode, cwd, executable and native home or WSL distribution/user/profile. An OS
+lease excludes another gateway owner.
+
+ACP `session/cancel` sends native interrupt. Cancellation requires a successful
+interrupt acknowledgement and a terminal result; an acknowledgement alone does
+not prove the turn stopped. Already completed actions are not rolled back.
+
 ## Loss, lifecycle and missing features
 
-- **No persistence:** this stage passes `--no-session-persistence`. Its new managed
-  chats are not a durable CLI/Desktop history or a source of disk chat discovery.
-- **No cold resume/load/import or replay:** process/connection loss, timeout or an
-  uncertain turn makes the old handle unavailable. It never silently creates a
-  substitute conversation or resends an uncertain prompt. Check the actual work
-  before starting an explicitly different dialogue.
-- **No safe native-turn cancellation:** transport cleanup closes owned processes
-  and pipes, not a proof that every descendant stopped or an action was undone.
+- **Unknown work stays fenced:** attached and busy state is persisted before
+  native resume/prompt. Only confirmed cleanup makes an idle chat resumable;
+  crash, timeout or unconfirmed cleanup blocks automatic resume after restart.
+  No uncertain prompt is resent and no substitute conversation is created.
+  Inspect actual work before explicitly starting a different dialogue.
+- Transport cleanup closes owned processes and pipes, not proof that every
+  descendant stopped or an action was undone.
   Uncertain work blocks safe maintenance even after connection loss. Other
   people's CLI/Desktop/Git processes are not terminated as a tree.
 - **No native chat catalogue or attach-by-ID yet:** Telegram `/sessions` and
@@ -134,8 +161,9 @@ command and input before approving it.
   is also not a list of existing native chats. The planned next scope is Telegram
   computer -> connector agent -> native chat list -> selected ID, with access and
   ownership checks and backend-specific resume/shared-control contracts.
-- **No Desktop shared writer, background subagents, arbitrary MCP tools or native
-  model catalogue** is provided by this restricted adapter.
+- **No Desktop shared writer or native model catalogue** is provided. Work mode
+  enables the user's normal tools/settings; simultaneous CLI/Desktop and Telegram
+  writers to one native chat remain outside this substage.
 - Synthetic native subprocess tests and initialize-only smoke do not establish
   live model, approval, Telegram or complete upstream-helper lifecycle acceptance.
   The separate known Codex Windows Git-helper lock is not fixed by adding Claude.

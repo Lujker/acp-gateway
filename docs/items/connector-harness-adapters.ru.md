@@ -1417,3 +1417,10 @@ Windows negative interrupt: первый прогон 1 passed / 2 failed на s
 Отмена не обещает откат: /stop подтверждает запрос остановки, карточка отменённой задачи поясняет уже выполненные действия.
 `rtk test uv run --frozen pytest -q tests/integration/test_telegram_context.py tests/integration/test_telegram_delivery.py tests/integration/test_telegram_dashboard.py tests/unit/test_telegram_ui.py` — 82 passed в WSL.
 Дополнительная проверка отображения в карточке диалога — 2 passed. Ruff check/format clean; живой Telegram не использовался.
+
+## P4.13.1: инструкции и точка приёмки — 2026-10-25
+Шаг 5: Codex/Claude/WSL guides обновлены для safe/work, persistence, cancel/resume и durable unknown fences.
+Roadmap/status/work-mode/resumption и правила сессии отмечают явное возобновление владельцем и готовность исходников; P4.13 остаётся PARTIAL до живой приёмки.
+Следующий заход — раздел 6 плана: согласовать модельный бюджет, rc и обновление личного dispatcher/этого Windows connector; затем work edit/test, stop, clean restart/resume и safe allow/deny.
+Нативный каталог/импорт чатов и shared Desktop attach не реализованы. Версия checkout/stable 0.2.2 не менялась; рабочие установки, аккаунты и модельный бюджет не затронуты.
+Документационная проверка: 153 относительные ссылки изменённых Markdown — без отсутствующих файлов; git diff --check clean. После docs-only правок source suite не повторялся.

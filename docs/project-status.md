@@ -3,7 +3,7 @@
 [Documentation](README.md) · [Roadmap and current queue](../road-map.md)
 
 This is a short orientation for readers, not a replacement for the roadmap
-or acceptance journals. Planning snapshot: **2026-10-21**; stable release and source are **0.2.2**.
+or acceptance journals. Planning snapshot: **2026-10-25**; stable release and source version are **0.2.2**.
 
 ## Versions
 
@@ -41,15 +41,26 @@ connectors (owner acceptance 2026-10-15). See
 
 ## Current work and limits
 
-**Owner decision, 2026-10-23: paused; documentation only.** P4.13 remains PARTIAL.
-The next implementation substage, only after an explicit request to resume, is
-P4.13.1 safe/work profiles with cancel and persisted resume (OPEN, not started).
-Targeted main comparison is accepted as sufficient to proceed; incomplete full-main
-baseline and remaining Windows/interop issues stay documented debt, not a gate.
-No further baseline runs, implementation, live acceptance or installation changes
-are authorized during this pause. See the
-[current checkpoint](plans/p4.13-resumption.ru.md#owner-directive-2026-10-23).
-The test counts below are historical, not a current all-green suite.
+**Owner resumed development on 2026-10-25.** P4.13.1 is implemented in source:
+explicit safe/work profiles, native automatic review in work, cancellation and
+scoped persisted resume in both profiles, setup and Telegram profile cards.
+Safe remains the default. Local bindings and OS leases exclude other gateway
+owners; durable attached/busy state prevents resume after an unknown prompt or
+unconfirmed process cleanup. A confirmed clean restart resumes the original chat
+without repeating prompts. Native chat catalogue/import and shared Desktop
+attachment remain separate work.
+
+Scoped checks: 165 profile/setup tests and 162 adapter/client/binding tests in WSL;
+82 Telegram tests, plus two dialogue-card checks. Native Windows adapter/relay/
+wiring and setup scope: 122 passed/2 POSIX skips; cleanup regressions: 11 passed;
+additional negative interrupt cases: 2 passed. Scopes overlap and are not a new
+full-suite total. Independent security reviews completed with one fix cycle each.
+The next stage is live acceptance, requiring the owner's model budget and explicit
+approval for rc publication and installation updates. No live model/Telegram
+acceptance or production update was performed. See the
+[current checkpoint](plans/p4.13-resumption.ru.md#resume-2026-10-25).
+Incomplete full-main baseline and Windows/interop issues remain documented debt.
+The older full-suite counts below are historical, not a current all-green suite.
 
 **P4.13 is PARTIAL (source only):** managed Codex CLI/App Server and Claude Code
 CLI adapters, configuration/setup/doctor and connector relay wiring are implemented.
@@ -57,13 +68,13 @@ They are not in published 0.2.2. The final post-review-fix WSL suite passed
 **1985 tests, 42 skipped**; native Windows Claude config/setup/bridge checks passed
 **128 tests** with a synthetic subprocess peer. Independent re-review accepted
 both Claude fixes; this is not live model/Telegram/Desktop acceptance.
-Both paths use dedicated new dialogues and once/deny approvals. Claude has one
-native child per conversation, explicit ask rules, no persisted native history,
-no cold resume and no safe native-turn cancellation; manual permissions are not
-an OS sandbox. Windows subprocess peer tests and real WSL Claude initialize-only
+Both paths use dedicated dialogues and once/deny approvals for surfaced questions.
+Claude has one native child per conversation, explicit safe-mode ask rules and
+persisted history; work enables the user's normal tools/settings. Manual
+permissions are not an OS sandbox. Windows subprocess peer tests and real WSL Claude initialize-only
 smoke do not establish live authenticated Windows/model/Telegram support.
-Per the owner's decision, joint live Codex/Claude acceptance on the Windows host
-and WSL is deferred until after this implementation. The known short-lived Codex
+Joint live Codex/Claude acceptance on the Windows host and WSL follows this
+implementation. The known short-lived Codex
 startup `git.exe` directory lock remains open. No Desktop shared attach, native
 chat catalogue/import or Telegram native attach-by-ID is implemented.
 See [Codex configuration](setup/codex-managed.md),
@@ -129,8 +140,8 @@ transition is explicit and is not activated by installing 0.2.2.
   installs and RC versions are outside this MVP. Version 0.2.0 lacks the feature.
 - Built-in basic OS/agent actions plus user scripts/modules, and connector-owned
   tasks/schedules, remain deferred. No shutdown/restart actions were added.
-- Current order (owner decision 2026-10-23): Windows fixes and main comparison,
-  safe/work profiles with cancel/resume, live acceptance and release, then native
+- Current order (updated 2026-10-25): safe/work with cancel/resume is ready in source;
+  next is live acceptance and release, then native
   chat listing/stored resume (4a), then research into live shared attachment (4b).
   4a can ship without 4b. The later choice is minimal [VK](items/vk-bot.ru.md)
   versus multi-user; [Goose parity](items/goose-alternative.ru.md) is CONDITIONAL.
