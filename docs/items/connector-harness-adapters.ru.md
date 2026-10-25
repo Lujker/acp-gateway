@@ -1424,3 +1424,10 @@ Roadmap/status/work-mode/resumption и правила сессии отмеча�
 Следующий заход — раздел 6 плана: согласовать модельный бюджет, rc и обновление личного dispatcher/этого Windows connector; затем work edit/test, stop, clean restart/resume и safe allow/deny.
 Нативный каталог/импорт чатов и shared Desktop attach не реализованы. Версия checkout/stable 0.2.2 не менялась; рабочие установки, аккаунты и модельный бюджет не затронуты.
 Документационная проверка: 153 относительные ссылки изменённых Markdown — без отсутствующих файлов; git diff --check clean. После docs-only правок source suite не повторялся.
+
+## Разрешение приёмочного развёртывания — 2026-10-25
+Владелец подтвердил push, rc и обновление целевой связки; модельные вызовы явно исключены.
+Уточнение: Windows-коннектор перевести с uv tool на editable Git-клон и обычный Python venv, запускаемый напрямую; старые scripts/install/update используют uv tool и для этой цели не подходят.
+Feature-ветка отправлена в origin. Подготовлен 0.2.3rc1 и run-source.ps1; stable/main не меняются до живой приёмки.
+Preflight старого Windows-коннектора: activity unavailable; dispatcher status подтверждает 0 jobs/approvals/model operations и 0 active streams home. Переключение только под dispatcher admission reservation и cooperative stop, без force.
+Подготовлены отдельный Windows clone и Python 3.12.5 venv, зависимости установлены pip с хешами из frozen lock; текущий коннектор пока не изменён.

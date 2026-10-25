@@ -3,7 +3,8 @@
 [Documentation](README.md) · [Roadmap and current queue](../road-map.md)
 
 This is a short orientation for readers, not a replacement for the roadmap
-or acceptance journals. Planning snapshot: **2026-10-25**; stable release and source version are **0.2.2**.
+or acceptance journals. Planning snapshot: **2026-10-25**; stable remains **0.2.2**,
+and the source development candidate is **0.2.3rc1** (publication tracked separately).
 
 ## Versions
 

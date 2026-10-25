@@ -4,6 +4,10 @@ For installation without Git and internal update/uninstall commands, see
 [installation and updates](distribution.md). The Git checkout remains a separate
 supported route.
 
+For an editable Windows connector that runs directly from a Git clone with a
+normal Python venv and no uv runtime dependency, use the
+[Windows source installation](windows-source.md).
+
 ## Install from a checkout
 
 Install [uv](https://docs.astral.sh/uv/getting-started/installation/), then:
