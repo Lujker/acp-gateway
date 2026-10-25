@@ -55,16 +55,16 @@ for line in sys.stdin:
     elif method == "thread/start":
         if SCENARIO == "new-timeout":
             continue
-        assert params["approvalPolicy"] == "untrusted"
-        assert params["approvalsReviewer"] == "user"
+        assert params["approvalPolicy"] == ("on-request" if SCENARIO == "work" else "untrusted")
+        assert params["approvalsReviewer"] == ("auto_review" if SCENARIO == "work" else "user")
         assert params["sandbox"] in {"read-only", "workspace-write"}
         assert params["cwd"] == str(Path.cwd())
         send({"id": rid, "result": {"thread": {"id": "owned-thread"}}})
     elif method == "turn/start":
         assert params["input"] == [{"type": "text", "text": "hello"}]
         assert params["threadId"] == "owned-thread"
-        assert params["approvalPolicy"] == "untrusted"
-        assert params["sandboxPolicy"]["networkAccess"] is False
+        assert params["approvalPolicy"] == ("on-request" if SCENARIO == "work" else "untrusted")
+        assert params["sandboxPolicy"]["networkAccess"] is (SCENARIO == "work")
         if SCENARIO == "early":
             finish()
         send({"id": rid, "result": {"turn": {"id": "owned-turn"}}})

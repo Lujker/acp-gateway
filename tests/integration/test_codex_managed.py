@@ -69,6 +69,22 @@ def calls(tmp_path):
     return [json.loads(line) for line in (tmp_path / "codex-peer.log").read_text().splitlines()]
 
 
+async def test_work_profile_uses_native_auto_review_and_network(peer, tmp_path):
+    client = peer("work", mode="work")
+    try:
+        sid = await client.new_session()
+        assert (await client.ask(sid, "hello")).text == "Hello world"
+    finally:
+        await client.close()
+    start = next(f["params"] for f in calls(tmp_path) if f.get("method") == "thread/start")
+    turn = next(f["params"] for f in calls(tmp_path) if f.get("method") == "turn/start")
+    assert start["approvalPolicy"] == turn["approvalPolicy"] == "on-request"
+    assert start["approvalsReviewer"] == turn["approvalsReviewer"] == "auto_review"
+    assert start["sandbox"] == "workspace-write"
+    assert start["ephemeral"] is False
+    assert turn["sandboxPolicy"]["networkAccess"] is True
+
+
 async def test_managed_codex_text_roundtrip_through_real_agent_client(peer, tmp_path):
     client = peer()
     try:

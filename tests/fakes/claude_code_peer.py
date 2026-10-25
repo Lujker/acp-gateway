@@ -133,6 +133,7 @@ for line in sys.stdin:
                 "Read": {"file_path": "/review.txt"},
                 "Glob": {"pattern": "*.py"},
                 "Grep": {"pattern": "reviewed"},
+                "WebFetch": {"url": "https://example.com", "prompt": "read"},
             }
             emit(
                 {

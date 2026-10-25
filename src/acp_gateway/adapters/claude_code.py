@@ -117,6 +117,28 @@ class ClaudeCodeAcpTransport:
             "--max-turns",
             str(self.settings.max_turns),
         ]
+        if self.settings.mode == "work":
+            argv = [
+                self.settings.executable,
+                "--print",
+                "--verbose",
+                "--input-format",
+                "stream-json",
+                "--output-format",
+                "stream-json",
+                "--permission-mode",
+                "auto",
+                "--permission-prompt-tool",
+                "stdio",
+                "--setting-sources",
+                "user,project,local",
+                f"--session-id={sid}",
+                "--include-partial-messages",
+                "--tools",
+                "default",
+                "--max-turns",
+                str(self.settings.max_turns),
+            ]
         if self.settings.model is not None:
             argv += ["--model", self.settings.model]
         try:
@@ -421,6 +443,18 @@ class ClaudeCodeAcpTransport:
             and request.get("session_id", child["sid"]) == child["sid"]
             and frame.get("session_id", child["sid"]) == child["sid"]
         )
+        if self.settings.mode == "work":
+            valid = (
+                isinstance(tool, str)
+                and bool(tool)
+                and len(tool) <= 128
+                and tool.isprintable()
+                and isinstance(data, dict)
+                and isinstance(request.get("tool_use_id"), str)
+                and bool(request["tool_use_id"])
+                and request.get("session_id", child["sid"]) == child["sid"]
+                and frame.get("session_id", child["sid"]) == child["sid"]
+            )
         if turn is None or turn["done"].done() or not valid:
             await self._control_reply(
                 child, rid, {"behavior": "deny", "message": "Denied by gateway"}
@@ -446,7 +480,7 @@ class ClaudeCodeAcpTransport:
                             "Read": "read",
                             "Glob": "search",
                             "Grep": "search",
-                        }[tool],
+                        }.get(tool, "other"),
                         "rawInput": {
                             "tool_name": request["tool_name"],
                             "tool_use_id": request["tool_use_id"],

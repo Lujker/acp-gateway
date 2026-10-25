@@ -84,6 +84,66 @@ async def test_partial_messages_are_correlated_and_not_duplicated(peer, tmp_path
         await stream.close()
 
 
+async def test_work_profile_enables_native_tools_settings_and_persistence(peer, tmp_path):
+    stream = await peer(mode="work")
+    await stream.close()
+    argv = calls(tmp_path)[0]["frame"]["argv"]
+    assert argv[argv.index("--permission-mode") + 1] == "auto"
+    assert argv[argv.index("--tools") + 1] == "default"
+    assert argv[argv.index("--setting-sources") + 1] == "user,project,local"
+    for flag in (
+        "--safe-mode",
+        "--no-session-persistence",
+        "--strict-mcp-config",
+        "--disable-slash-commands",
+        "--settings",
+        "--mcp-config",
+    ):
+        assert flag not in argv
+
+
+@pytest.mark.parametrize("mode,requests", [("safe", 0), ("work", 1)])
+async def test_additional_tool_permission_is_forwarded_only_in_work_profile(
+    peer, tmp_path, mode, requests
+):
+    stream = await peer("permission-WebFetch", mode=mode)
+    try:
+        await initialize(stream)
+        created, _ = await request(stream, 2, "session/new", cwd=str(tmp_path))
+        sid = created["result"]["sessionId"]
+        await stream.send(
+            {
+                "jsonrpc": "2.0",
+                "id": 3,
+                "method": "session/prompt",
+                "params": {"sessionId": sid, "prompt": [{"type": "text", "text": "hi"}]},
+            }
+        )
+        seen = []
+        while True:
+            frame = await asyncio.wait_for(stream.receive(), 2)
+            if frame.get("method") == "session/request_permission":
+                seen.append(frame)
+                await stream.send(
+                    {
+                        "jsonrpc": "2.0",
+                        "id": frame["id"],
+                        "result": {"outcome": {"outcome": "selected", "optionId": "accept"}},
+                    }
+                )
+            if frame.get("id") == 3:
+                break
+        assert len(seen) == requests
+        decision = next(
+            row["frame"]
+            for row in calls(tmp_path)
+            if row["frame"].get("type") == "control_response"
+        )
+        assert decision["response"]["response"]["behavior"] == ("allow" if requests else "deny")
+    finally:
+        await stream.close()
+
+
 @pytest.mark.parametrize("scenario", ["cancel-permission", "result-permission"])
 async def test_native_revocation_withdraws_once_only_human_authority(peer, tmp_path, scenario):
     stream = await peer(scenario)

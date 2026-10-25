@@ -233,9 +233,10 @@ class CodexAcpTransport:
                     raise ValueError
                 native = {
                     "cwd": params["cwd"],
-                    "approvalPolicy": "untrusted",
-                    "approvalsReviewer": "user",
+                    "approvalPolicy": "on-request" if self.settings.mode == "work" else "untrusted",
+                    "approvalsReviewer": "auto_review" if self.settings.mode == "work" else "user",
                     "sandbox": self.settings.sandbox,
+                    "ephemeral": False,
                 }
                 if self.settings.model is not None:
                     native["model"] = self.settings.model
@@ -275,11 +276,12 @@ class CodexAcpTransport:
         turn = _Turn(asyncio.get_running_loop().create_future())
         self._turns[sid] = turn
         try:
+            work = self.settings.mode == "work"
             sandbox = {"type": "readOnly", "networkAccess": False}
             if self.settings.sandbox == "workspace-write":
                 sandbox = {
                     "type": "workspaceWrite",
-                    "networkAccess": False,
+                    "networkAccess": work,
                     "writableRoots": [self._sessions[sid]],
                     "excludeSlashTmp": True,
                     "excludeTmpdirEnvVar": True,
@@ -292,8 +294,8 @@ class CodexAcpTransport:
                     "input": [
                         {"type": "text", "text": "\n".join(b["text"] for b in params["prompt"])}
                     ],
-                    "approvalPolicy": "untrusted",
-                    "approvalsReviewer": "user",
+                    "approvalPolicy": "on-request" if work else "untrusted",
+                    "approvalsReviewer": "auto_review" if work else "user",
                     "sandboxPolicy": sandbox,
                 },
             )

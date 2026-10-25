@@ -1391,3 +1391,11 @@ GREEN: тот же модуль плюс codex/claude config/cli и wsl config/c
 Native Windows с локальным base Python и существующими venv dependencies — 161 passed / 4 failed: setup ACL helper с `-I` не видит зависимости venv; новые profile checks прошли. Общий green не заявляется.
 Одно независимое ревью выявило замену явных default-valued лимитов; исправлено с регрессионным тестом. Ruff check/format clean.
 Далее — native параметры адаптеров, cancel и persisted resume; установки, релизы и модельные вызовы не менялись.
+
+## P4.13.1: параметры адаптеров — 2026-10-25
+Шаг 2: Codex work использует on-request/auto_review и сеть в workspace-write, thread явно persistent.
+Claude work: auto, default tools, user/project/local settings, hooks/MCP/skills; оставшиеся вопросы проходят once/deny, включая WebFetch. Safe-параметры сохранены.
+RED: два новых adapter work tests — 2 failed; GREEN: codex_managed, claude_code_managed и wsl_adapters — 105 passed в WSL.
+Windows тот же adapter scope плюс четыре setup-сценария — 102 passed / 5 failed / 2 skipped; падения на ACL helper при неполном pywin32 bootstrap временного окружения, не на параметрах work.
+Одно независимое ревью: блокеров нет; Ruff check/format clean. Полный baseline не запускался.
+Далее — cancel/load и локальная привязка сохранённых native ID; live model/Telegram и обновления установок не выполнялись.
