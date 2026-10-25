@@ -247,6 +247,7 @@ def test_real_prompts_retry_claude_executable_and_model(tmp_path, monkeypatch, c
             "/opt/manual claude/claude",
             "bad model",
             "custom/model",
+            "safe",
         ]
     )
     monkeypatch.setattr("builtins.input", lambda *args: next(answers))

@@ -253,6 +253,7 @@ def test_real_prompts_retry_codex_executable_model_and_sandbox(tmp_path, monkeyp
             "/opt/manual codex/codex",
             "bad model",
             "custom/model",
+            "safe",
             "danger-full-access",
             "workspace-write",
         )

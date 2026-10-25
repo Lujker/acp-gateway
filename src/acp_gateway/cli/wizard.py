@@ -288,6 +288,19 @@ def _managed_environment(prompts, old, backend, environment):
     return settings
 
 
+def _managed_mode(prompts, settings, settings_type, explicit):
+    previous = settings["mode"]
+    mode = prompts.choice("Agent permission profile", ("safe", "work"), previous)
+    if mode != previous:
+        new_defaults = settings_type(mode=mode).model_dump()
+        for name in ("turn_timeout", "max_turns", "sandbox"):
+            if name in settings and name not in explicit:
+                settings[name] = new_defaults[name]
+    settings["mode"] = mode
+    if mode == "work":
+        print("Work profile: native automatic approvals and your agent settings are enabled.")
+
+
 def _codex(prompts, old):
     from acp_gateway.config import CodexSettings
 
@@ -315,6 +328,7 @@ def _codex(prompts, old):
         settings["model"] or "none",
         lambda value: field("model", None if value == "none" else value),
     )
+    _managed_mode(prompts, settings, CodexSettings, initial)
     print("Codex read-only is the conservative default; workspace-write permits project edits.")
     settings["sandbox"] = prompts.choice(
         "Codex sandbox", ("read-only", "workspace-write"), settings["sandbox"]
@@ -360,6 +374,7 @@ def _claude_code(prompts, old):
         settings["model"] or "none",
         lambda value: field("model", None if value == "none" else value),
     )
+    _managed_mode(prompts, settings, ClaudeCodeSettings, initial)
     if settings.get("wsl") is None and not shutil.which(settings["executable"]):
         print(
             "Claude Code executable not found in this OS. Install it separately if needed, "
@@ -570,6 +585,34 @@ def _profiles(prompts, raw, values, role, *, allow_empty=False):
                 print("That address already exists; choose another alias or computer ID.")
                 continue
             agents.append(profile)
+            backend = profile.get("backend")
+            if backend in {"codex", "claude_code"} and prompts.yes(
+                "Create both safe and work profiles?"
+            ):
+                import copy
+
+                from acp_gateway.config import ClaudeCodeSettings, CodexSettings
+
+                other = copy.deepcopy(profile)
+                mode = "work" if profile[backend]["mode"] == "safe" else "safe"
+                suffix = "_" + mode
+                default_alias = profile["alias"][: 32 - len(suffix)] + suffix
+                while True:
+                    alias = prompts.ask("Second profile alias", default_alias, _alias)
+                    if any(a["alias"] == alias for a in agents):
+                        print("That alias already exists; choose another alias.")
+                        continue
+                    break
+                other["alias"] = alias
+                other["title"] = profile.get("title", profile["alias"]) + " (" + mode + ")"
+                settings_type = CodexSettings if backend == "codex" else ClaudeCodeSettings
+                defaults = settings_type(mode=profile[backend]["mode"]).model_dump()
+                new = settings_type(mode=mode).model_dump()
+                for name in ("turn_timeout", "max_turns", "sandbox"):
+                    if name in other[backend] and other[backend][name] == defaults.get(name):
+                        other[backend][name] = new[name]
+                other[backend]["mode"] = mode
+                agents.append(AgentProfile.model_validate(other).model_dump(exclude_none=True))
             if not prompts.yes("Add another agent?"):
                 break
     if not agents and not allow_empty:

@@ -1381,3 +1381,13 @@ Targeted comparison признан достаточным: полный main bas
 После реализации — согласовать бюджет и обновление целевой связки, проверить реальную задачу через Telegram, остановку и продолжение; затем релиз.
 Список сохранённых native-чатов — далее, shared Desktop/Telegram attach — отдельное исследование; VK/multi-user не активированы.
 Эта запись — только документация: код, тесты и рабочие установки не менялись; новые прогоны/ревью/модельные вызовы не запускались.
+
+## P4.13.1: возобновление и профили — 2026-10-25
+Владелец явно возобновил разработку по плану; пауза снята для исходников и целевых проверок.
+Шаг 1: safe/work в конфиге и setup, предложение двух отдельных профилей; safe остаётся default.
+Work defaults: timeout 3600, Claude max_turns 100, Codex workspace-write; явно заданные лимиты сохраняются.
+RED: `rtk test uv run --frozen pytest -q tests/unit/test_managed_profiles.py` — 6 failed до реализации.
+GREEN: тот же модуль плюс codex/claude config/cli и wsl config/cli — 165 passed в WSL.
+Native Windows с локальным base Python и существующими venv dependencies — 161 passed / 4 failed: setup ACL helper с `-I` не видит зависимости venv; новые profile checks прошли. Общий green не заявляется.
+Одно независимое ревью выявило замену явных default-valued лимитов; исправлено с регрессионным тестом. Ruff check/format clean.
+Далее — native параметры адаптеров, cancel и persisted resume; установки, релизы и модельные вызовы не менялись.

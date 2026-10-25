@@ -173,10 +173,18 @@ class WslSettings(_Section):
 
 
 class CodexSettings(_Section):
+    mode: Literal["safe", "work"] = "safe"
     wsl: WslSettings | None = None
     executable: str = Field(default="codex", min_length=1, max_length=4096)
     model: str | None = Field(default=None, min_length=1, max_length=128)
     sandbox: Literal["read-only", "workspace-write"] = "read-only"
+
+    @model_validator(mode="before")
+    @classmethod
+    def _work_defaults(cls, values):
+        if isinstance(values, dict) and values.get("mode") == "work":
+            values = {"turn_timeout": 3600, "sandbox": "workspace-write", **values}
+        return values
 
     @model_validator(mode="after")
     def _wsl_executable(self):
@@ -216,6 +224,7 @@ class CodexSettings(_Section):
 
 
 class ClaudeCodeSettings(_Section):
+    mode: Literal["safe", "work"] = "safe"
     wsl: WslSettings | None = None
     executable: str = Field(default="claude", min_length=1, max_length=4096)
     model: str | None = Field(default=None, min_length=1, max_length=128)
@@ -224,6 +233,13 @@ class ClaudeCodeSettings(_Section):
 
     max_turns: int = Field(default=16, ge=1, le=100)
     max_sessions: int = Field(default=8, ge=1, le=32)
+
+    @model_validator(mode="before")
+    @classmethod
+    def _work_defaults(cls, values):
+        if isinstance(values, dict) and values.get("mode") == "work":
+            values = {"turn_timeout": 3600, "max_turns": 100, **values}
+        return values
 
     @model_validator(mode="after")
     def _wsl_executable(self):
