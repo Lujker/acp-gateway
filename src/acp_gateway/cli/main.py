@@ -426,14 +426,17 @@ def _cmd_config_check(cfg: AppConfig) -> int:
         elif agent.backend == "hermes":
             print(f"    attach: local Hermes/{agent.hermes.profile}; dedicated conversations")
         elif agent.backend == "claude_code":
+            permissions = "auto" if agent.claude_code.mode == "work" else "manual"
             print(
-                "    managed: local Claude Code; native manual permissions, not an OS sandbox; "
-                "dedicated sessions, no cold resume; acpgw agents configure"
+                f"    managed: local Claude Code; profile: {agent.claude_code.mode}; "
+                f"native {permissions} permissions, not an OS sandbox; "
+                "persisted dedicated sessions, scoped resume/cancel; acpgw agents configure"
             )
         elif agent.backend == "codex":
             print(
-                f"    managed: local Codex; sandbox: {agent.codex.sandbox}; "
-                "dedicated sessions, no cold resume (experimental manual YAML)"
+                f"    managed: local Codex; profile: {agent.codex.mode}; "
+                f"sandbox: {agent.codex.sandbox}; "
+                "persisted dedicated sessions, scoped resume/cancel; acpgw agents configure"
             )
         else:
             print(f"    url: {agent.url}  tls: {tls}")

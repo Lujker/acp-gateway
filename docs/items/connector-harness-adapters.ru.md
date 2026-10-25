@@ -1431,3 +1431,7 @@ Roadmap/status/work-mode/resumption и правила сессии отмеча�
 Feature-ветка отправлена в origin. Подготовлен 0.2.3rc1 и run-source.ps1; stable/main не меняются до живой приёмки.
 Preflight старого Windows-коннектора: activity unavailable; dispatcher status подтверждает 0 jobs/approvals/model operations и 0 active streams home. Переключение только под dispatcher admission reservation и cooperative stop, без force.
 Подготовлены отдельный Windows clone и Python 3.12.5 venv, зависимости установлены pip с хешами из frozen lock; текущий коннектор пока не изменён.
+
+## Диагностика при установке source-коннектора — 2026-10-25
+В реальном config check обнаружены устаревшие подписи «no cold resume» и manual для work. Исправлены только диагностические строки: показываются safe/work, auto/manual и scoped resume/cancel.
+`rtk test uv run --frozen pytest -q tests/unit/test_codex_cli.py tests/unit/test_claude_code_cli.py` — 43 passed; Ruff check/format clean. Runtime permissions не менялись; опубликованные rc1 artifacts остаются неизменными.
