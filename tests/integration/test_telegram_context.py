@@ -13,6 +13,7 @@ from test_telegram import telegram as telegram
 from test_telegram_controls import button
 
 from acp_gateway.channels.telegram import TelegramChannel
+from acp_gateway.config import AgentProfile
 from acp_gateway.core import GatewayCore
 from acp_gateway.log import register_secret
 from acp_gateway.storage import Conversation, Store
@@ -39,6 +40,26 @@ async def test_context_updates_same_message_after_rename_and_selection_without_r
     await feed(channel, 3, "/menu")
     await eventually(lambda: f"Диалог: #{newer.id}" in card(session, mid).text)
     assert sum(m.text.startswith("Текущий контекст") for m in session.sent) == 1
+    assert not server.log
+
+
+@pytest.mark.parametrize("mode,label", [("safe", "Безопасный"), ("work", "Рабочий")])
+async def test_managed_profile_visible_in_context_and_agent_list_without_rpc(telegram, mode, label):
+    core, channel, session, server = telegram
+    core.agent("work").profile = AgentProfile(
+        alias="work",
+        kind="claude_code",
+        backend="claude_code",
+        default_cwd="/work",
+        claude_code={"mode": mode},
+    )
+    await feed(channel, 1, "/context")
+    assert "Профиль агента: " + label in session.sent[-1].text
+    await feed(channel, 2, "/agent")
+    assert label in session.sent[-1].text
+    dialogue = record(core)
+    await feed(channel, 3, f"/dialogue {dialogue.id}")
+    assert "Профиль агента: " + label in session.sent[-1].text
     assert not server.log
 
 

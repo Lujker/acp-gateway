@@ -190,6 +190,8 @@ class Dashboard:
         ]
         if job.finished_at:
             lines.append(f"Завершение: {stamp(job.finished_at)}")
+        if job.status.value == "cancelled":
+            lines.append("Уже выполненные действия не откатываются.")
         if job.error:
             lines.append(f"Ошибка: {label(job.error, 300)}")
         rows = [

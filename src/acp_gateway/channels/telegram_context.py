@@ -13,6 +13,30 @@ from acp_gateway.core import GatewayError
 
 
 class ContextCard:
+    def _agent_profile_text(self, client):
+        profile = client.profile
+        settings = getattr(profile, profile.kind, None)
+        if profile.kind not in {"codex", "claude_code"}:
+            return ""
+        if settings is not None:
+            mode = settings.mode
+            environment = "wsl" if settings.wsl else "native"
+        elif client.connected:
+            caps = getattr(client, "agent_capabilities", None)
+            metadata = getattr(caps, "field_meta", None) or {}
+            if not isinstance(metadata, dict):
+                return ""
+            flags = metadata.get("acp-gateway", {})
+            if not isinstance(flags, dict):
+                return ""
+            mode, environment = flags.get("profileMode"), flags.get("executionEnvironment")
+        else:
+            return ""
+        if mode not in {"safe", "work"}:
+            return ""
+        name = "Рабочий" if mode == "work" else "Безопасный"
+        return name + (" · WSL" if environment == "wsl" else "")
+
     def _context_text(self, chat):
         lines = ["Текущий контекст · сюда пойдут обычные сообщения"]
         alias = self.core.store.channel_state(self.namespace, f"agent:{chat}")
@@ -24,6 +48,9 @@ class ContextCard:
         client = self.core.agent(conv.agent)
         profile = client.profile
         lines.append(f"Агент: {label(conv.agent)}")
+        mode = self._agent_profile_text(client)
+        if mode:
+            lines.append("Профиль агента: " + mode)
         if profile.backend == "connector":
             cid = profile.computer_id
             computers = self.connector_dispatcher.status() if self.connector_dispatcher else []

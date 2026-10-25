@@ -1411,3 +1411,9 @@ Ruff check/format и diff whitespace clean. История исходного Cl
 Это source/fake-peer evidence; authenticated model, Telegram, штатное обновление dispatcher/connector и полный baseline не запускались.
 
 Windows negative interrupt: первый прогон 1 passed / 2 failed на startup deadline 150ms, до проверяемой отмены. Deadline перенесён после initialize; повтор только двух сценариев — 2 passed / 60 deselected. Production-код не менялся.
+
+## P4.13.1: карточки Telegram — 2026-10-25
+Шаг 4: safe/work показан в списке агентов, контексте и карточке диалога без новых RPC. WSL показывается из локальных настроек либо объявленных capability подключённого managed-агента.
+Отмена не обещает откат: /stop подтверждает запрос остановки, карточка отменённой задачи поясняет уже выполненные действия.
+`rtk test uv run --frozen pytest -q tests/integration/test_telegram_context.py tests/integration/test_telegram_delivery.py tests/integration/test_telegram_dashboard.py tests/unit/test_telegram_ui.py` — 82 passed в WSL.
+Дополнительная проверка отображения в карточке диалога — 2 passed. Ruff check/format clean; живой Telegram не использовался.

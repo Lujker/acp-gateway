@@ -143,7 +143,10 @@ async def test_blocked_status_edit_does_not_block_delivery_or_cancel(telegram):
         await asyncio.wait_for(blocked.wait(), 3)
         assert any(m.text == "pong" for m in session.sent)
         await feed(channel, 4, "/stop")
-        assert any(m.text.startswith("Stopped jobs:") for m in session.sent)
+        assert any(
+            m.text.startswith("Stop requested for jobs:") and "not rolled back" in m.text
+            for m in session.sent
+        )
     finally:
         release.set()
 

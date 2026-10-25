@@ -1031,7 +1031,11 @@ class TelegramChannel(PairingCards, Updates, Shortcuts, ContextCard, WorkCards, 
                 lines = ["Агенты"]
                 for alias, client in self.core.agents.items():
                     marker = "▶" if alias == selected else "•"
-                    lines.append(f"{marker} {alias} — {_label(client.profile.display_name)}")
+                    mode = self._agent_profile_text(client)
+                    suffix = " · " + mode if mode else ""
+                    lines.append(
+                        f"{marker} {alias} — {_label(client.profile.display_name)}{suffix}"
+                    )
                 if not self.core.agents:
                     lines.append(
                         "Агенты пока недоступны. "
@@ -1352,6 +1356,9 @@ class TelegramChannel(PairingCards, Updates, Shortcuts, ContextCard, WorkCards, 
                 _dialogue_summary(session),
                 f"Последняя активность: {session.last_used_at:%Y-%m-%d %H:%M} UTC",
             ]
+            profile_text = self._agent_profile_text(self.core.agent(session.conversation.agent))
+            if profile_text:
+                lines.append("Профиль агента: " + profile_text)
             rows = []
             if _restore_unavailable(session):
                 lines += ["", _recovery_text(session)]
@@ -1387,7 +1394,11 @@ class TelegramChannel(PairingCards, Updates, Shortcuts, ContextCard, WorkCards, 
             )
         elif command == "/stop":
             jobs = await self.core.cancel(conv)
-            await self._send(chat, f"Stopped jobs: {len(jobs)}")
+            await self._send(
+                chat,
+                f"Stop requested for jobs: {len(jobs)}. "
+                "Already completed actions are not rolled back.",
+            )
         elif command.startswith("/"):
             await self._panel(
                 chat,
