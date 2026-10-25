@@ -1,7 +1,7 @@
-"""Owned Claude Code stream-json conversations; no attach, replay or disk resume.
+"""Owned Claude Code stream-json conversations with scoped stored resume.
 
-Manual native permission mode is mandatory. This boundary is not a filesystem
-sandbox. Only explicitly surfaced, once-only human tool decisions are forwarded.
+Safe uses manual permissions; work explicitly selects native automatic review.
+This boundary is not a filesystem sandbox. Unknown prompts are never replayed.
 """
 
 from __future__ import annotations
@@ -11,7 +11,7 @@ import contextlib
 import json
 import os
 from typing import TYPE_CHECKING
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 from acp import PROTOCOL_VERSION
 
@@ -28,8 +28,9 @@ TOOLS = "Read,Glob,Grep,Edit,Write,Bash"
 
 
 class ClaudeCodeAcpTransport:
-    def __init__(self, settings: ClaudeCodeSettings, policy: LocalAgentPolicy):
+    def __init__(self, settings: ClaudeCodeSettings, policy: LocalAgentPolicy, *, sessions=None):
         self.settings, self.policy = settings, policy
+        self.sessions = sessions
         self.closed = asyncio.Event()
         self._closing = None
         self._out = asyncio.Queue(MAX_EVENTS)
@@ -45,8 +46,8 @@ class ClaudeCodeAcpTransport:
         self.child_reservation = None
 
     @classmethod
-    async def open(cls, settings: ClaudeCodeSettings, policy: LocalAgentPolicy):
-        stream = cls(settings, policy)
+    async def open(cls, settings: ClaudeCodeSettings, policy: LocalAgentPolicy, *, sessions=None):
+        stream = cls(settings, policy, sessions=sessions)
         try:
             stream._warm = await stream._spawn(policy.allowed_cwds[0])
             stream.process = stream._warm["process"]
@@ -55,18 +56,18 @@ class ClaudeCodeAcpTransport:
             await stream.close()
             raise
 
-    async def _spawn(self, cwd):
+    async def _spawn(self, cwd, resume=None):
         if len(self._children) >= self.settings.max_sessions:
             raise AgentUnavailable("managed Claude Code process capacity exceeded")
         release = self.child_reservation() if self.child_reservation is not None else None
         try:
-            return await self._spawn_owned(cwd)
+            return await self._spawn_owned(cwd, resume)
         finally:
             if release is not None:
                 release()
 
-    async def _spawn_owned(self, cwd):
-        sid = str(uuid4())
+    async def _spawn_owned(self, cwd, resume=None):
+        sid = resume or str(uuid4())
         allowed = {
             "PATH",
             "HOME",
@@ -108,7 +109,6 @@ class ClaudeCodeAcpTransport:
             json.dumps({"disableAllHooks": True, "permissions": {"ask": TOOLS.split(",")}}),
             f"--session-id={sid}",
             "--include-partial-messages",
-            "--no-session-persistence",
             "--no-chrome",
             "--disable-slash-commands",
             "--safe-mode",
@@ -141,6 +141,9 @@ class ClaudeCodeAcpTransport:
             ]
         if self.settings.model is not None:
             argv += ["--model", self.settings.model]
+        if resume is not None:
+            argv.remove(f"--session-id={sid}")
+            argv += ["--resume", sid]
         try:
             if self.settings.wsl is not None:
                 from acp_gateway.adapters.wsl import spawn_wsl
@@ -170,6 +173,7 @@ class ClaudeCodeAcpTransport:
             "cwd": cwd,
             "lock": asyncio.Lock(),
             "control_ids": set(),
+            "controls": {},
         }
         self._children[sid] = child
         child["stderr"] = asyncio.create_task(self._drain_stderr(process))
@@ -223,6 +227,7 @@ class ClaudeCodeAcpTransport:
                     or self._sessions.get(sid) is not child
                     or self._turns.get(sid) is not turn
                     or turn["done"].done()
+                    or turn.get("cancelling", False)
                 ):
                     return
                 # Commit once, without yielding between validation and stdin.write.
@@ -247,6 +252,8 @@ class ClaudeCodeAcpTransport:
             clean = self.policy.prepare(message)
             if self.admission is not None:
                 self.admission()
+            if clean["method"] == "session/cancel":
+                clean["id"] = "cancel-" + uuid4().hex
             rid = clean.get("id")
             if rid is None or rid in self._requests or len(self._requests) >= MAX_REQUESTS:
                 raise LocalPolicyError("unsupported or duplicate Claude Code ACP request")
@@ -266,13 +273,15 @@ class ClaudeCodeAcpTransport:
                     "protocolVersion": PROTOCOL_VERSION,
                     "agentInfo": {"name": "claude-code-managed", "version": "1"},
                     "agentCapabilities": {
-                        "loadSession": False,
+                        "loadSession": self.sessions is not None,
                         "sessionCapabilities": {"list": {}},
                         "_meta": {
                             "acp-gateway": {
-                                "cancel": False,
-                                "coldResume": False,
+                                "cancel": True,
+                                "coldResume": self.sessions is not None,
                                 "conversationMode": "dedicated",
+                                "profileMode": self.settings.mode,
+                                "executionEnvironment": "wsl" if self.settings.wsl else "native",
                             }
                         },
                     },
@@ -287,8 +296,48 @@ class ClaudeCodeAcpTransport:
                         child, self._warm = self._warm, None
                     else:
                         child = await self._spawn(params["cwd"])
+                    if self.sessions is not None:
+                        self.sessions.create(child["sid"], params["cwd"])
                     self._sessions[child["sid"]] = child
                 result = {"sessionId": child["sid"]}
+            elif method == "session/load":
+                sid = params["sessionId"]
+                # Claude's --resume accepts a native UUID, never a path or option.
+                if str(UUID(sid)) != sid:
+                    raise ValueError
+                async with self._session_lock:
+                    if sid in self._sessions:
+                        if self._sessions[sid]["cwd"] != params["cwd"] or sid in self._turns:
+                            raise ValueError
+                    else:
+                        try:
+                            if self.sessions is None:
+                                raise LocalPolicyError("resume is unavailable")
+                            self.sessions.load(sid, params["cwd"])
+                        except LocalPolicyError:
+                            self._emit(
+                                {
+                                    "id": rid,
+                                    "error": {
+                                        "code": -32001,
+                                        "message": "Native binding unavailable or outcome unknown",
+                                    },
+                                }
+                            )
+                            return
+                        if self._warm is not None:
+                            warm, self._warm = self._warm, None
+                            for key in ("reader", "stderr"):
+                                warm[key].cancel()
+                            await asyncio.gather(
+                                warm["reader"], warm["stderr"], return_exceptions=True
+                            )
+                            await self._stop_process(warm["process"])
+                            if self.uncertain:
+                                raise AgentUnavailable("WSL process cleanup is unconfirmed")
+                            self._children.pop(warm["sid"])
+                        self._sessions[sid] = await self._spawn(params["cwd"], sid)
+                result = {}
             elif method == "session/list":
                 result = {
                     "sessions": [
@@ -299,6 +348,9 @@ class ClaudeCodeAcpTransport:
                 }
             elif method == "session/prompt":
                 result = await self._prompt(params)
+            elif method == "session/cancel":
+                await self._cancel(params["sessionId"])
+                return
             else:
                 self._emit(
                     {
@@ -340,9 +392,14 @@ class ClaudeCodeAcpTransport:
             "streamed": set(),
             "completed": set(),
             "message_id": None,
+            "cancelling": False,
+            "interrupt_acked": False,
+            "cancel_result": None,
         }
         self._turns[sid] = turn
         try:
+            if self.sessions is not None:
+                self.sessions.begin(sid)
             await self._write(
                 child,
                 {
@@ -355,8 +412,10 @@ class ClaudeCodeAcpTransport:
                     },
                 },
             )
-            await asyncio.wait_for(turn["done"], self.settings.turn_timeout)
-            return {"stopReason": "end_turn"}
+            reason = await asyncio.wait_for(turn["done"], self.settings.turn_timeout)
+            if self.sessions is not None:
+                self.sessions.finish(sid)
+            return {"stopReason": reason}
         except BaseException:
             self.uncertain = max(1, self.uncertain)
             raise
@@ -365,6 +424,45 @@ class ClaudeCodeAcpTransport:
             turn["done"].cancel()
             if turn["done"].done() and not turn["done"].cancelled():
                 turn["done"].exception()
+
+    async def _cancel(self, sid):
+        turn, child = self._turns.get(sid), self._sessions.get(sid)
+        if turn is None or child is None or turn["done"].done() or turn["cancelling"]:
+            return
+        turn["cancelling"] = True
+        self._withdraw(child)
+        rid = uuid4().hex
+        future = asyncio.get_running_loop().create_future()
+        child["controls"][rid] = future
+        try:
+            await self._write(
+                child,
+                {"type": "control_request", "request_id": rid, "request": {"subtype": "interrupt"}},
+            )
+            await asyncio.wait_for(future, self.settings.request_timeout)
+            turn["interrupt_acked"] = True
+            if turn["cancel_result"] is not None:
+                self._finish_result(child, turn, turn["cancel_result"])
+        finally:
+            child["controls"].pop(rid, None)
+            future.cancel()
+
+    def _finish_result(self, child, turn, frame):
+        self._withdraw(child)
+        if turn.get("cancelling", False) and not turn.get("interrupt_acked", False):
+            turn["cancel_result"] = frame
+            return
+        normal = frame.get("subtype") == "success" and frame.get("is_error") is False
+        interrupted = (
+            turn.get("interrupt_acked", False)
+            and frame.get("subtype") == "error_during_execution"
+            and frame.get("is_error") is True
+        )
+        if not normal and not interrupted:
+            raise ValueError
+        if normal and not turn["text"] and isinstance(frame.get("result"), str):
+            self._text(child["sid"], frame["result"])
+        turn["done"].set_result("cancelled" if turn.get("cancelling", False) else "end_turn")
 
     def _withdraw(self, child, native_id=None):
         for local_id, (owner, _, rid, _) in list(self._permissions.items()):
@@ -455,7 +553,7 @@ class ClaudeCodeAcpTransport:
                 and request.get("session_id", child["sid"]) == child["sid"]
                 and frame.get("session_id", child["sid"]) == child["sid"]
             )
-        if turn is None or turn["done"].done() or not valid:
+        if turn is None or turn["done"].done() or turn.get("cancelling", False) or not valid:
             await self._control_reply(
                 child, rid, {"behavior": "deny", "message": "Denied by gateway"}
             )
@@ -519,6 +617,14 @@ class ClaudeCodeAcpTransport:
             while True:
                 frame = await self._frame(child)
                 turn = self._turns.get(sid)
+                if frame.get("type") == "control_response":
+                    response = frame.get("response", {})
+                    future = child["controls"].get(response.get("request_id"))
+                    if future is not None and not future.done():
+                        if response.get("subtype") != "success":
+                            raise ValueError
+                        future.set_result(None)
+                    continue
                 if frame.get("type") == "control_cancel_request":
                     self._withdraw(child, frame["request_id"])
                     continue
@@ -566,12 +672,7 @@ class ClaudeCodeAcpTransport:
                             self._text(sid, block["text"])
                             turn["text"] = True
                 elif frame.get("type") == "result":
-                    self._withdraw(child)
-                    if frame.get("subtype") != "success" or frame.get("is_error") is not False:
-                        raise ValueError
-                    if not turn["text"] and isinstance(frame.get("result"), str):
-                        self._text(sid, frame["result"])
-                    turn["done"].set_result(None)
+                    self._finish_result(child, turn, frame)
         except asyncio.CancelledError:
             pass
         except Exception:
@@ -605,6 +706,15 @@ class ClaudeCodeAcpTransport:
         await asyncio.shield(self._closing)
 
     async def _shutdown(self):
+        confirmed = False
+        try:
+            await self._shutdown_children()
+            confirmed = self.uncertain == 0
+        finally:
+            if self.sessions is not None:
+                self.sessions.close(confirmed=confirmed)
+
+    async def _shutdown_children(self):
         self._permissions.clear()
         tasks = [
             *self._requests.values(),
@@ -618,39 +728,46 @@ class ClaudeCodeAcpTransport:
         for task in tasks:
             task.cancel()
         await asyncio.gather(*tasks, return_exceptions=True)
-        for child in self._children.values():
-            process = child["process"]
-            if self.settings.wsl is not None:
-                from acp_gateway.adapters.wsl import close_wsl
+        results = await asyncio.gather(
+            *(self._stop_process(child["process"]) for child in self._children.values()),
+            return_exceptions=True,
+        )
+        if any(isinstance(result, BaseException) for result in results):
+            raise AgentUnavailable("managed Claude Code process cleanup is unconfirmed")
 
-                if await close_wsl(process) is False:
-                    self.uncertain = max(self.uncertain, 1)
-                continue
-            process.stdin.close()
-            transport = process._transport
-            for fd in (1, 2):
-                pipe = transport.get_pipe_transport(fd)
-                if pipe is not None:
-                    pipe.close()
-            if process.returncode is None:
+    async def _stop_process(self, process):
+        if self.settings.wsl is not None:
+            from acp_gateway.adapters.wsl import close_wsl
+
+            if await close_wsl(process) is False:
+                self.uncertain = max(self.uncertain, 1)
+            return
+        process.stdin.close()
+        transport = process._transport
+        for fd in (1, 2):
+            pipe = transport.get_pipe_transport(fd)
+            if pipe is not None:
+                pipe.close()
+        if process.returncode is None:
+            with contextlib.suppress(ProcessLookupError):
+                process.terminate()
+            try:
+                await asyncio.wait_for(process.wait(), 2)
+            except TimeoutError:
                 with contextlib.suppress(ProcessLookupError):
-                    process.terminate()
-                try:
-                    await asyncio.wait_for(process.wait(), 2)
-                except TimeoutError:
-                    with contextlib.suppress(ProcessLookupError):
-                        process.kill()
-                    await process.wait()
-            transport.close()
-            with contextlib.suppress(BrokenPipeError, ConnectionResetError):
-                await asyncio.wait_for(process.stdin.wait_closed(), 2)
+                    process.kill()
+                await process.wait()
+        transport.close()
+        with contextlib.suppress(BrokenPipeError, ConnectionResetError):
+            await asyncio.wait_for(process.stdin.wait_closed(), 2)
 
 
 class ClaudeCodeProcessManager:
     """Account only for owned processes; retain uncertainty after binding loss."""
 
-    def __init__(self, settings: ClaudeCodeSettings, policy: LocalAgentPolicy):
+    def __init__(self, settings: ClaudeCodeSettings, policy: LocalAgentPolicy, *, sessions=None):
         self.settings, self.policy = settings, policy
+        self.sessions = sessions
         self.maintenance_reserved = False
         self._streams = set()
         self._opening = 0
@@ -695,7 +812,11 @@ class ClaudeCodeProcessManager:
         self._opening += 1
         self._idle.clear()
         try:
-            stream = await ClaudeCodeAcpTransport.open(self.settings, self.policy)
+            stream = await ClaudeCodeAcpTransport.open(
+                self.settings,
+                self.policy,
+                sessions=self.sessions.fork() if self.sessions is not None else None,
+            )
             if self.maintenance_reserved:
                 await stream.close()
                 self.check_admission()

@@ -60,6 +60,14 @@ for line in sys.stdin:
         assert params["sandbox"] in {"read-only", "workspace-write"}
         assert params["cwd"] == str(Path.cwd())
         send({"id": rid, "result": {"thread": {"id": "owned-thread"}}})
+    elif method == "thread/resume":
+        assert params["threadId"] == "owned-thread"
+        assert params["cwd"] == str(Path.cwd())
+        send({"id": rid, "result": {"thread": {"id": "owned-thread"}}})
+    elif method == "turn/interrupt":
+        assert params == {"threadId": "owned-thread", "turnId": "owned-turn"}
+        send({"id": rid, "result": {}})
+        complete(status="interrupted")
     elif method == "turn/start":
         assert params["input"] == [{"type": "text", "text": "hello"}]
         assert params["threadId"] == "owned-thread"
@@ -102,7 +110,7 @@ for line in sys.stdin:
                 )
             complete()
             continue
-        if SCENARIO in {"hold", "early"}:
+        if SCENARIO in {"hold", "early", "interrupt"}:
             continue
         if SCENARIO == "disconnect":
             sys.exit(0)

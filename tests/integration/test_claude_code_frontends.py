@@ -9,7 +9,6 @@ from types import SimpleNamespace
 import pytest
 
 from acp_gateway.agents.client import AgentClient
-from acp_gateway.agents.errors import AgentError, SessionNotFound
 from acp_gateway.config import AgentProfile, AppConfig, SecretStore, Settings
 from acp_gateway.connectors.control import ControlDispatcher, connect_control
 from acp_gateway.connectors.launch import ConnectorLaunch, local_policies
@@ -48,33 +47,34 @@ def native_profile(tmp_path, monkeypatch):
     assert children and all(child.returncode is not None for child in children)
 
 
-async def test_claude_real_agent_client_multiturn_caps_and_no_reopen(native_profile, tmp_path):
+async def test_claude_real_agent_client_resumes_original_history_after_restart(
+    native_profile, tmp_path
+):
     profile, children = native_profile
     client = AgentClient(profile, pin_dir=tmp_path, reconnect_delays=())
     try:
         sid = await client.new_session()
-        assert not client.supports_cancel
-        assert not client.agent_capabilities.load_session
-        with pytest.raises(AgentError, match="safe turn cancellation"):
-            await client.cancel(sid)
+        assert client.supports_cancel
+        assert client.agent_capabilities.load_session
         assert (await client.ask(sid, "first")).text == "first"
         assert (await client.ask(sid, "second")).text == "first|second"
         rows = await client.list_sessions()
         assert [row["sessionId"] for row in rows] == [sid]
         await client.close()
         count = len(children)
-        with pytest.raises(SessionNotFound, match="no automatic replay"):
-            await client.ask(sid, "must not resend")
-        assert len(children) == count
+        client = AgentClient(profile, pin_dir=tmp_path, reconnect_delays=())
+        await client.load_session(sid)
+        assert (await client.ask(sid, "third")).text == "first|second|third"
+        assert len(children) > count
     finally:
         await client.close()
     frames = [json.loads(line) for line in (tmp_path / "claude-peer.log").read_text().splitlines()]
-    assert len({frame["sid"] for frame in frames}) == 1
+    assert all(frame["sid"] == sid for frame in frames if frame["frame"].get("type") == "user")
     assert [
         frame["frame"]["message"]["content"]
         for frame in frames
         if frame["frame"].get("type") == "user"
-    ] == ["first", "second"]
+    ] == ["first", "second", "third"]
 
 
 async def test_claude_real_relay_carries_manifest_owned_sessions_and_caps(native_profile, tmp_path):
@@ -118,10 +118,10 @@ async def test_claude_real_relay_carries_manifest_owned_sessions_and_caps(native
                 await relay.ready.wait()
                 sid = await remote.new_session()
                 assert (await remote.ask(sid, "through relay")).text == "through relay"
-                assert not remote.supports_cancel
+                assert remote.supports_cancel
                 await remote.close()
-                with pytest.raises(SessionNotFound):
-                    await remote.ask(sid, "no replay")
+                await remote.load_session(sid)
+                assert remote.session_availability(sid) == "attached"
             finally:
                 await remote.close()
                 await connection.close()

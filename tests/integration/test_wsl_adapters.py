@@ -13,8 +13,9 @@ from acp_gateway.config import AgentProfile
 
 
 @pytest.mark.parametrize("kind", ["codex", "claude_code"])
+@pytest.mark.parametrize("cleanup_confirmed", [False, True])
 async def test_managed_adapter_routes_wsl_launch_and_close_without_native_fallback(
-    tmp_path, monkeypatch, kind
+    tmp_path, monkeypatch, kind, cleanup_confirmed
 ):
     adapter = importlib.import_module("acp_gateway.adapters." + kind)
     source = (
@@ -48,6 +49,7 @@ async def test_managed_adapter_routes_wsl_launch_and_close_without_native_fallba
         process.stdin.close()
         await asyncio.wait_for(process.wait(), 3)
         process._transport.close()
+        return cleanup_confirmed
 
     async def forbidden(*args, **kwargs):
         raise AssertionError("native launcher must not run for WSL settings")
@@ -77,6 +79,7 @@ async def test_managed_adapter_routes_wsl_launch_and_close_without_native_fallba
     try:
         await client.connect()
         assert client.connected
+        client._transport.sessions.create("recorded-id", profile.default_cwd)
         settings, argv, cwd, home, limit = calls[0]
         assert settings.distribution == "Ubuntu-22.04"
         assert settings.user == "alice"
@@ -87,7 +90,7 @@ async def test_managed_adapter_routes_wsl_launch_and_close_without_native_fallba
         if kind == "codex":
             assert argv[1:] == ["app-server", "--listen", "stdio://"]
         else:
-            assert "--safe-mode" in argv and "--no-session-persistence" in argv
+            assert "--safe-mode" in argv and "--no-session-persistence" not in argv
     finally:
         await client.close()
         for process in processes:
@@ -97,6 +100,17 @@ async def test_managed_adapter_routes_wsl_launch_and_close_without_native_fallba
             await process.wait()
     assert closed == processes
     assert all(process.returncode is not None for process in processes)
+    from acp_gateway.connectors.policy import LocalPolicyError
+
+    after_restart = client.managed_sessions()
+    try:
+        if cleanup_confirmed:
+            after_restart.load("recorded-id", profile.default_cwd)
+        else:
+            with pytest.raises(LocalPolicyError, match="unknown"):
+                after_restart.load("recorded-id", profile.default_cwd)
+    finally:
+        after_restart.close()
 
 
 @pytest.mark.parametrize("kind", ["codex", "claude_code"])

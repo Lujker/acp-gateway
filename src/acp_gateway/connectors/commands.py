@@ -76,7 +76,9 @@ def run(config, args):
 
                 if alias not in managers:
                     managers[alias] = ClaudeCodeProcessManager(
-                        clients[alias].profile.claude_code, policies[alias]
+                        clients[alias].profile.claude_code,
+                        policies[alias],
+                        sessions=clients[alias].managed_sessions(),
                     )
                 return PolicyTransport(await managers[alias].open(), policies[alias])
             if clients[alias].profile.backend == "codex":
@@ -84,7 +86,9 @@ def run(config, args):
 
                 if alias not in managers:
                     managers[alias] = CodexProcessManager(
-                        clients[alias].profile.codex, policies[alias]
+                        clients[alias].profile.codex,
+                        policies[alias],
+                        sessions=clients[alias].managed_sessions(),
                     )
                 return PolicyTransport(await managers[alias].open(), policies[alias])
             if clients[alias].profile.backend == "hermes":

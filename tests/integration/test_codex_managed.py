@@ -85,6 +85,46 @@ async def test_work_profile_uses_native_auto_review_and_network(peer, tmp_path):
     assert turn["sandboxPolicy"]["networkAccess"] is True
 
 
+async def test_native_interrupt_confirms_cancel_and_keeps_chat_usable(peer, tmp_path):
+    client = peer("interrupt", turn_timeout=3)
+    try:
+        sid = await client.new_session()
+        task = asyncio.create_task(client.ask(sid, "hello"))
+        for _ in range(100):
+            if any(f.get("method") == "turn/start" for f in calls(tmp_path)):
+                break
+            await asyncio.sleep(0.01)
+        await client.cancel(sid)
+        assert (await asyncio.wait_for(task, 2)).stop_reason == "cancelled"
+        assert client.session_availability(sid) == "attached"
+        assert client._transport.uncertain == 0
+    finally:
+        await client.close()
+    # Exact thread/turn interruption, never process termination as cancellation proof.
+    assert sum(f.get("method") == "turn/interrupt" for f in calls(tmp_path)) == 1
+
+
+async def test_unknown_turn_is_fenced_after_new_client_process(peer, tmp_path):
+    client = peer("hold")
+    sid = await client.new_session()
+    task = asyncio.create_task(client.ask(sid, "hello"))
+    for _ in range(100):
+        if any(f.get("method") == "turn/start" for f in calls(tmp_path)):
+            break
+        await asyncio.sleep(0.01)
+    task.cancel()
+    with contextlib.suppress(asyncio.CancelledError):
+        await task
+    await client.close()
+    restored = peer()
+    try:
+        with pytest.raises(SessionNotFound):
+            await restored.load_session(sid)
+        assert not any(f.get("method") == "thread/resume" for f in calls(tmp_path))
+    finally:
+        await restored.close()
+
+
 async def test_managed_codex_text_roundtrip_through_real_agent_client(peer, tmp_path):
     client = peer()
     try:
@@ -92,8 +132,8 @@ async def test_managed_codex_text_roundtrip_through_real_agent_client(peer, tmp_
         reply = await asyncio.wait_for(client.ask(sid, "hello"), 3)
         assert reply.text == "Hello world"
         assert reply.stop_reason == "end_turn"
-        assert not client.supports_cancel
-        assert not client.agent_capabilities.load_session
+        assert client.supports_cancel
+        assert client.agent_capabilities.load_session
         assert [s["sessionId"] for s in await client.list_sessions()] == [sid]
         transport = client._transport
     finally:
@@ -144,18 +184,19 @@ async def test_native_approval_is_once_only_and_defaults_to_deny(peer, tmp_path,
     ]
 
 
-async def test_codex_closed_dialogue_is_fenced_without_reopening_or_resending(peer, tmp_path):
+async def test_codex_closed_idle_dialogue_resumes_without_repeating_prompt(peer, tmp_path):
     client = peer()
     sid = await client.new_session()
     await client.close()
-    assert client.session_availability(sid) == "restore-unavailable"
+    assert client.session_availability(sid) == "restore-required"
     before = calls(tmp_path)
-    with pytest.raises(SessionNotFound):
+    try:
         await client.load_session(sid)
-    with pytest.raises(SessionNotFound):
-        await client.ask(sid, "hello")
-    assert calls(tmp_path) == before
-    assert not client.connected
+        assert client.session_availability(sid) == "attached"
+        after = calls(tmp_path)[len(before) :]
+        assert [f["method"] for f in after] == ["initialize", "initialized", "thread/resume"]
+    finally:
+        await client.close()
 
 
 async def test_codex_never_attaches_arbitrary_ids_or_offers_cold_resume(peer, tmp_path):
@@ -211,10 +252,11 @@ async def test_codex_connector_manifest_policy_and_real_relay_roundtrip(peer, tm
                 await relay.ready.wait()
                 sid = await remote.new_session()
                 assert (await remote.ask(sid, "hello")).text == "Hello world"
-                assert not remote.supports_cancel
+                assert remote.supports_cancel
                 await remote.close()
-                with pytest.raises(SessionNotFound):
-                    await remote.ask(sid, "hello")
+                await remote.load_session(sid)
+                assert remote.session_availability(sid) == "attached"
+                assert sum(f.get("method") == "turn/start" for f in calls(tmp_path)) == 1
             finally:
                 await remote.close()
                 await connection.close()
@@ -375,7 +417,7 @@ async def test_abandoned_prompt_reaps_child_without_claiming_safe_turn_cancel(pe
         with pytest.raises(asyncio.CancelledError):
             await asyncio.wait_for(task, 0.5)
         assert transport.process.returncode is not None
-        assert not client.supports_cancel
+        assert client.supports_cancel
         assert client.session_availability(sid) == "uncertain"
     finally:
         await client.close()

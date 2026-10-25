@@ -1,6 +1,6 @@
 """Managed, owned Codex App Server stdio projected onto the small ACP surface.
 
-No attach/load, prompt replay, model discovery or unconfirmed cancellation.
+Only owned persisted sessions may resume; uncertain prompts are never replayed.
 Native protocol fields follow the installed Codex 0.163.0 generated schema.
 """
 
@@ -34,6 +34,7 @@ class _Turn:
     streamed: set[str] = field(default_factory=set)
     completed: set[str] = field(default_factory=set)
     tools: dict[str, dict] = field(default_factory=dict)
+    cancelling: bool = False
 
 
 def _identifier(value):
@@ -43,8 +44,11 @@ def _identifier(value):
 
 
 class CodexAcpTransport:
-    def __init__(self, process, settings: CodexSettings, policy: LocalAgentPolicy):
+    def __init__(
+        self, process, settings: CodexSettings, policy: LocalAgentPolicy, *, sessions=None
+    ):
         self.process, self.settings, self.policy = process, settings, policy
+        self.sessions = sessions
         self.closed = asyncio.Event()
         self._closing: asyncio.Task | None = None
         self._out: asyncio.Queue = asyncio.Queue(MAX_EVENTS)
@@ -64,7 +68,7 @@ class CodexAcpTransport:
         self._pump = asyncio.create_task(self._pump_events())
 
     @classmethod
-    async def open(cls, settings: CodexSettings, policy: LocalAgentPolicy):
+    async def open(cls, settings: CodexSettings, policy: LocalAgentPolicy, *, sessions=None):
         # Never pass gateway/relay/Telegram secrets to a local model or its tools.
         allowed = {
             "PATH",
@@ -112,7 +116,7 @@ class CodexAcpTransport:
                 )
         except (OSError, ValueError, RuntimeError):
             raise AgentUnavailable("managed Codex executable could not be started") from None
-        return cls(process, settings, policy)
+        return cls(process, settings, policy, sessions=sessions)
 
     def _emit(self, frame):
         self._out.put_nowait({"jsonrpc": "2.0", **frame})
@@ -120,11 +124,25 @@ class CodexAcpTransport:
     def _update(self, sid, update):
         self._emit({"method": "session/update", "params": {"sessionId": sid, "update": update}})
 
-    async def _write(self, frame):
+    async def _write(self, frame, *, permission=None):
         data = (json.dumps(frame, ensure_ascii=False) + "\n").encode()
         if len(data) > MAX_FRAME or self.closed.is_set():
             raise ConnectionError("managed Codex stream unavailable")
         async with self._write_lock:
+            if permission is not None:
+                local_id, pending = permission
+                sid, _, native_id = pending
+                turn = self._turns.get(sid)
+                if (
+                    self._permissions.get(local_id) is not pending
+                    or turn is None
+                    or turn.native_id != native_id
+                    or turn.done.done()
+                    or turn.cancelling
+                    or self.closed.is_set()
+                ):
+                    return
+                del self._permissions[local_id]
             self.process.stdin.write(data)
             await asyncio.wait_for(self.process.stdin.drain(), self.settings.request_timeout)
 
@@ -188,6 +206,8 @@ class CodexAcpTransport:
             clean = self.policy.prepare(message)
             if self.admission is not None:
                 self.admission()
+            if clean["method"] == "session/cancel":
+                clean["id"] = "cancel-" + uuid4().hex
             rid = clean.get("id")
             if rid is None or rid in self._requests or len(self._requests) >= MAX_REQUESTS:
                 raise LocalPolicyError("unsupported or duplicate Codex ACP request")
@@ -215,22 +235,47 @@ class CodexAcpTransport:
                     "protocolVersion": PROTOCOL_VERSION,
                     "agentInfo": {"name": "codex-managed", "version": "1"},
                     "agentCapabilities": {
-                        "loadSession": False,
+                        "loadSession": self.sessions is not None,
                         "sessionCapabilities": {"list": {}},
                         "_meta": {
                             "acp-gateway": {
-                                "cancel": False,
-                                "coldResume": False,
+                                "cancel": True,
+                                "coldResume": self.sessions is not None,
                                 "conversationMode": "dedicated",
+                                "profileMode": self.settings.mode,
+                                "executionEnvironment": "wsl" if self.settings.wsl else "native",
                             }
                         },
                     },
                 }
             elif not self._initialized:
                 raise ValueError
-            elif method == "session/new":
+            elif method in {"session/new", "session/load"}:
                 if len(self._sessions) >= MAX_SESSIONS:
                     raise ValueError
+                loading = method == "session/load"
+                if loading:
+                    sid = _identifier(params["sessionId"])
+                    if sid in self._sessions:
+                        if self._sessions[sid] != params["cwd"] or sid in self._turns:
+                            raise ValueError
+                        self._emit({"id": rid, "result": {}})
+                        return
+                    try:
+                        if self.sessions is None:
+                            raise LocalPolicyError("resume is unavailable")
+                        self.sessions.load(sid, params["cwd"])
+                    except LocalPolicyError:
+                        self._emit(
+                            {
+                                "id": rid,
+                                "error": {
+                                    "code": -32001,
+                                    "message": "Native binding unavailable or outcome unknown",
+                                },
+                            }
+                        )
+                        return
                 native = {
                     "cwd": params["cwd"],
                     "approvalPolicy": "on-request" if self.settings.mode == "work" else "untrusted",
@@ -240,12 +285,19 @@ class CodexAcpTransport:
                 }
                 if self.settings.model is not None:
                     native["model"] = self.settings.model
-                response = await self._rpc("thread/start", native)
-                sid = _identifier(response["thread"]["id"])
+                if loading:
+                    native["threadId"] = sid
+                response = await self._rpc("thread/resume" if loading else "thread/start", native)
+                returned = _identifier(response["thread"]["id"])
+                if loading and returned != sid:
+                    raise ValueError
+                sid = returned
                 if sid in self._sessions:
                     raise ValueError
+                if self.sessions is not None and not loading:
+                    self.sessions.create(sid, params["cwd"])
                 self._sessions[sid] = params["cwd"]
-                result = {"sessionId": sid}
+                result = {} if loading else {"sessionId": sid}
             elif method == "session/list":
                 result = {
                     "sessions": [
@@ -256,6 +308,9 @@ class CodexAcpTransport:
                 }
             elif method == "session/prompt":
                 result = await self._prompt(params)
+            elif method == "session/cancel":
+                await self._cancel(params["sessionId"])
+                return
             else:
                 self._emit(
                     {"id": rid, "error": {"code": -32601, "message": "Codex method unavailable"}}
@@ -276,6 +331,8 @@ class CodexAcpTransport:
         turn = _Turn(asyncio.get_running_loop().create_future())
         self._turns[sid] = turn
         try:
+            if self.sessions is not None:
+                self.sessions.begin(sid)
             work = self.settings.mode == "work"
             sandbox = {"type": "readOnly", "networkAccess": False}
             if self.settings.sandbox == "workspace-write":
@@ -302,9 +359,11 @@ class CodexAcpTransport:
             turn.native_id = _identifier(response["turn"]["id"])
             turn.ready.set()
             status = await asyncio.wait_for(turn.done, self.settings.turn_timeout)
-            if status != "completed":
+            if status not in {"completed", "interrupted"}:
                 raise ValueError
-            return {"stopReason": "end_turn"}
+            if self.sessions is not None:
+                self.sessions.finish(sid)
+            return {"stopReason": "cancelled" if status == "interrupted" else "end_turn"}
         except BaseException:
             self.uncertain = max(1, self.uncertain)
             raise
@@ -314,6 +373,16 @@ class CodexAcpTransport:
             turn.done.cancel()
             if turn.done.done() and not turn.done.cancelled():
                 turn.done.exception()
+
+    async def _cancel(self, sid):
+        turn = self._turns.get(sid)
+        if turn is None or turn.done.done() or turn.cancelling:
+            return
+        turn.cancelling = True
+        self._withdraw_permissions(sid)
+        await asyncio.wait_for(turn.ready.wait(), self.settings.request_timeout)
+        if self._turns.get(sid) is turn and not turn.done.done():
+            await self._rpc("turn/interrupt", {"threadId": sid, "turnId": turn.native_id})
 
     def _withdraw_permissions(self, sid, upstream_id=None):
         for local_id, (owner, native_id, _) in list(self._permissions.items()):
@@ -333,12 +402,12 @@ class CodexAcpTransport:
         rid = message.get("id")
         if not isinstance(rid, str):
             raise LocalPolicyError("invalid Codex permission response")
-        pending = self._permissions.pop(rid, None)
+        pending = self._permissions.get(rid)
         if pending is None:
             return  # Withdrawn/settled authority never revives.
         sid, upstream_id, turn_id = pending
         turn = self._turns.get(sid)
-        if turn is None or turn.native_id != turn_id or turn.done.done():
+        if turn is None or turn.native_id != turn_id or turn.done.done() or turn.cancelling:
             return
         outcome = message.get("result", {}).get("outcome", {})
         decision = "decline"
@@ -347,7 +416,9 @@ class CodexAcpTransport:
                 decision = "accept"
             elif outcome.get("optionId") != "decline":
                 raise LocalPolicyError("Codex permits once-only approval choices")
-        await self._write({"id": upstream_id, "result": {"decision": decision}})
+        await self._write(
+            {"id": upstream_id, "result": {"decision": decision}}, permission=(rid, pending)
+        )
 
     async def _approval(self, frame, sid, turn):
         rid, params = frame["id"], frame["params"]
@@ -356,6 +427,7 @@ class CodexAcpTransport:
         if (
             turn is None
             or turn.done.done()
+            or turn.cancelling
             or params.get("turnId") != turn.native_id
             or params.get("grantRoot")
         ):
@@ -568,6 +640,15 @@ class CodexAcpTransport:
         await asyncio.shield(self._closing)
 
     async def _shutdown(self):
+        confirmed = False
+        try:
+            await self._shutdown_process()
+            confirmed = self.uncertain == 0
+        finally:
+            if self.sessions is not None:
+                self.sessions.close(confirmed=confirmed)
+
+    async def _shutdown_process(self):
         self._permissions.clear()
         tasks = [self._reader, self._stderr, self._pump, *self._requests.values()]
         for task in tasks:
@@ -604,8 +685,9 @@ class CodexAcpTransport:
 class CodexProcessManager:
     """Track only this connector's children; never retain resumable conversations."""
 
-    def __init__(self, settings: CodexSettings, policy: LocalAgentPolicy):
+    def __init__(self, settings: CodexSettings, policy: LocalAgentPolicy, *, sessions=None):
         self.settings, self.policy = settings, policy
+        self.sessions = sessions
         self.maintenance_reserved = False
         self._streams: set[CodexAcpTransport] = set()
         self._opening = 0
@@ -628,7 +710,11 @@ class CodexProcessManager:
             raise AgentUnavailable("managed Codex process capacity exceeded")
         self._opening += 1
         try:
-            stream = await CodexAcpTransport.open(self.settings, self.policy)
+            stream = await CodexAcpTransport.open(
+                self.settings,
+                self.policy,
+                sessions=self.sessions.fork() if self.sessions is not None else None,
+            )
             stream.admission = self.check_admission
             self._streams.add(stream)
             return stream

@@ -8,7 +8,11 @@ import time
 from pathlib import Path
 
 SCENARIO = "happy"
-SID = next(arg.split("=", 1)[1] for arg in sys.argv if arg.startswith("--session-id="))
+SID = (
+    sys.argv[sys.argv.index("--resume") + 1]
+    if "--resume" in sys.argv
+    else next(arg.split("=", 1)[1] for arg in sys.argv if arg.startswith("--session-id="))
+)
 
 
 def emit(frame):
@@ -21,11 +25,48 @@ def record(frame):
 
 
 history = []
+history_file = Path("claude-history-" + SID + ".json")
+if "--resume" in sys.argv:
+    history = json.loads(history_file.read_text())
 record({"argv": sys.argv[1:]})
 for line in sys.stdin:
     frame = json.loads(line)
     record(frame)
     if frame["type"] == "control_request":
+        if frame["request"]["subtype"] == "interrupt":
+            if SCENARIO == "interrupt-no-ack":
+                emit(
+                    {
+                        "type": "result",
+                        "subtype": "error_during_execution",
+                        "is_error": True,
+                        "session_id": SID,
+                        "errors": ["interrupted"],
+                    }
+                )
+                continue
+            emit(
+                {
+                    "type": "control_response",
+                    "response": {
+                        "subtype": "success",
+                        "request_id": frame["request_id"],
+                        "response": {},
+                    },
+                }
+            )
+            if SCENARIO == "interrupt-no-result":
+                continue
+            emit(
+                {
+                    "type": "result",
+                    "subtype": "error_during_execution",
+                    "is_error": True,
+                    "session_id": SID,
+                    "errors": ["interrupted"],
+                }
+            )
+            continue
         assert frame["request"] == {"subtype": "initialize", "hooks": None}
         if SCENARIO == "bad-init":
             emit(
@@ -67,7 +108,8 @@ for line in sys.stdin:
         assert frame["parent_tool_use_id"] is None
         assert frame["message"]["role"] == "user"
         history.append(frame["message"]["content"])
-        if SCENARIO == "hang":
+        history_file.write_text(json.dumps(history))
+        if SCENARIO == "hang" or SCENARIO.startswith("interrupt"):
             continue
         if SCENARIO in {"error-result", "error-subtype", "foreign-result"}:
             emit(

@@ -228,6 +228,11 @@ class AgentClient:
         self.agent_capabilities: Any = None
         self.tls_pin: TlsPin | None = None
 
+    def managed_sessions(self):
+        from acp_gateway.adapters.managed_sessions import ManagedSessions
+
+        return ManagedSessions(self._pin_file.parent / "managed-sessions", self.profile)
+
     # ------------------------------------------------------------- connection
 
     @property
@@ -327,14 +332,18 @@ class AgentClient:
             from acp_gateway.connectors.policy import LocalAgentPolicy
 
             return await ClaudeCodeAcpTransport.open(
-                self.profile.claude_code, LocalAgentPolicy.from_profile(self.profile)
+                self.profile.claude_code,
+                LocalAgentPolicy.from_profile(self.profile),
+                sessions=self.managed_sessions(),
             ), None
         if self.profile.backend == "codex":
             from acp_gateway.adapters.codex import CodexAcpTransport
             from acp_gateway.connectors.policy import LocalAgentPolicy
 
             return await CodexAcpTransport.open(
-                self.profile.codex, LocalAgentPolicy.from_profile(self.profile)
+                self.profile.codex,
+                LocalAgentPolicy.from_profile(self.profile),
+                sessions=self.managed_sessions(),
             ), None
         if self.profile.backend == "hermes":
             from acp_gateway.adapters.hermes import HermesDedicatedClient
@@ -489,7 +498,13 @@ class AgentClient:
         if self._bindings.get(session_id, {}).get("restore") == "connector-live":
             return "restore-required"
         if (
-            self.profile.kind in {"hermes", "codex", "claude_code"}
+            self.profile.kind in {"codex", "claude_code"}
+            and self.agent_capabilities is not None
+            and not self.agent_capabilities.load_session
+        ):
+            return "restore-unavailable"
+        if (
+            self.profile.kind == "hermes"
             or self._bindings.get(session_id, {}).get("restore") == "disabled"
         ):
             return "restore-unavailable"
@@ -497,11 +512,12 @@ class AgentClient:
 
     async def load_session(self, session_id: str, cwd: str | None = None) -> None:
         """Attach an existing session to this connection; its history replay is dropped."""
-        if self.profile.kind in {"codex", "claude_code"}:
-            raise SessionNotFound(
-                f"{self.profile.display_name} cold resume is unavailable; "
-                "explicitly create a new session"
-            )
+        if (
+            self.profile.kind in {"codex", "claude_code"}
+            and self.agent_capabilities is not None
+            and not self.agent_capabilities.load_session
+        ):
+            raise SessionNotFound(f"{self.profile.display_name} cannot restore sessions")
         if session_id in self._model_uncertain:
             raise SessionBusy("Model selection outcome is unknown; no automatic retry")
         await self.ensure_connected()
@@ -689,7 +705,17 @@ class AgentClient:
         Closing the iterator before the end cancels the turn on the agent.
         """
         if self.profile.kind in {"codex", "claude_code"} and (
-            not self.connected or session_id not in self._attached or session_id in self._uncertain
+            session_id in self._uncertain
+            or (
+                session_id not in self._attached
+                and session_id not in self._session_cwds
+                and cwd is None
+            )
+            or (
+                session_id not in self._attached
+                and self.agent_capabilities is not None
+                and not self.agent_capabilities.load_session
+            )
         ):
             raise SessionNotFound(
                 f"{self.profile.display_name} dialogue is unavailable or uncertain; "

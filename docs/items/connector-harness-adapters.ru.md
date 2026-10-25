@@ -1399,3 +1399,13 @@ RED: два новых adapter work tests — 2 failed; GREEN: codex_managed, cl
 Windows тот же adapter scope плюс четыре setup-сценария — 102 passed / 5 failed / 2 skipped; падения на ACL helper при неполном pywin32 bootstrap временного окружения, не на параметрах work.
 Одно независимое ревью: блокеров нет; Ruff check/format clean. Полный baseline не запускался.
 Далее — cancel/load и локальная привязка сохранённых native ID; live model/Telegram и обновления установок не выполнялись.
+
+## P4.13.1: отмена и scoped persisted resume — 2026-10-25
+Шаг 3: ACP cancel/load для обоих адаптеров; Codex turn/interrupt + thread/resume, Claude interrupt ack + terminal result и --resume исходного UUID. Persistence включена и в safe.
+Локальный SQLite bindings + OS lease связывают native ID с alias, mode, cwd, native home либо WSL distribution/user/profile; чужие ID и второй владелец отклоняются.
+Attached/busy фиксируются до native resume/prompt. Только подтверждённый shutdown возвращает idle; потеря процесса/неподтверждённый cleanup и unknown prompt не разрешают повтор или resume.
+RED: новый managed_sessions module отсутствовал; новые cancel/resume сценарии добавлены к fake peers. Итоговый WSL: affected adapter/client/binding modules — 162 passed; дополнительные interrupt ack/result negative cases — 3 passed.
+Windows: affected adapter/relay/wiring и четыре setup-сценария — 122 passed / 2 POSIX skips; после review fix managed_sessions + wsl_adapters — 11 passed. pywin32 bootstrap временного venv исправлен; прежние environment failures не требуют production-правок.
+Одно независимое ревью: найден unconditional lease release при unknown WSL cleanup; исправлено durable attached fence до native работы, regression tests для обоих адаптеров. Повторного review-цикла не было.
+Ruff check/format и diff whitespace clean. История исходного Claude чата проверена после нового AgentClient; relay reconnect не повторяет prompt.
+Это source/fake-peer evidence; authenticated model, Telegram, штатное обновление dispatcher/connector и полный baseline не запускались.

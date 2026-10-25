@@ -35,9 +35,7 @@ async def test_lost_claude_handle_is_terminal_without_transport_or_replay(tmp_pa
         pytest.fail("lost handle must not open a new generation")
 
     client = AgentClient(profile, pin_dir=tmp_path, transport_factory=unexpected)
-    assert client.session_availability("old") == "restore-unavailable"
-    with pytest.raises(SessionNotFound, match="cold resume"):
-        await client.load_session("arbitrary-native-id")
+    assert client.session_availability("old") == "restore-required"
     with pytest.raises(SessionNotFound, match="no automatic replay"):
         await client.ask("old", "never resend")
 
@@ -99,8 +97,9 @@ def test_connector_uses_one_owned_claude_manager_and_closes_it(tmp_path, monkeyp
     instances = []
 
     class Manager:
-        def __init__(self, settings, policy):
+        def __init__(self, settings, policy, *, sessions):
             assert settings == cfg.settings.agents[0].claude_code
+            assert sessions.profile.alias == "claude"
             self.open = AsyncMock(
                 return_value=SimpleNamespace(closed=__import__("asyncio").Event())
             )

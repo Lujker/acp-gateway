@@ -102,6 +102,67 @@ async def test_work_profile_enables_native_tools_settings_and_persistence(peer, 
         assert flag not in argv
 
 
+async def test_native_interrupt_requires_ack_and_terminal_result(peer, tmp_path):
+    stream = await peer("interrupt", turn_timeout=3)
+    try:
+        await initialize(stream)
+        created, _ = await request(stream, 2, "session/new", cwd=str(tmp_path))
+        sid = created["result"]["sessionId"]
+        await stream.send(
+            {
+                "jsonrpc": "2.0",
+                "id": 3,
+                "method": "session/prompt",
+                "params": {"sessionId": sid, "prompt": [{"type": "text", "text": "hi"}]},
+            }
+        )
+        for _ in range(100):
+            if any(row["frame"].get("type") == "user" for row in calls(tmp_path)):
+                break
+            await asyncio.sleep(0.01)
+        await stream.send(
+            {"jsonrpc": "2.0", "method": "session/cancel", "params": {"sessionId": sid}}
+        )
+        while True:
+            frame = await asyncio.wait_for(stream.receive(), 2)
+            if frame.get("id") == 3:
+                assert frame["result"]["stopReason"] == "cancelled"
+                break
+        assert stream.uncertain == 0
+        assert not stream.closed.is_set()
+    finally:
+        await stream.close()
+
+
+@pytest.mark.parametrize("scenario", ["interrupt-no-ack", "interrupt-no-result"])
+async def test_incomplete_native_interrupt_never_reports_cancelled(peer, tmp_path, scenario):
+    stream = await peer(scenario, request_timeout=0.15, turn_timeout=0.4)
+    try:
+        await initialize(stream)
+        created, _ = await request(stream, 2, "session/new", cwd=str(tmp_path))
+        sid = created["result"]["sessionId"]
+        await stream.send(
+            {
+                "jsonrpc": "2.0",
+                "id": 3,
+                "method": "session/prompt",
+                "params": {"sessionId": sid, "prompt": [{"type": "text", "text": "hi"}]},
+            }
+        )
+        for _ in range(100):
+            if any(row["frame"].get("type") == "user" for row in calls(tmp_path)):
+                break
+            await asyncio.sleep(0.005)
+        await stream.send(
+            {"jsonrpc": "2.0", "method": "session/cancel", "params": {"sessionId": sid}}
+        )
+        while (frame := await asyncio.wait_for(stream.receive(), 2)) is not None:
+            assert frame.get("id") != 3 or "result" not in frame
+        assert stream.uncertain >= 1
+    finally:
+        await stream.close()
+
+
 @pytest.mark.parametrize("mode,requests", [("safe", 0), ("work", 1)])
 async def test_additional_tool_permission_is_forwarded_only_in_work_profile(
     peer, tmp_path, mode, requests
@@ -466,7 +527,7 @@ async def test_real_agent_client_permission_roundtrip_and_lost_session_fence(pee
         assert reply.text == "hello"
         assert reply.stop_reason == "end_turn"
         assert bool(seen) == allow
-        assert not client.supports_cancel
+        assert client.supports_cancel
         assert not client.agent_capabilities.load_session
         assert [s["sessionId"] for s in await client.list_sessions()] == [sid]
     finally:
@@ -550,7 +611,7 @@ async def test_initialize_is_model_free_manual_and_closes_owned_child(peer, tmp_
         response, _ = await initialize(stream)
         caps = response["result"]["agentCapabilities"]
         assert not caps["loadSession"]
-        assert not caps["_meta"]["acp-gateway"]["cancel"]
+        assert caps["_meta"]["acp-gateway"]["cancel"]
         assert not caps["_meta"]["acp-gateway"]["coldResume"]
         recorded = calls(tmp_path)
         assert [f["frame"].get("type") for f in recorded] == [None, "control_request"]
@@ -559,11 +620,11 @@ async def test_initialize_is_model_free_manual_and_closes_owned_child(peer, tmp_
         for flag in (
             "--strict-mcp-config",
             "--safe-mode",
-            "--no-session-persistence",
             "--disable-slash-commands",
             "--no-chrome",
         ):
             assert flag in argv
+        assert "--no-session-persistence" not in argv
         assert "--dangerously-skip-permissions" not in argv
         configured = json.loads(argv[argv.index("--settings") + 1])
         assert configured == {
