@@ -136,9 +136,12 @@ async def test_native_interrupt_requires_ack_and_terminal_result(peer, tmp_path)
 
 @pytest.mark.parametrize("scenario", ["interrupt-no-ack", "interrupt-no-result"])
 async def test_incomplete_native_interrupt_never_reports_cancelled(peer, tmp_path, scenario):
-    stream = await peer(scenario, request_timeout=0.15, turn_timeout=0.4)
+    stream = await peer(scenario)
     try:
         await initialize(stream)
+        # Keep native process startup separate from the short interrupt deadline.
+        stream.settings.request_timeout = 0.15
+        stream.settings.turn_timeout = 0.4
         created, _ = await request(stream, 2, "session/new", cwd=str(tmp_path))
         sid = created["result"]["sessionId"]
         await stream.send(

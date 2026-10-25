@@ -1409,3 +1409,5 @@ Windows: affected adapter/relay/wiring и четыре setup-сценария �
 Одно независимое ревью: найден unconditional lease release при unknown WSL cleanup; исправлено durable attached fence до native работы, regression tests для обоих адаптеров. Повторного review-цикла не было.
 Ruff check/format и diff whitespace clean. История исходного Claude чата проверена после нового AgentClient; relay reconnect не повторяет prompt.
 Это source/fake-peer evidence; authenticated model, Telegram, штатное обновление dispatcher/connector и полный baseline не запускались.
+
+Windows negative interrupt: первый прогон 1 passed / 2 failed на startup deadline 150ms, до проверяемой отмены. Deadline перенесён после initialize; повтор только двух сценариев — 2 passed / 60 deselected. Production-код не менялся.
