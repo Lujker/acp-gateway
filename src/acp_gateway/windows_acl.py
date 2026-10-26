@@ -12,6 +12,17 @@ from pathlib import Path
 # even local filesystem security APIs can stall and a thread cannot cancel them.
 _VERIFY_TIMEOUT = 10
 _CLEANUP_TIMEOUT = 1
+# pythonw.exe is a GUI-subsystem program: without this flag Windows shows the
+# "working in background" cursor for every verifier child it starts.
+_STARTF_FORCEOFFFEEDBACK = 0x00000080
+
+
+def _startupinfo():
+    if not hasattr(subprocess, "STARTUPINFO"):
+        return None
+    info = subprocess.STARTUPINFO()
+    info.dwFlags |= _STARTF_FORCEOFFFEEDBACK
+    return info
 
 
 def _verify_paths(payload):
@@ -146,6 +157,7 @@ def check_private_paths(files, *, directories=(), purpose="Hermes discovery"):
             errors="replace",
             timeout=_VERIFY_TIMEOUT,
             creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+            startupinfo=_startupinfo(),
         )
     except subprocess.TimeoutExpired:
         raise ValueError("Windows discovery ACL verification timed out") from None

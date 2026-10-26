@@ -177,3 +177,21 @@ def test_standalone_verifier_response_is_sanitized(monkeypatch, capsys, denied):
     output = capsys.readouterr()
     assert output.err == ""
     assert output.out == ("" if denied else '{"private":true}\n')
+
+
+def test_interpreter_child_disables_busy_cursor_feedback(monkeypatch, tmp_path):
+    captured = {}
+
+    class StartupInfo:
+        def __init__(self):
+            self.dwFlags = 0
+
+    def run(argv, **kwargs):
+        captured.update(kwargs)
+        return SimpleNamespace(returncode=0, stdout='{"private":true}')
+
+    monkeypatch.setattr(subprocess, "STARTUPINFO", StartupInfo, raising=False)
+    monkeypatch.setattr(subprocess, "run", run)
+    windows_acl.check_private_paths([], directories=[tmp_path])
+    # STARTF_FORCEOFFFEEDBACK: no "app starting" cursor per pythonw child.
+    assert captured["startupinfo"].dwFlags & 0x80

@@ -1,9 +1,13 @@
 """Instance-fenced local admission reservation; data-directory ACLs authorize it."""
 
 import asyncio
+import os
 import re
 import secrets
+import tempfile
 import time
+from pathlib import Path
+from time import monotonic
 
 import structlog
 
@@ -21,7 +25,28 @@ FIELDS = (
     "uncertain_sessions",
     "opening",
 )
+# On Windows a full _atomic write starts three ACL verifier children. Activity is
+# republished every interval, so verify the directory with _atomic on start and
+# then once per this period; plain writes in between stay inside it.
+ACL_RECHECK_SECONDS = 60
 log = structlog.get_logger(__name__)
+
+
+def _write_status(path, content):
+    """Replace the non-secret activity record in a directory _atomic verified.
+
+    The check rejects any untrusted ACE on the directory, inheritable ones
+    included, so new temporary files inherit a private DACL. Only the trusted
+    owner, SYSTEM or Administrators can change that DACL afterwards.
+    """
+    descriptor, name = tempfile.mkstemp(prefix=".acpgw-", dir=path.parent)
+    temporary = Path(name)
+    try:
+        with os.fdopen(descriptor, "wb") as stream:
+            stream.write(content)
+        temporary.replace(path)
+    finally:
+        temporary.unlink(missing_ok=True)
 
 
 def can_reserve(status, *, restart_uncertain=False):
@@ -106,6 +131,7 @@ async def watch(directory, instance, controller, *, interval=0.2):
     pending_response = None
     pending_identity = None
     publish_failed = False
+    verified_at = None
     try:
         while True:
             status = {
@@ -114,9 +140,17 @@ async def watch(directory, instance, controller, *, interval=0.2):
                 "published": time.time(),
                 **controller.status(),
             }
+            payload = json.dumps(status).encode()
+            now = monotonic()
             try:
-                await asyncio.to_thread(_atomic, directory / STATUS, json.dumps(status).encode())
-            except OSError as exc:
+                if verified_at is None or now - verified_at >= ACL_RECHECK_SECONDS:
+                    # Until the full check passes again, every write takes this branch.
+                    await asyncio.to_thread(_atomic, directory / STATUS, payload)
+                    verified_at = now
+                else:
+                    await asyncio.to_thread(_write_status, directory / STATUS, payload)
+            except (OSError, ValueError) as exc:
+                # ValueError is a failed or timed-out ACL check; retry it, never die.
                 if not publish_failed:
                     log.warning("connector_activity_publish_failed", error_type=type(exc).__name__)
                 publish_failed = True

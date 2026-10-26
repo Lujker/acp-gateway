@@ -337,3 +337,48 @@ async def test_activity_write_failure_is_logged_and_watcher_recovers(
     assert len(warnings) == 1
     assert all(a == ("connector_activity_publish_failed",) for a, _ in warnings)
     assert "private-error-detail" not in str(warnings)
+
+
+async def test_activity_reverifies_acl_periodically_not_on_every_write(
+    tmp_path, controller, monkeypatch
+):
+    from acp_gateway.connectors import maintenance
+
+    original = maintenance._atomic
+    clock = SimpleNamespace(value=100.0)
+    checked = []
+    failures = 1
+
+    def atomic(path, content):
+        nonlocal failures
+        if path.name == STATUS:
+            checked.append(clock.value)
+            if failures:
+                failures -= 1
+                raise ValueError("Windows discovery ACL verification timed out")
+        return original(path, content)
+
+    monkeypatch.setattr(maintenance, "_atomic", atomic)
+    monkeypatch.setattr(maintenance, "monotonic", lambda: clock.value)
+    monkeypatch.setattr(maintenance.log, "warning", lambda *a, **kw: None)
+    with FileLock(tmp_path / "connector.lock"), control_record(tmp_path) as instance:
+        task = asyncio.create_task(watch(tmp_path, instance, controller, interval=0.01))
+        try:
+            async with asyncio.timeout(5):
+                while read_status(tmp_path).get("state") != "running":
+                    assert not task.done()
+                    await asyncio.sleep(0.01)
+                # A failed ACL check is retried instead of ending the watcher.
+                assert checked == [100.0, 100.0]
+                first = json.loads((tmp_path / STATUS).read_bytes())["published"]
+                while json.loads((tmp_path / STATUS).read_bytes())["published"] == first:
+                    await asyncio.sleep(0.01)
+                assert checked == [100.0, 100.0]
+                clock.value += maintenance.ACL_RECHECK_SECONDS
+                while len(checked) < 3:
+                    assert not task.done()
+                    await asyncio.sleep(0.01)
+                assert checked[2] == clock.value
+        finally:
+            task.cancel()
+            await asyncio.gather(task, return_exceptions=True)
