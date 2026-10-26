@@ -13,6 +13,7 @@ from test_telegram import telegram as telegram
 from test_telegram_controls import button
 
 from acp_gateway.channels.telegram import TelegramChannel
+from acp_gateway.channels.telegram_format import plain_html
 from acp_gateway.config import AgentProfile
 from acp_gateway.core import GatewayCore
 from acp_gateway.log import register_secret
@@ -32,14 +33,14 @@ async def test_context_updates_same_message_after_rename_and_selection_without_r
     first = record(core)
     await feed(channel, 1, "/context")
     mid = session.sent[-1].message_id
-    assert f"Диалог: #{first.id}" in card(session, mid).text
-    assert "Папка: /work" in card(session, mid).text
+    assert f"Диалог: #{first.id}" in plain_html(card(session, mid).text)
+    assert "Папка: /work" in plain_html(card(session, mid).text)
     await feed(channel, 2, f"/rename {first.id} Research")
     await eventually(lambda: "Research" in card(session, mid).text)
     newer = record(core, "newer")
     await feed(channel, 3, "/menu")
-    await eventually(lambda: f"Диалог: #{newer.id}" in card(session, mid).text)
-    assert sum(m.text.startswith("Текущий контекст") for m in session.sent) == 1
+    await eventually(lambda: f"Диалог: #{newer.id}" in plain_html(card(session, mid).text))
+    assert sum(plain_html(m.text).startswith("📍 Текущий контекст") for m in session.sent) == 1
     assert not server.log
 
 
@@ -54,12 +55,12 @@ async def test_managed_profile_visible_in_context_and_agent_list_without_rpc(tel
         claude_code={"mode": mode},
     )
     await feed(channel, 1, "/context")
-    assert "Профиль агента: " + label in session.sent[-1].text
+    assert "Профиль агента: " + label in plain_html(session.sent[-1].text)
     await feed(channel, 2, "/agent")
     assert label in session.sent[-1].text
     dialogue = record(core)
     await feed(channel, 3, f"/dialogue {dialogue.id}")
-    assert "Профиль агента: " + label in session.sent[-1].text
+    assert "Профиль агента: " + label in plain_html(session.sent[-1].text)
     assert not server.log
 
 
@@ -233,7 +234,7 @@ async def test_blocked_context_edit_does_not_block_result_and_late_edit_is_seria
         await eventually(lambda: any(m.text == "hi" for m in session.sent))
         release.set()
         channel._context_wake.set()
-        await eventually(lambda: f"Диалог: #{newest.id}" in card(session, mid).text)
+        await eventually(lambda: f"Диалог: #{newest.id}" in plain_html(card(session, mid).text))
         assert core.active_session(old.conversation).id == newest.id
     finally:
         release.set()
@@ -244,11 +245,11 @@ async def test_context_button_keeps_navigation_and_context_messages_separate(tel
     record(core)
     await feed(channel, 1, "/menu")
     menu = session.sent[-1]
-    assert "Папка: /work" in menu.text
+    assert "Папка: /work" in plain_html(menu.text)
     await click(channel, 2, menu, button(menu, "Текущий контекст").callback_data)
     assert len(session.sent) == 2
     assert session.sent[-1].message_id != menu.message_id
-    assert session.sent[-1].text.startswith("Текущий контекст")
+    assert plain_html(session.sent[-1].text).startswith("📍 Текущий контекст")
     assert not server.log
 
 

@@ -32,13 +32,22 @@ from aiogram.types import (
 from pydantic import SecretStr
 
 from acp_gateway.agents import AgentError, SessionNotFound
+from acp_gateway.agents.events import ThoughtChunk
 from acp_gateway.channels.base import Channel
 from acp_gateway.channels.telegram_context import ContextCard
 from acp_gateway.channels.telegram_dashboard import Dashboard
 from acp_gateway.channels.telegram_errors import error_card
-from acp_gateway.channels.telegram_format import FORMAT_VERSION, answer_chunks, plain_html
+from acp_gateway.channels.telegram_format import (
+    FORMAT_VERSION,
+    LEGACY_FORMAT_VERSION,
+    answer_chunks,
+    plain_html,
+    result_chunks,
+    system_chunks,
+)
 from acp_gateway.channels.telegram_pairing import PairingCards
 from acp_gateway.channels.telegram_profiles import ProfileCards
+from acp_gateway.channels.telegram_progress import ProgressCards
 from acp_gateway.channels.telegram_shortcuts import Shortcuts
 from acp_gateway.channels.telegram_ui import PANEL_CONTEXT, Panels
 from acp_gateway.channels.telegram_updates import Updates
@@ -46,31 +55,34 @@ from acp_gateway.channels.telegram_work import WorkCards
 from acp_gateway.config import TelegramSettings
 from acp_gateway.connectors.diagnostics import computer_diagnostics
 from acp_gateway.core import GatewayError
-from acp_gateway.core.bus import ApprovalRequested, ApprovalResolved, JobFinished
+from acp_gateway.core.bus import ApprovalRequested, ApprovalResolved, JobFinished, JobProgress
 from acp_gateway.log import get_logger, redact_text, register_secret
 from acp_gateway.storage import Conversation, Job
 
 HELP = (
+    "❓ Помощь ACP Gateway\n\n"
     "Выберите агента, затем создайте или выберите диалог. "
-    "Обычные сообщения идут в выбранный диалог.\n"
+    "Обычные сообщения идут в выбранный диалог.\n\n📍 Навигация\n"
     "/context — отдельная обновляемая карточка контекста\n"
     "/recent — недавние диалоги всех агентов\n/favorites — избранные маршруты\n"
     "/menu — панель и текущий выбор\n/start, /help — начало работы и подсказки\n"
+    "\n💻 Компьютеры и агенты\n"
     "/computers — компьютеры и подключения\n/agent [ALIAS] — список или выбор агента\n"
+    "/profiles КОМПЬЮТЕР — настройка профилей владельцем\n"
     "/updates — версии диспетчера и компьютеров; /updates_check — проверить обновления\n"
-    "/new [ALIAS] — новый диалог\n/sessions [PAGE] — список диалогов\n"
+    "\n💬 Диалоги\n/new [ALIAS] — новый диалог\n/sessions [PAGE] — список диалогов\n"
     "/dialogue ID [PAGE] — предпросмотр диалога\n/switch ID — выбрать диалог\n"
     "Переименовать: откройте диалог и нажмите «Переименовать», затем отправьте название.\n"
     "/cancel — отменить ввод названия\n/rename ID TITLE — название диспетчера; Hermes не меняется\n"
+    "\n📋 Задачи и результаты\n"
     "/status — подключения и задачи\n/jobs — история задач этого чата\n/job ID — карточка задачи\n"
+    "/work JOB_ID — отдельный ход работы\n"
     "/result JOB_ID — получить сохранённый результат без запуска агента\n"
     "/delivery JOB_ID — состояние доставки и действия при сбое\n"
     "/stop — остановить поддерживающие отмену задачи этого чата\n"
-    "/model, /models — текущая модель и каталог\n"
+    "\n⚙️ Настройки диалога\n/model, /models — текущая модель и каталог\n"
     "/model state — сохранённые сведения без подключения к агенту\n"
-    "/model reconcile ID REVISION — проверить сохранённый исход без повтора операции\n"
-    "/model set PROVIDER MODEL ID REVISION [TOKEN] — выбрать или подтвердить модель\n"
-    "/model default [PROVIDER MODEL | clear] — модель новых диалогов\n"
+    "Выбор модели — кнопками карточки диалога.\n"
     "/mode — режим выполнения выбранного диалога\n/approvals — ожидающие подтверждения\n"
     "По умолчанию разрешения подтверждает человек. /mode явно меняет режим выбранного диалога."
 )
@@ -87,6 +99,7 @@ COMMANDS = (
     ("favorites", "Favorite routes", "Избранные маршруты"),
     ("computers", "Computers", "Компьютеры и подключения"),
     ("profiles", "Manage connector profiles", "Профили агентов: /profiles КОМПЬЮТЕР"),
+    ("work", "Public work updates", "Ход работы: /work JOB_ID"),
     ("updates", "Dispatcher and connector updates", "Версии и обновления компьютеров"),
     ("jobs", "Job history", "История задач этого чата"),
     ("job", "Job details", "Подробности: /job JOB_ID"),
@@ -175,7 +188,15 @@ class _Updates(BaseMiddleware):
 
 
 class TelegramChannel(
-    ProfileCards, PairingCards, Updates, Shortcuts, ContextCard, WorkCards, Dashboard, Channel
+    ProgressCards,
+    ProfileCards,
+    PairingCards,
+    Updates,
+    Shortcuts,
+    ContextCard,
+    WorkCards,
+    Dashboard,
+    Channel,
 ):
     name = "telegram"
     can_approve = True
@@ -256,6 +277,11 @@ class TelegramChannel(
         self._subscription = core.bus.subscribe(
             lambda e: (
                 (isinstance(e, JobFinished) and e.conversation.channel == self.name)
+                or (
+                    isinstance(e, JobProgress)
+                    and isinstance(e.event, ThoughtChunk)
+                    and e.conversation.channel == self.name
+                )
                 or (isinstance(e, ApprovalRequested) and e.approver_channel == self.name)
                 or (isinstance(e, ApprovalResolved) and self.name in e.approver_channels)
             )
@@ -304,11 +330,12 @@ class TelegramChannel(
                 await asyncio.sleep(3600)
 
     def _status_lines(self):
-        lines = ["Dispatcher: running"]
+        lines = ["📊 Состояние системы", "", "Диспетчер: работает"]
         routes = {}
         if self.connector_dispatcher is not None:
             snapshot = computer_diagnostics(self.core, self.connector_dispatcher)
             routes = {row["address"]: row for row in snapshot["routes"]}
+            lines += ["", "💻 Компьютеры"]
             for pc in snapshot["computers"]:
                 state = (
                     "access disabled"
@@ -318,6 +345,7 @@ class TelegramChannel(
                     else "offline"
                 )
                 lines.append(f"PC {pc['computer_id']}: {state}")
+        lines += ["", "🖥 Агенты"]
         for alias, client in self.core.agents.items():
             route = routes.get(alias)
             if route is not None:
@@ -387,6 +415,7 @@ class TelegramChannel(
         self._approval_texts.clear()
         self._panels.clear()
         self._context_bound.clear()
+        self._work_cache().clear()
         self._statuses.clear()
         while not self._deliveries.empty():
             self._deliveries.get_nowait()
@@ -438,10 +467,16 @@ class TelegramChannel(
                 return
             job = self.core.job(job_id)
             text = job.answer or job.error or f"Job: {job.status.value}"
-            chunks = answer_chunks(text)
+            chunks = result_chunks(text)
             digest = hashlib.sha256(
                 json.dumps([FORMAT_VERSION, chunks], ensure_ascii=True).encode("utf-8")
             ).hexdigest()
+            previous = answer_chunks(text)
+            previous_digest = hashlib.sha256(
+                json.dumps([LEGACY_FORMAT_VERSION, previous], ensure_ascii=True).encode("utf-8")
+            ).hexdigest()
+            if row["content_hash"] == previous_digest:
+                chunks, digest = previous, previous_digest
             # Finish an already-bound rc5 delivery in its original plain format.
             # Changing chunk boundaries after an ACK could repeat or omit content.
             legacy = self._chunks(text)
@@ -488,7 +523,7 @@ class TelegramChannel(
                 try:
                     job = self.core.job(job_id)
                     text = self._work_text(job)
-                    rendered = html.escape(text, quote=False)
+                    rendered = system_chunks(text)[0]
                     if text != previous:
                         markup, tokens = self._panels.create(
                             chat, self._job_rows(job), self._ui_context(chat)
@@ -566,15 +601,15 @@ class TelegramChannel(
 
     async def _send(self, chat: int, text: str, *, markup=None):
         first = None
-        for chunk in self._chunks(text):
+        for chunk in system_chunks(text):
             message = await self._send_payload(
-                chat, html.escape(chunk, quote=False), markup=markup if first is None else None
+                chat, chunk, markup=markup if first is None else None
             )
             first = first or message
         return first
 
     async def _send_answer(self, chat, text, job=None):
-        chunks = answer_chunks(text)
+        chunks = result_chunks(text)
         for index, chunk in enumerate(chunks):
             rows = self._job_rows(job) if job and index == len(chunks) - 1 else []
             markup, tokens = (
@@ -608,6 +643,7 @@ class TelegramChannel(
         rows = [
             [(f"🖥 {job.conversation.agent} · #{job.session_id}", f"details:{job.id}")],
             [("📄 Результат", f"result:{job.id}")],
+            [("🧭 Ход работы", f"/work {job.id}")],
         ]
         try:
             client = self.core.agent(job.conversation.agent)
@@ -625,7 +661,7 @@ class TelegramChannel(
 
     async def _panel(self, chat, text, rows, *, editable=True):
         context = PANEL_CONTEXT.get() if editable else None
-        chunks = self._chunks(text)
+        chunks = system_chunks(text)
         if context is not None and context[0].chat.id == chat and len(chunks) == 1:
             message, editor, _ = context
             async with editor.lock:
@@ -636,7 +672,7 @@ class TelegramChannel(
                     await self.bot.edit_message_text(
                         chat_id=chat,
                         message_id=message.message_id,
-                        text=html.escape(chunks[0], quote=False),
+                        text=chunks[0],
                         parse_mode="HTML",
                         reply_markup=markup,
                         link_preview_options=LinkPreviewOptions(is_disabled=True),
@@ -678,7 +714,7 @@ class TelegramChannel(
 
     async def _home(self, chat):
         context = self._ui_context(chat)
-        text = "Управление ACP Gateway\n\n" + self._context_text(chat)
+        text = "Управление ACP Gateway\n\n" + self._context_text(chat, hint=False)
         rows = [
             [("💻 Компьютеры", "/computers"), ("📋 Задачи", "/jobs")],
             [("🖥 Агенты", "/agent"), ("📊 Статус", "/status")],
@@ -686,10 +722,6 @@ class TelegramChannel(
         if context[0]:
             conv = self._conversation(chat)
             active = self.core.active_session(conv)
-            text += f"\nАгент: {conv.agent}"
-            text += f"\nДиалог: #{active.id}" if active else "\nДиалог: не выбран"
-            if active and active.title:
-                text += f" — {_label(active.title)}"
             rows += [[("💬 Диалоги", "/sessions"), ("➕ Новый диалог", "/new")]]
             if _restore_unavailable(active):
                 text += "\n\n" + _recovery_text(active)
@@ -1503,6 +1535,11 @@ class TelegramChannel(
                 return
             try:
                 if isinstance(event, JobFinished):
+                    try:
+                        self._finish_work(event.job)
+                    except Exception:
+                        # Advisory work history must never block durable final delivery.
+                        self._log.warning("Telegram work history unavailable")
                     chat = int(event.conversation.key)
                     if self.core.store.deliveries.get(self.namespace, event.job.id):
                         self._outbound_ready.set()
@@ -1512,6 +1549,8 @@ class TelegramChannel(
                             event.job.answer or event.job.error or f"Job: {event.job.status.value}",
                             event.job,
                         )
+                elif isinstance(event, JobProgress):
+                    self._record_work(event)
                 elif isinstance(event, ApprovalRequested):
                     for chat in self._approval_chats(event.approval):
                         # One blocked or failing chat must not starve the others.

@@ -26,6 +26,9 @@ def state(job):
 
 class Dashboard:
     async def _dashboard(self, chat, command, argument):
+        if command == "/work":
+            await self._work_panel(chat, argument)
+            return True
         if command == "/jobs":
             active, before = self._history_arguments(argument)
             result = self.core.job_history("telegram", str(chat), active=active, before=before)
@@ -196,6 +199,7 @@ class Dashboard:
             lines.append(f"Ошибка: {label(job.error, 300)}")
         rows = [
             [("↻ Обновить", f"/job {job.id}{suffix}"), ("📄 Результат", f"result:{job.id}")],
+            [("🧭 Ход работы", f"/work {job.id}")],
             [("Доставка", f"/delivery {job.id}{suffix}")],
         ]
         try:

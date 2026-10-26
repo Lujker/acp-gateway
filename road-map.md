@@ -1057,6 +1057,11 @@ Git-коннекторе с разрешения владельца; в публ
 [Развёртывание](docs/items/telegram-profiles-deployment.md),
 [инструкция и ограничения](docs/setup/telegram-agent-profiles.md).
 
+**Telegram presentation:** в source реализованы структурированные системные
+карточки, отдельный ход работы Codex и нумерованные части ответа с совместимой
+доставкой старого формата. Пока не развёрнуты.
+[Описание и визуальный пример](docs/setup/telegram-presentation.md).
+
 1. **P4.13.1 — рабочий режим удалённой разработки (READY в source).** Профили «Безопасный» и
    «Рабочий» для Codex и Claude Code: native auto mode (`--permission-mode auto`,
    Codex `auto_review`), полный набор инструментов и настроек, сохранение чатов,

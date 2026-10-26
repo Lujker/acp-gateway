@@ -31,9 +31,14 @@ class _Turn:
     done: asyncio.Future
     ready: asyncio.Event = field(default_factory=asyncio.Event)
     native_id: str | None = None
-    streamed: set[str] = field(default_factory=set)
     completed: set[str] = field(default_factory=set)
     tools: dict[str, dict] = field(default_factory=dict)
+    messages: dict[str, list[str]] = field(default_factory=dict)
+    phases: dict[str, str | None] = field(default_factory=dict)
+    message_chars: int = 0
+    summaries: set[tuple[str, int]] = field(default_factory=set)
+    last_answer: str | None = None
+    last_work: str | None = None
     cancelling: bool = False
 
 
@@ -499,25 +504,59 @@ class CodexAcpTransport:
             }
         )
 
+    def _text_item(self, sid, turn, item_id, text, *, work=False):
+        if not text:
+            return
+        attribute = "last_work" if work else "last_answer"
+        previous = getattr(turn, attribute)
+        prefix = "\n\n" if previous is not None and previous != item_id else ""
+        setattr(turn, attribute, item_id)
+        self._update(
+            sid,
+            {
+                "sessionUpdate": "agent_thought_chunk" if work else "agent_message_chunk",
+                "content": {"type": "text", "text": prefix + text},
+            },
+        )
+
+    def _message(self, sid, turn, item_id, text, phase):
+        if phase not in {None, "commentary", "partial_answer", "final_answer"}:
+            raise ValueError("unsupported native message phase")
+        if not isinstance(text, str):
+            raise ValueError("invalid native message")
+        parts = turn.messages.pop(item_id, [])
+        turn.message_chars -= sum(map(len, parts))
+        turn.phases.pop(item_id, None)
+        self._text_item(sid, turn, item_id, text, work=phase == "commentary")
+
     def _item(self, sid, turn, method, item):
         item_id = _identifier(item.get("id"))
         if item_id in turn.completed:
             return
-        if len(turn.completed) + len(turn.streamed) + len(turn.tools) >= MAX_SESSIONS:
+        if (
+            len(turn.completed) + len(turn.phases) + len(turn.messages) + len(turn.tools)
+            >= MAX_SESSIONS
+        ):
             raise ValueError("native item capacity exceeded")
         kind = item.get("type")
-        if kind == "agentMessage" and method == "item/completed":
-            text = item.get("text")
-            if not isinstance(text, str):
-                raise ValueError
-            if item_id not in turn.streamed:
-                self._update(
-                    sid,
-                    {
-                        "sessionUpdate": "agent_message_chunk",
-                        "content": {"type": "text", "text": text},
-                    },
-                )
+        if kind == "agentMessage":
+            phase = item.get("phase") or turn.phases.get(item_id)
+            if phase not in {None, "commentary", "partial_answer", "final_answer"}:
+                raise ValueError("unsupported native message phase")
+            if method == "item/started":
+                turn.phases[item_id] = phase
+            elif method == "item/completed":
+                self._message(sid, turn, item_id, item.get("text"), phase)
+        elif kind == "reasoning" and method == "item/completed":
+            # Only public summaries are projected. Native raw content is never forwarded.
+            summaries = item.get("summary", [])
+            if not isinstance(summaries, list) or len(summaries) > MAX_SESSIONS:
+                raise ValueError("invalid native summary")
+            for index, text in enumerate(summaries):
+                if not isinstance(text, str):
+                    raise ValueError("invalid native summary")
+                if (item_id, index) not in turn.summaries:
+                    self._text_item(sid, turn, f"{item_id}:{index}", text, work=True)
         elif kind in {"commandExecution", "fileChange"}:
             if method == "item/started":
                 if item_id in turn.tools:
@@ -592,21 +631,42 @@ class CodexAcpTransport:
                     item_id = _identifier(params.get("itemId"))
                     if item_id in turn.completed:
                         continue
-                    if len(turn.streamed) >= MAX_SESSIONS or not isinstance(
+                    if len(turn.messages) + len(turn.phases) >= MAX_SESSIONS or not isinstance(
                         params.get("delta"), str
                     ):
                         raise ValueError
-                    turn.streamed.add(item_id)
-                    self._update(
-                        sid,
-                        {
-                            "sessionUpdate": "agent_message_chunk",
-                            "content": {"type": "text", "text": params["delta"]},
-                        },
-                    )
+                    turn.message_chars += len(params["delta"])
+                    if turn.message_chars > MAX_FRAME:
+                        raise ValueError("native message buffer exceeded")
+                    if params["delta"]:
+                        turn.messages.setdefault(item_id, []).append(params["delta"])
+                elif method == "item/reasoning/summaryTextDelta":
+                    item_id = _identifier(params.get("itemId"))
+                    if item_id in turn.completed:
+                        continue
+                    index, text = params.get("summaryIndex"), params.get("delta")
+                    if (
+                        type(index) is not int
+                        or not 0 <= index < MAX_SESSIONS
+                        or not isinstance(text, str)
+                    ):
+                        raise ValueError("invalid native summary delta")
+                    turn.summaries.add((item_id, index))
+                    if len(turn.summaries) > MAX_SESSIONS:
+                        raise ValueError("native summary capacity exceeded")
+                    self._text_item(sid, turn, f"{item_id}:{index}", text, work=True)
                 elif method in {"item/started", "item/completed"}:
                     self._item(sid, turn, method, params["item"])
                 elif method == "turn/completed":
+                    # Legacy peers may omit item/completed and phase metadata.
+                    for item_id in list(turn.messages):
+                        self._message(
+                            sid,
+                            turn,
+                            item_id,
+                            "".join(turn.messages[item_id]),
+                            turn.phases.get(item_id),
+                        )
                     self._withdraw_permissions(sid)
                     turn.done.set_result(params["turn"].get("status"))
         except asyncio.CancelledError:

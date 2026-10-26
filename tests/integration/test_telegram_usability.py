@@ -11,6 +11,7 @@ from test_telegram import telegram as telegram
 from test_telegram_controls import button
 
 from acp_gateway.agents.client import PermissionOption, PermissionRequest
+from acp_gateway.channels.telegram_format import plain_html
 from acp_gateway.core import GatewayCore, GatewayError
 from acp_gateway.storage import Conversation, Store
 
@@ -43,7 +44,7 @@ async def test_full_approval_input_pages_are_complete_private_and_settled_once(t
     raw = {"command": "echo " + "<part>" * 700 + " END-OF-COMMAND"}
     job, approval, task, compact = await requested(telegram, raw)
     assert "Ввод сокращён" in compact.text
-    assert f"Диалог: #{job.session_id}" in compact.text
+    assert f"Диалог: #{job.session_id}" in plain_html(compact.text)
     with pytest.raises(GatewayError):
         await channel._command(OTHER, f"/approval {approval.id}")
     encoded = json.dumps(raw, ensure_ascii=False, indent=2)
@@ -129,7 +130,7 @@ async def test_progress_shows_approval_wait_route_duration_and_actual_finish(tel
     assert (
         "work" in progress.text
         and "Длительность:" in progress.text
-        and "Диалог: #" in progress.text
+        and "Диалог: #" in plain_html(progress.text)
     )
     compact = next(m for m in session.sent if approval_message(m))
     await click(channel, 4, compact, compact.reply_markup.inline_keyboard[0][0].callback_data)
@@ -175,7 +176,7 @@ async def test_job_dialogue_selection_targets_exact_owned_route_and_is_once_only
     data = button(card, "Выбрать диалог").callback_data
     await click(channel, 2, card, data)
     assert core.active_session(conv).id == old.id
-    assert "Агент / ПК: work" in session.sent[-1].text
+    assert "Агент / ПК: work" in plain_html(session.sent[-1].text)
     revision = core.store.active_revision(conv)
     await click(channel, 3, card, data)
     assert core.store.active_revision(conv) == revision

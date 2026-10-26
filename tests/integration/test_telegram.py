@@ -13,6 +13,7 @@ from pydantic import SecretStr, ValidationError
 
 from acp_gateway.agents import AgentClient
 from acp_gateway.channels.telegram import TelegramChannel
+from acp_gateway.channels.telegram_format import plain_html
 from acp_gateway.config import AgentProfile, PolicySettings, TelegramSettings
 from acp_gateway.core import GatewayCore, GatewayError
 from acp_gateway.storage import Conversation, JobStatus, Store
@@ -266,7 +267,7 @@ async def test_chat_approval_stays_private_to_its_owner(telegram):
     assert {chat for chat, _ in channel._buttons} == {OTHER}
     assert not any(approval_message(m) and m.chat.id == OWNER for m in session.sent)
     await feed(channel, 5, "/approvals", user=OWNER)
-    assert session.sent[-1].text == "Ожидающих подтверждений нет."
+    assert plain_html(session.sent[-1].text) == "Ожидающих подтверждений нет."
     button_message = next(m for m in session.sent if approval_message(m) and m.chat.id == OTHER)
     assert "Источник: этот чат" in button_message.text
     await click(
@@ -507,7 +508,8 @@ async def test_status_distinguishes_pc_link_from_lazy_acp(
         assert f"home/hermes: {expected}" in text
         assert "cli" not in text and "unavailable" not in text and "disconnected" not in text
         assert "MCP: serving" in text
-        assert len(text.splitlines()) == 4
+        assert "📊 Состояние системы" in text and "💻 Компьютеры" in text
+        assert text.count("home/hermes:") == 1 and text.count("MCP: serving") == 1
     finally:
         await channel.bot.session.close()
 
@@ -534,7 +536,7 @@ async def test_dialogue_cards_titles_selection_pagination_and_private_scope(tele
     text = "\n".join(m.text for m in session.sent)
     assert "Диалоги · work" in text and "Страница 1/2" in text
     assert f"▶ #{records[-1].id} — Research &lt;draft&gt; Next line" in text
-    assert "Последняя активность:" in text and "UTC" in text and "Папка: C:" in text
+    assert "Последняя активность:" in text and "UTC" in text and "Папка: C:" in plain_html(text)
     assert "PRIVATE OTHER CHAT" not in text and "/private" not in text
     assert text.count("Папка:") == 10
     session.sent.clear()
@@ -550,10 +552,11 @@ async def test_dialogue_cards_titles_selection_pagination_and_private_scope(tele
 async def test_new_and_selected_dialogue_include_agent_and_folder(telegram):
     _, channel, session, _ = telegram
     await channel._command(OWNER, "/new")
-    text = session.sent[-1].text
+    text = plain_html(session.sent[-1].text)
     assert "Новый диалог #" in text and "Агент / ПК: work" in text and "Папка: /work" in text
     dialogue_id = text.split("#", 1)[1].splitlines()[0]
     await channel._command(OWNER, f"/switch {dialogue_id}")
     assert f"Диалог #{dialogue_id}" in session.sent[-1].text
     assert "Выбран для сообщений" in session.sent[-1].text
-    assert "Агент / ПК: work" in session.sent[-1].text and "Папка: /work" in session.sent[-1].text
+    assert "Агент / ПК: work" in plain_html(session.sent[-1].text)
+    assert "Папка: /work" in plain_html(session.sent[-1].text)

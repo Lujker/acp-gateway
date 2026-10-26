@@ -2,6 +2,8 @@
 """Restart-safe answer delivery and independent Telegram status edits."""
 
 import asyncio
+import hashlib
+import json
 import secrets
 
 import pytest
@@ -11,6 +13,7 @@ from test_telegram import OTHER, OWNER, click, eventually, feed
 from test_telegram import telegram as telegram
 from test_telegram_controls import button
 
+from acp_gateway.channels.telegram_format import LEGACY_FORMAT_VERSION, answer_chunks, plain_html
 from acp_gateway.storage import Conversation, JobStatus
 
 
@@ -38,12 +41,34 @@ async def test_acknowledged_prefix_is_not_sent_again(telegram):
     core.store.deliveries.recover(channel.namespace)
     await channel._deliver_result(core.store.deliveries.due(channel.namespace))
     await channel._deliver_result(core.store.deliveries.due(channel.namespace))
-    assert [m.text for m in session.sent if m.text in {"A" * 2000, "B" * 2000, "C"}] == [
-        "A" * 2000,
-        "B" * 2000,
-        "C",
-    ]
+    replies = [plain_html(m.text) for m in session.sent if "📄 Ответ ·" in m.text]
+    assert len(replies) == 3
+    assert all(reply.startswith(f"📄 Ответ · {i}/3\n\n") for i, reply in enumerate(replies, 1))
+    assert "".join(reply.split("\n\n", 1)[1] for reply in replies) == "A" * 2000 + "B" * 2000 + "C"
     assert core.store.deliveries.get(channel.namespace, job.id)["state"] == "delivered"
+
+
+async def test_started_v1_delivery_finishes_with_original_boundaries_without_replay(telegram):
+    core, channel, session, _ = telegram
+    await feed(channel, 1, "/start")
+    await pause_sender(channel)
+    text = "A" * 2000 + "B" * 2000 + "C"
+    job = saved(core, channel, text)
+    chunks = answer_chunks(text)
+    digest = hashlib.sha256(
+        json.dumps([LEGACY_FORMAT_VERSION, chunks], ensure_ascii=True).encode()
+    ).hexdigest()
+    deliveries = core.store.deliveries
+    assert deliveries.claim(channel.namespace, job.id)
+    assert deliveries.bind_content(channel.namespace, job.id, digest)
+    await channel._send_payload(OWNER, chunks[0])
+    deliveries.acknowledge(channel.namespace, job.id, last=False)
+    deliveries.recover(channel.namespace)
+    for _ in range(2):
+        await channel._deliver_result(deliveries.due(channel.namespace))
+    assert [m.text for m in session.sent if m.text in chunks] == chunks
+    assert not any("📄 Ответ ·" in m.text for m in session.sent)
+    assert deliveries.get(channel.namespace, job.id)["state"] == "delivered"
 
 
 @pytest.mark.parametrize(
@@ -114,7 +139,7 @@ async def test_working_message_is_edited_to_final_status(telegram):
     await eventually(lambda: any(isinstance(c, EditMessageText) for c in session.calls))
     edit = next(c for c in session.calls if isinstance(c, EditMessageText))
     sends = [c for c in session.calls if isinstance(c, SendMessage)]
-    working_id = next(i + 1 for i, c in enumerate(sends) if c.text.startswith("Задача:"))
+    working_id = next(i + 1 for i, c in enumerate(sends) if "Задача:" in plain_html(c.text))
     assert edit.message_id == working_id and edit.chat_id == OWNER
     assert next(m for m in session.sent if m.message_id == working_id).text == edit.text
     assert "Завершена" in edit.text and "/result" in edit.text
@@ -144,7 +169,8 @@ async def test_blocked_status_edit_does_not_block_delivery_or_cancel(telegram):
         assert any(m.text == "pong" for m in session.sent)
         await feed(channel, 4, "/stop")
         assert any(
-            m.text.startswith("Stop requested for jobs:") and "not rolled back" in m.text
+            plain_html(m.text).startswith("Stop requested for jobs:")
+            and "not rolled back" in m.text
             for m in session.sent
         )
     finally:
@@ -266,7 +292,8 @@ async def test_status_429_defers_edit_without_duplicate_message(telegram):
     await eventually(lambda: len(edits) >= 2)
     assert len({edit.message_id for edit in edits}) == 1
     assert (
-        sum(isinstance(c, SendMessage) and c.text.startswith("Задача:") for c in session.calls) == 1
+        sum(isinstance(c, SendMessage) and "Задача:" in plain_html(c.text) for c in session.calls)
+        == 1
     )
     assert sum(m.message_id == edits[0].message_id for m in session.sent) == 1
 

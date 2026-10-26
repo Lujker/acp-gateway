@@ -3,12 +3,12 @@
 # ruff: noqa: RUF001
 import asyncio
 import contextlib
-import html
 import time
 
 from aiogram.exceptions import TelegramBadRequest, TelegramRetryAfter
 
 from acp_gateway.channels.telegram_dashboard import label
+from acp_gateway.channels.telegram_format import system_chunks
 from acp_gateway.core import GatewayError
 
 
@@ -37,7 +37,7 @@ class ContextCard:
         name = "Рабочий" if mode == "work" else "Безопасный"
         return name + (" · WSL" if environment == "wsl" else "")
 
-    def _context_text(self, chat):
+    def _context_text(self, chat, *, hint=True):
         lines = ["Текущий контекст · сюда пойдут обычные сообщения"]
         alias = self.core.store.channel_state(self.namespace, f"agent:{chat}")
         try:
@@ -112,7 +112,8 @@ class ContextCard:
                 if time.time() > pending["expires"]
                 else "Ввод названия: следующий текст переименует диалог; /cancel — отменить."
             )
-        lines.append("Снимок обновляется автоматически. Если устарел, откройте /context.")
+        if hint:
+            lines += ["", "ℹ️ Снимок обновляется автоматически. Если устарел, откройте /context."]
         return "\n".join(lines)
 
     async def _show_context(self, chat, *, explicit=False):
@@ -152,7 +153,7 @@ class ContextCard:
                         await self.bot.edit_message_text(
                             chat_id=chat,
                             message_id=previous,
-                            text=html.escape(text, quote=False),
+                            text=system_chunks(text)[0],
                             parse_mode="HTML",
                             reply_markup=markup,
                             request_timeout=10,

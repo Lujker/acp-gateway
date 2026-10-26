@@ -27,8 +27,10 @@ class WorkCards:
         lines = [
             f"Задача: {job.id}",
             status,
+            "",
             f"Агент / ПК: {label(job.conversation.agent)}",
-            f"Диалог: #{job.session_id} · Длительность: {elapsed} с",
+            f"Диалог: #{job.session_id}",
+            f"Длительность: {elapsed} с",
         ]
         if job.status.finished:
             lines.append(f"Результат: /result {job.id}")
@@ -36,9 +38,12 @@ class WorkCards:
                 lines.append(f"Ошибка: {label(job.error, 300)}")
         else:
             lines.append("Управление — кнопками этой задачи.")
+            work = self._work_snapshot(job)
+            if work["text"]:
+                lines += ["", "🧭 Ход работы", redact_text(work["text"])[-500:]]
             preview = redact_text(job.answer)[:1200]
             if preview:
-                lines += ["", preview]
+                lines += ["", "📄 Ответ", preview[:700]]
         return "\n".join(lines)
 
     @staticmethod

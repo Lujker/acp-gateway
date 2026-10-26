@@ -1478,3 +1478,12 @@ Read-only probe с реальными часами VPS/Windows и установ
 Замечание Codex: промежуточный текст попадает в общий ответ без разделения. Source verification: все agentMessage/delta преобразуются в agent_message_chunk без учёта фазы; native reasoning отдельно здесь не отображается. Тип конкретного пользовательского фрагмента без trace не подтверждён.
 Обсуждаемое улучшение: отделить промежуточные сообщения/доступные reasoning summaries от финала, показывать ход работы отдельно; улучшить разбиение по абзацам и маркировку частей ответа.
 Этот заход — исследование и запись результата, без production-правок, развёртывания и модельных вызовов.
+
+## Telegram presentation и фазы Codex — 2026-10-26
+Владелец поручил единое оформление бота вместе с отделением хода работы. Системные карточки получают заголовки/поля/блоки/эмодзи; дубли main menu убраны; help/status сгруппированы.
+Codex 0.163 schema + official App Server docs проверены: completed commentary/public reasoning summaries → ThoughtChunk, partial/final/legacy unknown → MessageChunk; raw reasoning не выводится. Bounded delta buffer ждёт authoritative item/completed, legacy flush — turn/completed.
+Отдельный `/work`/кнопка: owner-scoped bounded snapshot, 64 live/20 persisted, первые 6000 chars с пометкой сокращения; final answer независим. V2 multipart с номерами/whitespace boundaries, начатые v1/plain deliveries продолжаются без повторного prefix.
+RED фазового fake peer → GREEN; одно независимое ревью обнаружило split-Bearer redaction, исправлено полным bounded исходником в памяти и маскированием снимка/истории; regression RED→GREEN, незавершённый token не показывается. Второго review-цикла не было.
+`rtk test uv run --frozen pytest -q tests/integration/test_telegram*.py tests/unit/test_telegram*.py tests/integration/test_codex_managed.py tests/integration/test_wsl_adapters.py tests/unit/test_managed_sessions.py` — 333 passed; дополнительно 4 numbered Unicode/entity budget cases passed. Проверки raw HTML tests заменены на visible-text там, где назначение — семантика, privacy assertions сохранены.
+Native Windows affected adapter/cards/delivery/context/format — 105 passed/2 POSIX skips; финальные presentation/errors/stages — 27 passed. Ruff check/format clean. Live models/Telegram/deploy в этом заходе не запускались.
+[Инструкция](../setup/telegram-presentation.md), [визуальный пример](../previews/telegram-cards.html). Source готов к отдельному развёртыванию, main/public releases не менялись.

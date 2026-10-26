@@ -8,6 +8,7 @@ from test_telegram import telegram as telegram
 from test_telegram_controls import button
 from test_telegram_delivery import pause_sender, saved
 
+from acp_gateway.channels.telegram_format import plain_html
 from acp_gateway.core import GatewayError
 from acp_gateway.storage import Conversation, JobStatus
 
@@ -73,8 +74,9 @@ async def test_automatic_long_result_has_dialogue_actions_only_on_last_fragment(
     job = saved(core, channel, "A" * 2000 + "B")
     for _ in range(2):
         await channel._deliver_result(core.store.deliveries.due(channel.namespace))
-    fragments = [m for m in session.sent if m.text in {"A" * 2000, "B"}]
+    fragments = [m for m in session.sent if "📄 Ответ ·" in m.text]
     assert len(fragments) == 2
+    assert "".join(plain_html(m.text).split("\n\n", 1)[1] for m in fragments) == "A" * 2000 + "B"
     assert not any(
         "Новый диалог" in item.text
         for row in fragments[0].reply_markup.inline_keyboard

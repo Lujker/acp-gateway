@@ -9,6 +9,9 @@ Development changes after that tag suppress WSL console windows and add opt-in
 [owner profile administration through Telegram](setup/telegram-agent-profiles.md).
 These changes were [deployed to the owner's dispatcher and Windows connector](items/telegram-profiles-deployment.md)
 on 2026-10-26; they are not in published rc1 artifacts.
+The current development branch also separates Codex work summaries from final
+answers and improves [Telegram cards and multipart delivery](setup/telegram-presentation.md).
+These presentation changes are awaiting deployment.
 
 ## Versions
 

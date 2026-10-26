@@ -1,5 +1,7 @@
 """Deterministic Markdown-to-Telegram HTML with independently valid chunks."""
 
+# ruff: noqa: RUF001 -- Russian system labels and emoji
+
 import html
 import re
 from html.parser import HTMLParser
@@ -9,7 +11,8 @@ from markdown_it import MarkdownIt
 
 from acp_gateway.log import MASK, redact_text
 
-FORMAT_VERSION = "telegram-markdown-v1"
+FORMAT_VERSION = "telegram-markdown-v2"
+LEGACY_FORMAT_VERSION = "telegram-markdown-v1"
 _MASK_MARKER = "\ue000ACP_MASK\ue001"
 LIMIT = 2000  # At most 4000 UTF-16 units, below Telegram's entity-parsed limit.
 _PARSER = MarkdownIt("commonmark", {"html": False, "maxNesting": 20}).enable(
@@ -28,7 +31,8 @@ def _url(value):
 
 
 class _Chunks:
-    def __init__(self):
+    def __init__(self, *, limit=LIMIT, boundaries=False):
+        self.limit, self.boundaries = limit, boundaries
         self.stack = []
         self.parts = []
         self.plain = []
@@ -51,13 +55,23 @@ class _Chunks:
 
     def _text(self, value):
         while value:
-            if self.size == LIMIT:
+            if self.size == self.limit:
                 self._flush()
-            piece, value = value[: LIMIT - self.size], value[LIMIT - self.size :]
+            available = self.limit - self.size
+            take = min(len(value), available)
+            if self.boundaries and len(value) > available:
+                for separator in ("\n\n", "\n", " "):
+                    boundary = value.rfind(separator, 0, available)
+                    if boundary >= available // 2:
+                        take = boundary + len(separator)
+                        break
+            piece, value = value[:take], value[take:]
             self.parts.append(html.escape(piece, quote=False))
             self.plain.append(piece)
             self.size += len(piece)
             self.total += len(piece)
+            if value:
+                self._flush()
 
     def _separation(self):
         if self.pending and self.total:
@@ -158,13 +172,13 @@ def _table(tokens, index, out):
     return index
 
 
-def answer_chunks(text, *, already_redacted=False):
+def _render_answer(text, *, already_redacted=False, boundaries=False):
     """Redact before parsing; raw HTML is always literal, never trusted markup."""
     redacted = redact_text(text)
     text = (
         redacted.replace(MASK, _MASK_MARKER) if already_redacted or redacted != text else redacted
     )
-    out = _Chunks()
+    out = _Chunks(limit=1900 if boundaries else LIMIT, boundaries=boundaries)
     lists, quote_depth = [], 0
     tokens = _PARSER.parse(text)
     index = 0
@@ -212,6 +226,108 @@ def answer_chunks(text, *, already_redacted=False):
         elif kind == "table_open":
             index = _table(tokens, index, out)
         index += 1
+    return out.finish()
+
+
+def answer_chunks(text, *, already_redacted=False):
+    """The v1 rendering, retained verbatim for deliveries that already started."""
+    return _render_answer(text, already_redacted=already_redacted)
+
+
+def result_chunks(text):
+    """Readable v2 boundaries and part numbers, with space reserved for the title."""
+    chunks = _render_answer(text, boundaries=True)
+    if len(chunks) == 1:
+        return chunks
+    return [f"<b>📄 Ответ · {i}/{len(chunks)}</b>\n\n{body}" for i, body in enumerate(chunks, 1)]
+
+
+_FIELDS = {
+    "Агент": ("🖥", "connection"),
+    "Агент / ПК": ("🖥", "connection"),
+    "Профиль агента": ("⚙️", "connection"),
+    "Компьютер": ("💻", "connection"),
+    "Подключение ПК": ("🔌", "connection"),
+    "Подключение агента": ("🔌", "connection"),
+    "Готовность агента": ("🔎", "connection"),
+    "Профиль": ("⚙️", "connection"),
+    "Папка": ("📁", "workspace"),
+    "Папка новых диалогов": ("📁", "workspace"),
+    "Диалог": ("💬", "dialogue"),
+    "Состояние": ("📍", "dialogue"),
+    "Выполнение": ("⚙️", "dialogue"),
+    "Режим": ("⚙️", "dialogue"),
+    "Название": ("🏷", "dialogue"),
+    "Модель": ("🧠", "dialogue"),
+    "Задача": ("📋", "job"),
+    "Страница": ("📑", "job"),
+    "Начало": ("🕘", "time"),
+    "Завершение": ("🕘", "time"),
+    "Длительность": ("⏱", "time"),
+    "Ошибка": ("⚠️", "detail"),
+    "Пояснение": ("ℹ️", "detail"),
+}
+_TITLES = {
+    "Управление": "🏠",
+    "Текущий контекст": "📍",
+    "Компьютеры": "💻",
+    "Компьютер": "💻",
+    "Агенты": "🖥",
+    "Профили": "⚙️",
+    "Профиль": "⚙️",
+    "Задач": "📋",
+    "Диалог": "💬",
+    "Модель": "🧠",
+    "Подтверж": "✅",
+    "Обновлен": "⬆️",
+    "Действие не": "⚠️",
+}
+
+_SECTIONS = {
+    "📍 Навигация",
+    "💻 Компьютеры и агенты",
+    "💬 Диалоги",
+    "📋 Задачи и результаты",
+    "⚙️ Настройки диалога",
+    "💻 Компьютеры",
+    "🖥 Агенты",
+}
+
+
+def system_chunks(text):
+    """Trusted presentation of plain system text; all values remain escaped/redacted."""
+    out = _Chunks(boundaries=True)
+    group = None
+    for index, line in enumerate(redact_text(text).splitlines()):
+        if not line.strip():
+            out.separate(2)
+            group = None
+            continue
+        if (
+            index == 0
+            or line in _SECTIONS
+            or line.startswith(("Текущий контекст ·", "🧭 Ход работы", "📄 Ответ"))
+        ):
+            out.separate(2)
+            icon = next((v for k, v in _TITLES.items() if line.startswith(k)), "")
+            out.open("b")
+            out.text((icon + " " if icon else "") + line)
+            out.close()
+            out.separate(2)
+            continue
+        name, separator, value = line.partition(": ")
+        if separator and name in _FIELDS:
+            icon, new_group = _FIELDS[name]
+            out.separate(2 if group is not None and group != new_group else 1)
+            out.text(icon + " ")
+            out.open("b")
+            out.text(name + ":")
+            out.close()
+            out.text(" " + value)
+            group = new_group
+        else:
+            out.separate(1)
+            out.text(line)
     return out.finish()
 
 

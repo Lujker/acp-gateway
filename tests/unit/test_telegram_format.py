@@ -1,8 +1,9 @@
+# ruff: noqa: RUF001, S108 -- rendered labels and path strings only
 from html.parser import HTMLParser
 
 import pytest
 
-from acp_gateway.channels.telegram_format import answer_chunks
+from acp_gateway.channels.telegram_format import answer_chunks, result_chunks, system_chunks
 from acp_gateway.log import MASK, register_secret
 
 
@@ -99,3 +100,33 @@ def test_incomplete_or_empty_markdown_remains_deliverable(source):
 
 def test_already_redacted_preview_keeps_visible_mask():
     assert "***" in readable("".join(answer_chunks("Secret: ***", already_redacted=True)))
+
+
+def test_system_cards_emphasize_sections_and_escape_values():
+    chunks = system_chunks("Управление ACP Gateway\n\nАгент: <script>\nПапка: /tmp/a&b\nДиалог: #7")
+    assert "<b>🏠 Управление ACP Gateway</b>" in chunks[0]
+    assert "<b>Агент:</b> &lt;script&gt;" in chunks[0]
+    assert "\n\n📁" in readable(chunks[0])
+    assert "/tmp/a&b" in readable(chunks[0])
+
+
+def test_multipart_replies_number_parts_without_losing_content():
+    source = ("paragraph words " * 500).rstrip()
+    chunks = result_chunks(source)
+    bodies = []
+    for index, chunk in enumerate(chunks, 1):
+        text = readable(chunk)
+        title = f"📄 Ответ · {index}/{len(chunks)}\n\n"
+        assert text.startswith(title)
+        bodies.append(text[len(title) :])
+    assert "".join(bodies) == source
+    assert all(body.endswith(" ") for body in bodies[:-1])
+
+
+@pytest.mark.parametrize("style", ["**", "*", "~~", "```python\n"])
+def test_numbered_unicode_parts_keep_valid_entities_and_utf16_budget(style):
+    body = ("😀<&> " * 1000).rstrip()
+    ending = "\n```" if style.startswith("```") else style
+    chunks = result_chunks(style + body + ending)
+    texts = [readable(chunk).split("\n\n", 1)[1] for chunk in chunks]
+    assert "".join(texts).rstrip("\n") == body

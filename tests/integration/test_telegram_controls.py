@@ -6,6 +6,7 @@ from aiogram.methods import AnswerCallbackQuery, SendMessage
 from test_telegram import OTHER, OWNER, click, eventually, feed
 from test_telegram import telegram as telegram
 
+from acp_gateway.channels.telegram_format import plain_html
 from acp_gateway.storage import Conversation, JobStatus
 
 
@@ -430,7 +431,9 @@ async def test_dialogue_preview_is_private_read_only_and_keeps_the_page(telegram
     await click(channel, 2, page, stale)
     preview = session.sent[-1]
     assert "Research &lt;draft&gt;" in preview.text
-    assert "Агент / ПК: work" in preview.text and "Последняя активность:" in preview.text
+    assert (
+        "Агент / ПК: work" in plain_html(preview.text) and "Последняя активность:" in preview.text
+    )
     assert "Не выбран" in preview.text
     assert core.active_session(conv).id == active
     assert core.store.active_revision(conv) == revision

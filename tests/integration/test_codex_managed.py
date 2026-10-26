@@ -15,6 +15,7 @@ import acp_gateway.adapters.codex as codex_adapter
 from acp_gateway.adapters.codex import CodexAcpTransport, CodexProcessManager
 from acp_gateway.agents.client import AgentClient
 from acp_gateway.agents.errors import AgentError, SessionNotFound
+from acp_gateway.agents.events import MessageChunk, ThoughtChunk
 from acp_gateway.config import AgentProfile, AppConfig, SecretStore, Settings
 from acp_gateway.connectors.control import ControlDispatcher, connect_control
 from acp_gateway.connectors.launch import ConnectorLaunch, local_policies
@@ -67,6 +68,32 @@ def peer(tmp_path, monkeypatch):
 
 def calls(tmp_path):
     return [json.loads(line) for line in (tmp_path / "codex-peer.log").read_text().splitlines()]
+
+
+async def test_message_phases_and_public_summaries_are_separate(peer):
+    client = peer("phases")
+    try:
+        sid = await client.new_session()
+        events = [event async for event in client.prompt(sid, "hello")]
+        answer = "".join(e.text for e in events if isinstance(e, MessageChunk))
+        work = "".join(e.text for e in events if isinstance(e, ThoughtChunk))
+        assert answer == "First result\n\nFinal result"
+        assert "Checked files" in work and work.count("Public summary") == 1
+        assert "RAW PRIVATE REASONING" not in answer + work
+        assert "Checking files" not in answer and "Checked files" not in answer
+    finally:
+        await client.close()
+
+
+async def test_unclassified_message_buffer_is_bounded_and_never_becomes_an_answer(peer):
+    client = peer("pending-overflow")
+    try:
+        sid = await client.new_session()
+        with pytest.raises(AgentError):
+            await client.ask(sid, "hello")
+        assert client.session_availability(sid) == "uncertain"
+    finally:
+        await client.close()
 
 
 async def test_work_profile_uses_native_auto_review_and_network(peer, tmp_path):

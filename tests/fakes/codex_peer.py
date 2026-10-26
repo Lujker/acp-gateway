@@ -76,6 +76,88 @@ for line in sys.stdin:
         if SCENARIO == "early":
             finish()
         send({"id": rid, "result": {"turn": {"id": "owned-turn"}}})
+        if SCENARIO == "pending-overflow":
+            for _ in range(4):
+                delta("x" * 90000)
+            complete()
+            continue
+        if SCENARIO == "phases":
+
+            def item(method, value):
+                note(method, {"threadId": "owned-thread", "turnId": "owned-turn", "item": value})
+
+            # Phase may be missing until completion. Deltas must not leak into the answer.
+            note(
+                "item/agentMessage/delta",
+                {
+                    "threadId": "owned-thread",
+                    "turnId": "owned-turn",
+                    "itemId": "comment",
+                    "delta": "Checking files",
+                },
+            )
+            item(
+                "item/completed",
+                {
+                    "id": "comment",
+                    "type": "agentMessage",
+                    "phase": "commentary",
+                    "text": "Checked files",
+                },
+            )
+            note(
+                "item/reasoning/summaryTextDelta",
+                {
+                    "threadId": "owned-thread",
+                    "turnId": "owned-turn",
+                    "itemId": "reason",
+                    "summaryIndex": 0,
+                    "delta": "Public summary",
+                },
+            )
+            note(
+                "item/reasoning/textDelta",
+                {
+                    "threadId": "owned-thread",
+                    "turnId": "owned-turn",
+                    "itemId": "reason",
+                    "contentIndex": 0,
+                    "delta": "RAW PRIVATE REASONING",
+                },
+            )
+            item(
+                "item/completed",
+                {
+                    "id": "reason",
+                    "type": "reasoning",
+                    "summary": ["Public summary"],
+                    "content": ["RAW PRIVATE REASONING"],
+                },
+            )
+            for phase, ident, text in [
+                ("partial_answer", "partial", "First result"),
+                ("final_answer", "final", "Final result"),
+            ]:
+                item(
+                    "item/started",
+                    {"id": ident, "type": "agentMessage", "phase": phase, "text": ""},
+                )
+                note(
+                    "item/agentMessage/delta",
+                    {
+                        "threadId": "owned-thread",
+                        "turnId": "owned-turn",
+                        "itemId": ident,
+                        "delta": text,
+                    },
+                )
+                for _ in range(2):
+                    item(
+                        "item/completed",
+                        {"id": ident, "type": "agentMessage", "phase": phase, "text": text},
+                    )
+            complete()
+            continue
         if SCENARIO == "items":
             note(
                 "item/started",
