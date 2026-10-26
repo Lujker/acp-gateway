@@ -39,6 +39,10 @@ chat configuration. Management actions are not model tools.
 - Review and confirm. `/cancel` cancels pending text entry. Forms expire after
   two minutes; reopen the list if the form expires or configuration changes.
 
+Service requests use a shorter 30-second deadline, capped by the form expiry.
+This leaves headroom inside the connector's strict 120-second request bound when
+the two computers' clocks differ slightly; it does not extend the form lifetime.
+
 Active turns, pending requests/approvals, unknown outcomes, unsupported local
 backends or another maintenance reservation block changes. Tasks are not
 force-stopped. Successful changes update YAML, local policies and the dispatcher

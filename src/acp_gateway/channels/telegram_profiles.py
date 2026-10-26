@@ -11,6 +11,8 @@ from acp_gateway.channels.telegram_dashboard import label
 from acp_gateway.connectors.protocol import ProfileSpec, ProfilesRequest
 from acp_gateway.core import GatewayError
 
+PROFILE_RPC_TTL = 30
+
 
 class ProfileCards:
     def _profile_owner(self, chat):
@@ -30,7 +32,9 @@ class ProfileCards:
             request=uuid4(),
             operation=state["operation"],
             actor=f"telegram:{chat}",
-            expires=state["expires"],
+            # Leave headroom inside the connector's 120-second bound: its clock
+            # can lag the dispatcher. The owner's form expiry remains an upper bound.
+            expires=min(state["expires"], time.time() + PROFILE_RPC_TTL),
             action=action,
             revision=state.get("revision"),
             **kwargs,

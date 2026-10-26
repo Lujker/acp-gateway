@@ -3,6 +3,7 @@
 import time
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock
+from uuid import uuid4
 
 import pytest
 from test_telegram import OWNER, eventually, feed
@@ -113,3 +114,23 @@ async def test_management_and_navigation_commands_take_priority_over_directory_i
     await channel._command(OWNER, f"/profile_action {state['token']} cwd")
     assert not await channel._profiles(OWNER, command)
     assert OWNER not in channel._profile_drafts
+
+
+@pytest.mark.parametrize("remaining", [120.0, 5.0])
+async def test_rpc_expiry_has_clock_headroom_and_never_outlives_form(
+    telegram, monkeypatch, remaining
+):
+    import acp_gateway.channels.telegram_profiles as module
+
+    _, channel, _, server = telegram
+    enable(channel)
+    now = time.time()
+    monkeypatch.setattr(module, "time", SimpleNamespace(time=lambda: now))
+    state = {"computer": "home", "operation": uuid4(), "expires": now + remaining}
+    await channel._profiles_rpc(OWNER, state, "list")
+    req = channel.connector_dispatcher.profiles.await_args.args[1]
+    connector_now = now - 6.4
+    assert connector_now <= req.expires <= connector_now + 120
+    assert req.expires <= now + 30
+    assert req.expires <= state["expires"]
+    assert not server.log

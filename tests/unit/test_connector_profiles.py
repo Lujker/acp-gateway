@@ -91,6 +91,13 @@ async def test_disabled_no_discovery_or_write(local):
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("offset", [-1, 121])
+async def test_connector_still_refuses_expired_or_excessive_rpc_deadline(local, offset):
+    req = request(local).model_copy(update={"expires": time.time() + offset})
+    assert (await local.request(req)).status == "stale"
+
+
+@pytest.mark.asyncio
 async def test_retry_identical_operation_does_not_repeat(local):
     req = request(local, "add", profile=spec(local))
     first = await local.request(req)

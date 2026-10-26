@@ -1463,3 +1463,10 @@ Docker healthy, Windows задача running на прежнем venv/pythonw, �
 Живой initialize-only Codex safe/Claude safe через relay — connected true/error null; Telegram private menu содержит profiles (25 commands). Новых диалогов/jobs/model calls 0.
 Старые три attached bindings сохранены без сброса fence; свежая runtime activity idle, все counters 0. Dispatcher reservations сняты.
 [Полный отчёт, image ID и rollback paths](telegram-profiles-deployment.md). Actual owner CRUD/визуальная проверка окон и модельная приёмка остаются; main/stable/public artifacts не менялись.
+
+## Исправление постоянного stale в профилях — 2026-10-26
+Владелец сообщил отказ при каждом открытии панели. Config byte-identical, disk/runtime profiles равны; измеренное отставание Windows к VPS — около 6,4 секунды.
+Причина: sender выдавал ровно 120 секунд, receiver считал deadline превышающим свой верхний предел. RPC deadline сокращён до min(form expiry, now+30); срок формы 120 и проверки receiver/owner/epoch/revision/UUID сохранены.
+RED: новый clock-headroom test — 1 failed/1 passed; GREEN: `rtk test uv run --frozen pytest -q tests/integration/test_telegram_profiles.py tests/unit/test_connector_profiles.py tests/integration/test_remote_profiles.py` — 34 passed. Native Windows profile/Telegram scope — 30 passed.
+Read-only probe с реальными часами VPS/Windows и установленным конфигом: старый TTL120 → stale, TTL30 → ok/4 managed profiles; записей/модельных вызовов нет.
+Одно независимое ревью: блокеров нет. Ruff check/format clean. Исправляется только sender диспетчера; коннектор и локальные настройки не требуют обновления.
