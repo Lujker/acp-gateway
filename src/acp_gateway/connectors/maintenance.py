@@ -134,6 +134,7 @@ async def watch(directory, instance, controller, *, interval=0.2):
     publish_failed = False
     verified_at = None
     verification = None
+    verification_started = None
     try:
         while True:
             status = {
@@ -154,6 +155,7 @@ async def watch(directory, instance, controller, *, interval=0.2):
                     verification = asyncio.create_task(
                         asyncio.to_thread(_atomic, directory / ACL_MARKER, b"")
                     )
+                    verification_started = now
                 if verification is not None and verification.done():
                     completed, verification = verification, None
                     try:
@@ -161,10 +163,10 @@ async def watch(directory, instance, controller, *, interval=0.2):
                     except (OSError, ValueError):
                         verified_at = None
                         raise
-                    verified_at = now
+                    verified_at = verification_started
                 if verified_at is None:
                     await asyncio.to_thread(_atomic, directory / STATUS, payload)
-                    verified_at = monotonic()
+                    verified_at = now
                 elif now - verified_at >= ACL_RECHECK_SECONDS:
                     # Keep the existing validity bound even if the checker stalls.
                     await asyncio.sleep(interval)
