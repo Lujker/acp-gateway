@@ -1435,3 +1435,14 @@ Preflight старого Windows-коннектора: activity unavailable; dis
 ## Диагностика при установке source-коннектора — 2026-10-25
 В реальном config check обнаружены устаревшие подписи «no cold resume» и manual для work. Исправлены только диагностические строки: показываются safe/work, auto/manual и scoped resume/cancel.
 `rtk test uv run --frozen pytest -q tests/unit/test_codex_cli.py tests/unit/test_claude_code_cli.py` — 43 passed; Ruff check/format clean. Runtime permissions не менялись; опубликованные rc1 artifacts остаются неизменными.
+
+## Rc1 опубликован и развёрнут — 2026-10-25
+GitHub/PyPI/GHCR 0.2.3rc1 опубликован с разрешения владельца; main/stable не менялись.
+CI: 2191 passed / 244 skipped, native packaging и binary/container smoke green.
+Windows: editable Git-клон, обычный Python 3.12.5/venv, task запускает pythonw напрямую; старый uv updater отключён.
+Личный Docker-диспетчер healthy на rc1; schema 9→10, backup сохранён, 6 диалогов/0 jobs/2 ПК сохранены.
+Пять профилей объявлены; Codex/Claude safe прошли initialize Windows→WSL и через реальный relay.
+Модельных вызовов, prompts и новых диалогов — 0; admission reservations сняты.
+Владелец исключил модели: work edit/test, stop/resume, safe allow/deny через Telegram ждут бюджета.
+Rollback/reboot не проверены; downgrade требует совместимого backup БД и исходного connector config.
+[Полный отчёт и ссылки](../releases/0.2.3rc1-publication.md).

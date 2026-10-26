@@ -2,7 +2,7 @@
 
 [Documentation](../README.md) · [P4.13 scope and evidence](../items/connector-harness-adapters.ru.md)
 
-This is a source-checkout feature, **not part of published ACP Gateway 0.2.2**.
+Available in prerelease 0.2.3rc1 and the development checkout, **not stable 0.2.2**.
 Safe/work profiles, cancellation and scoped persisted resume are implemented in
 source. Current scoped checks and independent review are recorded in the
 [evidence journal](../items/connector-harness-adapters.ru.md). Live authenticated

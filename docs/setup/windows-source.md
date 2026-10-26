@@ -12,7 +12,7 @@ installation built from a checkout. Use `run-source.ps1` for this editable route
 From PowerShell, choose the reviewed branch and an ordinary installed Python:
 
 ```powershell
-git clone --branch feature/p4.13-codex-managed git@github.com:Lujker/acp-gateway.git
+git clone --branch feature/p4.13-codex-managed https://github.com/Lujker/acp-gateway.git
 cd acp-gateway
 py -3.12 -m venv .venv
 .\.venv\Scripts\python.exe -m pip install -e .
@@ -58,6 +58,8 @@ reconnects. Release dispatcher admission after verification.
 Retain the old package until the new service is verified. Rollback removes the
 stopped new task with its CLI and reinstalls the old task with the original
 config/env/data paths. Reenable its updater only when returning to that package.
+Restore the original config if it now contains kinds unsupported by the old
+package. Dispatcher downgrade also requires a compatible pre-upgrade database.
 
 ## Update and test
 

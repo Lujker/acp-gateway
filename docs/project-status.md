@@ -4,12 +4,13 @@
 
 This is a short orientation for readers, not a replacement for the roadmap
 or acceptance journals. Planning snapshot: **2026-10-25**; stable remains **0.2.2**,
-and the source development candidate is **0.2.3rc1** (publication tracked separately).
+and the source/prerelease version is **0.2.3rc1**.
 
 ## Versions
 
 | Track | State |
 | --- | --- |
+| Preview `0.2.3rc1` | Published GitHub/PyPI/GHCR; personal dispatcher deployed, Windows connector moved to editable Git/Python venv; both safe WSL routes initialized without model calls. [Publication and deployment](releases/0.2.3rc1-publication.md). Stable/latest remains 0.2.2. |
 | Stable `0.2.2` | Connector-first pairing, out-of-box updater, CLI artifact gate and recovery fixes; published GitHub/PyPI/GHCR; automated suite 1734 passed/38 skipped; [publication](releases/0.2.2-publication.md), [release notes](releases/0.2.2.md), [upgrade](setup/update-0.2.2.ru.md) |
 | Previous stable `0.2.1` | Telegram updates, independent updater lifecycle, watcher/env fixes, context/recovery controls; [publication](releases/0.2.1-publication.md), [upgrade](setup/update-0.2.1.ru.md) |
 | Previous stable `0.2.0` | Install through uv/PyPI; independent setup sections, Telegram computer/job dashboards, controls and approvals, dialogue execution modes, managed update with service recovery, Docker dispatcher behind a host reverse proxy |
@@ -56,9 +57,17 @@ Scoped checks: 165 profile/setup tests and 162 adapter/client/binding tests in W
 wiring and setup scope: 122 passed/2 POSIX skips; cleanup regressions: 11 passed;
 additional negative interrupt cases: 2 passed. Scopes overlap and are not a new
 full-suite total. Independent security reviews completed with one fix cycle each.
-The next stage is live acceptance, requiring the owner's model budget and explicit
-approval for rc publication and installation updates. No live model/Telegram
-acceptance or production update was performed. See the
+The owner approved rc publication and installation updates on 2026-10-25; these
+are complete. The personal Docker dispatcher is healthy on rc1, database schema
+9→10 migrated with a pre-upgrade snapshot and preserved records. The Windows
+connector runs from a Git clone using an ordinary Python venv, with no uv runtime
+dependency; its registry updater is disabled. The same home enrollment advertises
+Hermes and four safe/work WSL profiles. Both safe routes passed real initialize
+through the dispatcher/connector, with zero new dialogues/jobs/model calls.
+
+The owner explicitly excluded model calls. Actual model/tool/cancel/resume and
+Telegram approval acceptance awaits a model budget; main/stable release remains
+pending. See the [deployment record](releases/0.2.3rc1-publication.md) and
 [current checkpoint](plans/p4.13-resumption.ru.md#resume-2026-10-25).
 Incomplete full-main baseline and Windows/interop issues remain documented debt.
 The older full-suite counts below are historical, not a current all-green suite.
@@ -142,7 +151,8 @@ transition is explicit and is not activated by installing 0.2.2.
 - Built-in basic OS/agent actions plus user scripts/modules, and connector-owned
   tasks/schedules, remain deferred. No shutdown/restart actions were added.
 - Current order (updated 2026-10-25): safe/work with cancel/resume is ready in source;
-  next is live acceptance and release, then native
+  rc1 deployment and model-free safe initialization are complete; next is model
+  acceptance and stable release, then native
   chat listing/stored resume (4a), then research into live shared attachment (4b).
   4a can ship without 4b. The later choice is minimal [VK](items/vk-bot.ru.md)
   versus multi-user; [Goose parity](items/goose-alternative.ru.md) is CONDITIONAL.
