@@ -1470,3 +1470,4 @@ Docker healthy, Windows задача running на прежнем venv/pythonw, �
 RED: новый clock-headroom test — 1 failed/1 passed; GREEN: `rtk test uv run --frozen pytest -q tests/integration/test_telegram_profiles.py tests/unit/test_connector_profiles.py tests/integration/test_remote_profiles.py` — 34 passed. Native Windows profile/Telegram scope — 30 passed.
 Read-only probe с реальными часами VPS/Windows и установленным конфигом: старый TTL120 → stale, TTL30 → ok/4 managed profiles; записей/модельных вызовов нет.
 Одно независимое ревью: блокеров нет. Ruff check/format clean. Исправляется только sender диспетчера; коннектор и локальные настройки не требуют обновления.
+Развёрнут `0158dea`: Docker healthy, Telegram/MCP и оба ПК connected; schema 10/integrity ok, 9 dialogues/2 jobs/2 computers сохранены. Backup/старый override сохранены, reservation снят, новых prompts/model calls нет. [Отчёт](telegram-profiles-deployment.md#profile-deadline-hotfix--2026-10-26).

@@ -5,6 +5,9 @@ Source: **44ca89e4bd86b376077d0d9585fa28e1bda6e247**.
 This is a development deployment after public 0.2.3rc1; the package version still
 reports `0.2.3rc1`. No public artifacts, release tags, stable or main were changed.
 
+**Current dispatcher:** `0158dea48082520a5a19a77a8e1e6978f4b53b86` after the
+clock-deadline hotfix below. **Windows connector:** remains on `44ca89e`.
+
 ## Dispatcher
 
 - Only `acpgw-gateway-1` was recreated with local image `acpgw:dev-44ca89e`.
@@ -58,3 +61,25 @@ interaction remains a manual acceptance step. Open `/profiles home`, or
 The WSL window suppression is installed. Model-free native transport/cleanup
 checks passed before deployment; a visual check on the owner's desktop and live
 model/tool/cancel/resume acceptance remain separate checks.
+
+## Profile deadline hotfix — 2026-10-26
+
+The owner reported permanent `stale` on opening profiles. Disk bytes matched the
+deployed config and disk/runtime profiles were equal. Measured Windows clock lag
+was about 6.4 seconds behind the dispatcher. A freshly created 120-second sender
+deadline therefore exceeded the connector's strict `now + 120` upper bound.
+
+The sender now uses `min(form expiry, now + 30)`, retaining the two-minute form
+expiry and all receiver/owner/epoch/revision/operation checks. Read-only probes
+using the actual host clocks and installed Windows config returned **stale** with
+the old deadline, **ok / 4 managed profiles** with the new one. No model was used.
+Scoped WSL checks: **34 passed**; native Windows: **30 passed**. One independent
+review found no blockers.
+
+Only the dispatcher was recreated with `acpgw:dev-0158dea`; source label matches
+the full commit above. Image ID:
+`sha256:a35e7027cfc16e9ec40c6bc3948c64e5951b6221d0ed24bc4c322efc83ce8181`.
+The Windows service/config was not changed. Private SQLite backup:
+`state/update-snapshots/deploy-0158dea/gateway.db`; previous override:
+`compose.release.yaml.before-0158dea`. Schema 10 and the existing records were
+preserved. Open a fresh `/profiles home` after the bot restart.
