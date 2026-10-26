@@ -1,7 +1,8 @@
 # Manage connector agent profiles from Telegram
 
-Available in the development branch after 0.2.3rc1. Both dispatcher and connector
-must be updated; published 0.2.3rc1 does not contain this feature.
+Available since **0.2.3**. Both dispatcher and connector must run 0.2.3 or later.
+Planned (P4.18): adding the first Codex/Claude Code agent from Telegram using
+agents the connector discovers itself, without an existing profile as template.
 
 An owner can add, edit and remove **Codex and Claude Code profiles** on a connected
 computer. New profiles copy an existing managed profile's local executable,

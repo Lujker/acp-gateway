@@ -5,8 +5,10 @@ Source: **44ca89e4bd86b376077d0d9585fa28e1bda6e247**.
 This is a development deployment after public 0.2.3rc1; the package version still
 reports `0.2.3rc1`. No public artifacts, release tags, stable or main were changed.
 
-**Current dispatcher:** `0158dea48082520a5a19a77a8e1e6978f4b53b86` after the
-clock-deadline hotfix below. **Windows connector:** remains on `44ca89e`.
+**Current state (2026-10-26, after stable 0.2.3):** dispatcher `acpgw:dev-b37e91a`,
+home Windows connector on the Git checkout with the 0.2.3 busy-cursor fix, work PC
+on 0.2.3 — see the [0.2.3 publication record](../releases/0.2.3-publication.md).
+The sections below record the earlier `44ca89e` and `0158dea` deployments.
 
 ## Dispatcher
 

@@ -1,7 +1,6 @@
 # Telegram cards, answers and work summaries
 
-Development changes after `0158dea`; not part of the published 0.2.3rc1 artifacts
-or the current owner deployment until explicitly deployed. See the
+Included in **0.2.3** and deployed to the owner's dispatcher on 2026-10-26. See the
 [visual preview](../previews/telegram-cards.html), rendered with fictitious data
 using the same formatting functions as the bot.
 

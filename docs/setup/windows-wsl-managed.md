@@ -2,10 +2,10 @@
 
 [Documentation](../README.md) · [P4.13 scope and evidence](../items/connector-harness-adapters.ru.md)
 
-Available in prerelease **0.2.3rc1** and the development checkout, not stable 0.2.2.
-
-The development branch after rc1 suppresses the WSL console window and adds
+Available since **0.2.3** (first previewed in 0.2.3rc1), not in 0.2.2.
+0.2.3 also suppresses the WSL console window and adds
 [owner-managed profiles through Telegram](telegram-agent-profiles.md).
+Simpler discovery-based setup from Telegram is planned as P4.18.
 
 **Independent source review accepted (2026-10-22):** no reproducible remaining
 S1/L1/L2/L3 defect was found in the revised BEGIN/CLEAN and final-drain mechanism.

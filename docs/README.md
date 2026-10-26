@@ -18,7 +18,7 @@ Historical documents are not current installation instructions.
 | Run the dispatcher in Docker behind the host's reverse proxy, or move a native dispatcher into Docker | [Docker dispatcher (Russian)](setup/vps-docker.ru.md) |
 | Configure autostart | [Services](setup/service.md) |
 | Upgrade Docker dispatcher and uv connectors to 0.2.3 | [Upgrade instructions (Russian)](setup/update-0.2.3.ru.md) |
-| Release notes 0.2.3 | [Release notes](releases/0.2.3.md) |
+| Release notes and publication evidence 0.2.3 | [Release notes](releases/0.2.3.md), [publication](releases/0.2.3-publication.md) |
 | Upgrade Docker dispatcher and uv connectors to 0.2.2 | [Upgrade instructions (Russian)](setup/update-0.2.2.ru.md) |
 | Release notes and publication evidence 0.2.2 | [Release notes](releases/0.2.2.md), [publication](releases/0.2.2-publication.md) |
 | Updates out of the box (working source) | [Normal setup and first start](setup/updates-out-of-box.md) |
