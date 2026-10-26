@@ -4,6 +4,9 @@
 
 Available in prerelease **0.2.3rc1** and the development checkout, not stable 0.2.2.
 
+The development branch after rc1 suppresses the WSL console window and adds
+[owner-managed profiles through Telegram](telegram-agent-profiles.md).
+
 **Independent source review accepted (2026-10-22):** no reproducible remaining
 S1/L1/L2/L3 defect was found in the revised BEGIN/CLEAN and final-drain mechanism.
 This does not establish a sandbox, authenticated model/channel acceptance, or an

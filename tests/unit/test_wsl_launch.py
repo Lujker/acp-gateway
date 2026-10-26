@@ -35,6 +35,7 @@ async def test_explicit_launch_isolated_environment(monkeypatch, distribution):
         return sentinel
 
     monkeypatch.setattr(wsl, "sys", SimpleNamespace(platform="win32"))
+    monkeypatch.setattr(wsl.subprocess, "CREATE_NO_WINDOW", 0x08000000, raising=False)
     import asyncio
 
     monkeypatch.setattr(
@@ -82,6 +83,7 @@ async def test_explicit_launch_isolated_environment(monkeypatch, distribution):
     assert "SECRET" not in repr((args, kwargs))
     assert kwargs["env"] == {"SystemRoot": r"C:\Windows"}
     assert kwargs["limit"] == 1234
+    assert kwargs["creationflags"] == 0x08000000
 
 
 @pytest.mark.asyncio

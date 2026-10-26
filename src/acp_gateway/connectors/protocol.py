@@ -67,6 +67,42 @@ class Welcome(_Frame):
     heartbeat_seconds: Annotated[int, Field(ge=5, le=300)] = 20
     update_inventory: Literal[1] | None = None
     update_operations: Literal[1] | None = None
+    agent_profiles: Literal[1] | None = None
+
+
+class ProfileSpec(_Model):
+    alias: AgentAlias
+    template: AgentAlias
+    title: Annotated[str, Field(min_length=1, max_length=128)]
+    cwd: Annotated[str, Field(min_length=1, max_length=4096)]
+    mode: Literal["safe", "work"]
+
+
+class ProfilesRequest(_Frame):
+    type: Literal["agent_profiles"] = "agent_profiles"
+    epoch: UUID
+    request: UUID
+    operation: UUID
+    action: Literal["list", "add", "update", "remove"]
+    revision: Annotated[str, Field(pattern=r"^[0-9a-f]{64}$")] | None = None
+    actor: Annotated[str, Field(pattern=r"^telegram:[0-9]{1,20}$")]
+    expires: Annotated[float, Field(allow_inf_nan=False)]
+    alias: AgentAlias | None = None
+    profile: ProfileSpec | None = None
+
+
+class ProfilesResult(_Model):
+    status: Literal["ok", "disabled", "busy", "stale", "invalid", "unknown"]
+    revision: Annotated[str, Field(pattern=r"^[0-9a-f]{64}$")] | None = None
+    profiles: Annotated[list[ProfileSpec], Field(max_length=100)] = Field(default_factory=list)
+    agents: Annotated[list[AgentManifest], Field(max_length=100)] = Field(default_factory=list)
+
+
+class ProfilesResponse(_Frame):
+    type: Literal["agent_profiles_result"] = "agent_profiles_result"
+    epoch: UUID
+    request: UUID
+    result: ProfilesResult
 
 
 class InstallationReport(_Model):
@@ -198,6 +234,8 @@ ControlFrame = (
     | UpdateInfoResponse
     | UpdateRequest
     | UpdateResponse
+    | ProfilesRequest
+    | ProfilesResponse
 )
 _ADAPTER = TypeAdapter(Annotated[ControlFrame, Field(discriminator="type")])
 

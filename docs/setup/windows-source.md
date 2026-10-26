@@ -77,3 +77,6 @@ git pull --ff-only
 Python imports use the Git sources directly. Tests and development tools may be
 installed in this venv or a separate test venv. This connector stays on the Git
 branch; other machines can continue using releases.
+
+Development builds after 0.2.3rc1 also support opt-in
+[profile management through Telegram](telegram-agent-profiles.md).

@@ -98,6 +98,7 @@ async def spawn_wsl(
             stderr=asyncio.subprocess.PIPE,
             env={"SystemRoot": root},
             limit=limit,
+            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
         )
     except (OSError, ValueError):
         raise RuntimeError("WSL subprocess launch failed") from None

@@ -31,6 +31,7 @@ from acp_gateway.connectors.protocol import (
     AgentManifest,
     Hello,
     Ping,
+    ProfilesRequest,
     ProtocolError,
     Welcome,
     decode_frame,
@@ -143,6 +144,21 @@ class ControlDispatcher:
             raise AgentUnavailable("computer connection changed")
         return report
 
+    async def profiles(self, computer_id: str, request: ProfilesRequest):
+        registration = await self._authorized_registration(computer_id)
+        result = await registration.relay.profiles(request)
+        current = await self._authorized_registration(computer_id)
+        if current is not registration:
+            raise AgentUnavailable("computer connection changed; inspect profiles")
+        if result.status == "ok":
+            # Validate uniqueness/metadata with the same rules as registration.
+            hello = Hello(version=2, computer_id=computer_id, agents=result.agents)
+            registration.agents = tuple(hello.agents)
+            registration.relay.aliases = frozenset(a.alias for a in hello.agents)
+            if self.on_registration is not None:
+                await self.on_registration(registration)
+        return result
+
     async def _authorized_registration(self, computer_id):
         registration = self.active.get(computer_id)
         if registration is None or registration.relay is None:
@@ -197,6 +213,7 @@ class ControlDispatcher:
             identity = request.headers.get("X-ACP-Computer", "")
             authorization = request.headers.get("Authorization", "")
             update_inventory = request.headers.get("X-ACP-Update-Inventory") == "1"
+            agent_profiles = request.headers.get("X-ACP-Agent-Profiles") == "1"
             update_operations = (
                 update_inventory and request.headers.get("X-ACP-Update-Operations") == "1"
             )
@@ -214,6 +231,7 @@ class ControlDispatcher:
             return connection.respond(401, "Unauthorized\n")
         connection.computer_grant = (identity, generation)
         connection.update_inventory = update_inventory
+        connection.agent_profiles = agent_profiles
         connection.update_operations = update_operations
         return None
 
@@ -257,6 +275,7 @@ class ControlDispatcher:
                 [agent.alias for agent in frame.agents],
                 update_inventory=connection.update_inventory,
                 update_operations=connection.update_operations,
+                agent_profiles=getattr(connection, "agent_profiles", False),
             )
             self.active[identity] = registration
             if previous is not None:
@@ -281,6 +300,7 @@ class ControlDispatcher:
                         heartbeat_seconds=self.heartbeat_seconds,
                         update_inventory=1 if registration.relay.update_inventory else None,
                         update_operations=1 if registration.relay.update_operations else None,
+                        agent_profiles=1 if registration.relay.agent_profiles else None,
                     )
                 )
             )
@@ -411,6 +431,7 @@ async def connect_control(
     fingerprint: str | None = None,
     update_inventory=False,
     update_operations=False,
+    agent_profiles=False,
 ):
     parts = validate_url(url)
     if fingerprint is not None and parts.scheme != "wss":
@@ -437,6 +458,7 @@ async def connect_control(
                 "X-ACP-Computer": hello.computer_id,
                 **({"X-ACP-Update-Inventory": "1"} if update_inventory else {}),
                 **({"X-ACP-Update-Operations": "1"} if update_operations else {}),
+                **({"X-ACP-Agent-Profiles": "1"} if agent_profiles else {}),
             },
             ssl=tls,
             proxy=None,
@@ -482,6 +504,8 @@ async def connect_control(
             raise ProtocolError("unsolicited update inventory negotiation")
         if welcome.update_operations is not None and not update_operations:
             raise ProtocolError("unsolicited update operation negotiation")
+        if welcome.agent_profiles is not None and not agent_profiles:
+            raise ProtocolError("unsolicited profile negotiation")
         return connection, welcome
     except BaseException as exc:
         close_code = connection.close_code
@@ -507,6 +531,7 @@ async def run_connector(
     local_factory=None,
     installation_report=None,
     update_handler=None,
+    profiles_handler=None,
 ):
     delays = (1, 2, 5, 10, 30)
     attempt = 0
@@ -515,11 +540,12 @@ async def run_connector(
             await _run_connection(
                 url,
                 credential=credential,
-                hello=hello,
+                hello=hello() if callable(hello) else hello,
                 fingerprint=fingerprint,
                 local_factory=local_factory,
                 installation_report=installation_report,
                 update_handler=update_handler,
+                profiles_handler=profiles_handler,
             )
         except ConnectorUnavailable as exc:
             delay = delays[min(attempt, len(delays) - 1)]
@@ -539,6 +565,7 @@ async def _run_connection(
     local_factory,
     installation_report=None,
     update_handler=None,
+    profiles_handler=None,
 ):
     connection, welcome = await connect_control(
         url,
@@ -547,6 +574,7 @@ async def _run_connection(
         fingerprint=fingerprint,
         update_inventory=installation_report is not None,
         update_operations=update_handler is not None,
+        agent_profiles=profiles_handler is not None,
     )
     try:
         get_logger(__name__).info(
@@ -566,6 +594,8 @@ async def _run_connection(
             installation_report=installation_report,
             update_operations=welcome.update_operations == 1,
             update_handler=update_handler,
+            agent_profiles=welcome.agent_profiles == 1,
+            profiles_handler=profiles_handler,
         )
         await peer.run()
     except ProtocolError:

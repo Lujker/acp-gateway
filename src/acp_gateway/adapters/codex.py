@@ -734,4 +734,4 @@ class CodexProcessManager:
     async def close(self):
         self.maintenance_reserved = True
         await asyncio.gather(*(s.close() for s in self._streams))
-        self._streams.clear()
+        self._prune()

@@ -59,6 +59,9 @@ def run(config, args):
         from acp_gateway.connectors.maintenance import ConnectorMaintenance, watch
 
         maintenance = ConnectorMaintenance(config.settings.agents, managers)
+        from acp_gateway.connectors.profiles import LocalProfiles
+
+        profiles = LocalProfiles(config, launch, maintenance, clients, policies, managers)
         from acp_gateway.connectors.maintenance import can_reserve
         from acp_gateway.update_service import LocalUpdates
 
@@ -142,11 +145,14 @@ def run(config, args):
                 await run_connector(
                     launch.dispatcher_url,
                     credential=credential,
-                    hello=launch.hello(config),
+                    hello=lambda: launch.hello(config),
                     fingerprint=launch.tls_fingerprint,
                     local_factory=local_factory,
                     installation_report=updates.report,
                     update_handler=updates.request,
+                    profiles_handler=(
+                        profiles.request if config.settings.connector.remote_profiles else None
+                    ),
                 )
             except asyncio.CancelledError:
                 if not stopping:

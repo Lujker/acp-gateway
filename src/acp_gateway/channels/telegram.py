@@ -38,6 +38,7 @@ from acp_gateway.channels.telegram_dashboard import Dashboard
 from acp_gateway.channels.telegram_errors import error_card
 from acp_gateway.channels.telegram_format import FORMAT_VERSION, answer_chunks, plain_html
 from acp_gateway.channels.telegram_pairing import PairingCards
+from acp_gateway.channels.telegram_profiles import ProfileCards
 from acp_gateway.channels.telegram_shortcuts import Shortcuts
 from acp_gateway.channels.telegram_ui import PANEL_CONTEXT, Panels
 from acp_gateway.channels.telegram_updates import Updates
@@ -85,6 +86,7 @@ COMMANDS = (
     ("recent", "Recent dialogues across agents", "Недавние диалоги всех агентов"),
     ("favorites", "Favorite routes", "Избранные маршруты"),
     ("computers", "Computers", "Компьютеры и подключения"),
+    ("profiles", "Manage connector profiles", "Профили агентов: /profiles КОМПЬЮТЕР"),
     ("updates", "Dispatcher and connector updates", "Версии и обновления компьютеров"),
     ("jobs", "Job history", "История задач этого чата"),
     ("job", "Job details", "Подробности: /job JOB_ID"),
@@ -172,7 +174,9 @@ class _Updates(BaseMiddleware):
         return await handler(event, data)
 
 
-class TelegramChannel(PairingCards, Updates, Shortcuts, ContextCard, WorkCards, Dashboard, Channel):
+class TelegramChannel(
+    ProfileCards, PairingCards, Updates, Shortcuts, ContextCard, WorkCards, Dashboard, Channel
+):
     name = "telegram"
     can_approve = True
 
@@ -968,6 +972,8 @@ class TelegramChannel(PairingCards, Updates, Shortcuts, ContextCard, WorkCards, 
         return True
 
     async def _command(self, chat: int, text: str):
+        if await self._profiles(chat, text):
+            return
         command, _, argument = text.partition(" ")
         command = command.split("@", 1)[0]
         argument = argument.strip()

@@ -15,6 +15,7 @@ import socket
 import subprocess
 import sys
 import tempfile
+from contextlib import ExitStack
 from pathlib import Path
 from urllib.parse import urlsplit
 
@@ -193,6 +194,17 @@ def _atomic(path, content):
 
 
 def save_files(files, originals, directory):
+    from filelock import FileLock
+
+    # Share writer locks with remote profile administration.
+    with ExitStack() as locks:
+        for path in sorted(files, key=str):
+            path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+            locks.enter_context(FileLock(str(path) + ".profiles.lock", timeout=0, mode=0o600))
+        return _save_files(files, originals, directory)
+
+
+def _save_files(files, originals, directory):
     """Refuse concurrent edits; keep private backups and restore partial writes."""
     if any(_snapshot(path) != originals[path] for path in files):
         raise ValueError("Configuration changed during setup; restart the wizard")

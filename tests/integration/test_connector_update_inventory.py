@@ -34,6 +34,8 @@ async def connected(
     local_report=report,
     operations=False,
     update_handler=None,
+    profiles=False,
+    profiles_handler=None,
 ):
     store = Store.open_in(tmp_path / "data")
     key = tmp_path / "pc.key"
@@ -59,6 +61,7 @@ async def connected(
             ),
             update_inventory=offered,
             update_operations=operations,
+            agent_profiles=profiles,
         )
 
         async def factory(alias):
@@ -73,6 +76,8 @@ async def connected(
             installation_report=local_report,
             update_operations=welcome.update_operations == 1,
             update_handler=update_handler,
+            agent_profiles=welcome.agent_profiles == 1,
+            profiles_handler=profiles_handler,
         )
         task = asyncio.create_task(peer.run())
         await peer.ready.wait()

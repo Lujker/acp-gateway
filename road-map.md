@@ -1050,6 +1050,11 @@ rc1 опубликован и целевая связка обновлена. М
 comparison принят как достаточный, неполный baseline остаётся долгом.
 [Текущее состояние](docs/plans/p4.13-resumption.ru.md#resume-2026-10-25).
 
+**Доработки 2026-10-26:** в feature-ветке добавлены скрытый запуск WSL и управление
+managed-профилями через Telegram (локальное разрешение, owner-only, проверка idle,
+backup/revision/operation ID). В опубликованный rc1 и рабочие установки пока не
+внесены. [Инструкция и ограничения](docs/setup/telegram-agent-profiles.md).
+
 1. **P4.13.1 — рабочий режим удалённой разработки (READY в source).** Профили «Безопасный» и
    «Рабочий» для Codex и Claude Code: native auto mode (`--permission-mode auto`,
    Codex `auto_review`), полный набор инструментов и настроек, сохранение чатов,

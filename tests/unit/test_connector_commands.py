@@ -100,8 +100,10 @@ def test_connector_cli_needs_no_tls_pin_for_ws(config, tmp_path, monkeypatch):
     )
     assert captured["url"] == url
     assert captured["fingerprint"] is None
-    assert captured["hello"].computer_id == "work"
-    assert captured["hello"].agents[0].alias == "goose"
+    # Registration is rebuilt on reconnect after a profile change.
+    hello = captured["hello"]()
+    assert hello.computer_id == "work"
+    assert hello.agents[0].alias == "goose"
 
 
 @pytest.fixture

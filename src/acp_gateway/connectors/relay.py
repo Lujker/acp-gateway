@@ -26,6 +26,9 @@ from acp_gateway.connectors.protocol import (
     Opened,
     Ping,
     Pong,
+    ProfilesRequest,
+    ProfilesResponse,
+    ProfilesResult,
     ProtocolError,
     UpdateInfoRequest,
     UpdateInfoResponse,
@@ -141,6 +144,8 @@ class RelayPeer:
         installation_report=None,
         update_operations=False,
         update_handler=None,
+        agent_profiles=False,
+        profiles_handler=None,
     ):
         self.connection, self.epoch = connection, epoch
         self.aliases = frozenset(aliases)
@@ -149,6 +154,8 @@ class RelayPeer:
         self.installation_report = installation_report
         self.update_operations = update_operations
         self.update_handler = update_handler
+        self.agent_profiles = agent_profiles
+        self.profiles_handler = profiles_handler
         self.update_requests = {}
         self.update_kinds = {}
         self.update_workers = set()
@@ -299,6 +306,35 @@ class RelayPeer:
     async def _read(self):
         async for payload in self.connection:
             frame = decode_frame(payload)
+            if isinstance(frame, (ProfilesRequest, ProfilesResponse)):
+                if not self.agent_profiles or frame.epoch != self.epoch:
+                    raise ProtocolError("unnegotiated profiles or invalid epoch")
+                if isinstance(frame, ProfilesResponse):
+                    if self.local_factory is not None:
+                        raise ProtocolError("unexpected profile response")
+                    pending = self.update_requests.get(frame.request)
+                    if pending is not None and not pending.done():
+                        if self.update_kinds[frame.request] is not ProfilesResponse:
+                            raise ProtocolError("profile response type mismatch")
+                        pending.set_result(frame.result)
+                else:
+                    if self.local_factory is None:
+                        raise ProtocolError("invalid profile request")
+                    if self.update_workers:
+                        await self.send(
+                            ProfilesResponse(
+                                epoch=self.epoch,
+                                request=frame.request,
+                                result=ProfilesResult(status="busy"),
+                            )
+                        )
+                        continue
+                    task = asyncio.create_task(self._operate_profiles(frame))
+                    self.tasks.add(task)
+                    self.update_workers.add(task)
+                    task.add_done_callback(self.tasks.discard)
+                    task.add_done_callback(self.update_workers.discard)
+                continue
             if isinstance(
                 frame, (UpdateInfoRequest, UpdateInfoResponse, UpdateRequest, UpdateResponse)
             ):
@@ -395,6 +431,24 @@ class RelayPeer:
             raise AgentUnavailable("update inventory is busy")
         return await self._update_rpc(UpdateInfoRequest(epoch=self.epoch, request=uuid4()), timeout)
 
+    async def profiles(self, frame, *, timeout=25):
+        if self.local_factory is not None or not self.agent_profiles:
+            raise AgentUnavailable("profile management unavailable; enable it locally")
+        return await self._update_rpc(frame.model_copy(update={"epoch": self.epoch}), timeout)
+
+    async def _operate_profiles(self, request):
+        result = ProfilesResult(status="disabled")
+        try:
+            if self.profiles_handler is not None:
+                result = await self.profiles_handler(request)
+            if result.status == "ok":
+                self.aliases = frozenset(a.alias for a in result.agents)
+            await self.send(
+                ProfilesResponse(epoch=self.epoch, request=request.request, result=result)
+            )
+        except (OSError, ValueError, ConnectionError, BufferError):
+            get_logger(__name__).warning("profile response unavailable")
+
     async def update_operation(self, frame, *, timeout=10):
         if self.local_factory is not None or not self.update_operations:
             raise AgentUnavailable("remote update is unsupported")
@@ -407,7 +461,11 @@ class RelayPeer:
         pending = asyncio.get_running_loop().create_future()
         self.update_requests[request] = pending
         self.update_kinds[request] = (
-            UpdateResponse if isinstance(frame, UpdateRequest) else UpdateInfoResponse
+            ProfilesResponse
+            if isinstance(frame, ProfilesRequest)
+            else UpdateResponse
+            if isinstance(frame, UpdateRequest)
+            else UpdateInfoResponse
         )
         try:
             async with asyncio.timeout(timeout):

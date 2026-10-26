@@ -76,6 +76,8 @@ class GatewaySettings(_Section):
 
 class ConnectorSettings(_Section):
     enabled: bool = False
+    remote_profiles: bool = False
+    profile_operation: str | None = None
     host: str = "127.0.0.1"
     port: int = Field(default=8766, ge=1, le=65535)
     connect_path: str = "/connect"
