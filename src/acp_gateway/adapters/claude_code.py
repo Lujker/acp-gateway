@@ -56,18 +56,18 @@ class ClaudeCodeAcpTransport:
             await stream.close()
             raise
 
-    async def _spawn(self, cwd, resume=None):
+    async def _spawn(self, cwd, resume=None, *, session_id=None):
         if len(self._children) >= self.settings.max_sessions:
             raise AgentUnavailable("managed Claude Code process capacity exceeded")
         release = self.child_reservation() if self.child_reservation is not None else None
         try:
-            return await self._spawn_owned(cwd, resume)
+            return await self._spawn_owned(cwd, resume, session_id=session_id)
         finally:
             if release is not None:
                 release()
 
-    async def _spawn_owned(self, cwd, resume=None):
-        sid = resume or str(uuid4())
+    async def _spawn_owned(self, cwd, resume=None, *, session_id=None):
+        sid = resume or session_id or str(uuid4())
         allowed = {
             "PATH",
             "HOME",
@@ -297,7 +297,7 @@ class ClaudeCodeAcpTransport:
                     else:
                         child = await self._spawn(params["cwd"])
                     if self.sessions is not None:
-                        self.sessions.create(child["sid"], params["cwd"])
+                        self.sessions.create(child["sid"], params["cwd"], empty=True)
                     self._sessions[child["sid"]] = child
                 result = {"sessionId": child["sid"]}
             elif method == "session/load":
@@ -313,7 +313,7 @@ class ClaudeCodeAcpTransport:
                         try:
                             if self.sessions is None:
                                 raise LocalPolicyError("resume is unavailable")
-                            self.sessions.load(sid, params["cwd"])
+                            has_history = self.sessions.load(sid, params["cwd"])
                         except LocalPolicyError:
                             self._emit(
                                 {
@@ -336,7 +336,14 @@ class ClaudeCodeAcpTransport:
                             if self.uncertain:
                                 raise AgentUnavailable("WSL process cleanup is unconfirmed")
                             self._children.pop(warm["sid"])
-                        self._sessions[sid] = await self._spawn(params["cwd"], sid)
+                        # Claude has no persisted transcript until the first prompt.
+                        # Only explicit empty bindings may reuse the ID as a new CLI
+                        # session. Legacy/used bindings always require native resume.
+                        self._sessions[sid] = (
+                            await self._spawn(params["cwd"], sid)
+                            if has_history
+                            else await self._spawn(params["cwd"], session_id=sid)
+                        )
                 result = {}
             elif method == "session/list":
                 result = {
@@ -360,6 +367,20 @@ class ClaudeCodeAcpTransport:
                 )
                 return
             self._emit({"id": rid, "result": result})
+        except AgentUnavailable:
+            if method == "session/load":
+                with contextlib.suppress(asyncio.QueueFull):
+                    self._emit(
+                        {
+                            "id": rid,
+                            "error": {
+                                "code": -32001,
+                                "message": "Native session history unavailable or launch failed; "
+                                "create a new dialogue explicitly",
+                            },
+                        }
+                    )
+            self._schedule_close()
         except Exception:
             self._schedule_close()
         finally:

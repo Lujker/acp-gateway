@@ -25,7 +25,7 @@ async def peer(tmp_path, monkeypatch):
     processes = []
     source = Path(__file__).parents[1] / "fakes" / "claude_code_peer.py"
 
-    async def make(scenario="happy", *, manager=False, **overrides):
+    async def make(scenario="happy", *, manager=False, sessions=None, **overrides):
         adapter = importlib.import_module("acp_gateway.adapters.claude_code")
         script = tmp_path / "claude-peer.py"
         script.write_text(
@@ -49,8 +49,8 @@ async def peer(tmp_path, monkeypatch):
         )
         policy = LocalAgentPolicy((str(tmp_path),))
         if manager:
-            return adapter.ClaudeCodeProcessManager(settings, policy)
-        return await adapter.ClaudeCodeAcpTransport.open(settings, policy)
+            return adapter.ClaudeCodeProcessManager(settings, policy, sessions=sessions)
+        return await adapter.ClaudeCodeAcpTransport.open(settings, policy, sessions=sessions)
 
     make.processes = processes
     yield make
@@ -309,7 +309,7 @@ async def test_manager_process_capacity_is_global_and_race_safe(peer, tmp_path, 
                 }
             )
             assert await asyncio.wait_for(stream.receive(), 3) is None
-        assert len({f["pid"] for f in calls(tmp_path)}) == 2
+        assert len({process.pid for process in peer.processes}) == 2
     finally:
         await manager.close()
     assert all(c["process"].returncode is not None for s in streams for c in s._children.values())
@@ -682,6 +682,88 @@ async def test_separate_process_conversations_keep_sequential_history(peer, tmp_
     finally:
         await stream.close()
     assert all(p.returncode is not None for p in processes)
+
+
+async def test_empty_claude_can_reconnect_then_resume_real_history(peer, tmp_path):
+    from acp_gateway.adapters.managed_sessions import ManagedSessions
+
+    profile = AgentProfile(
+        alias="claude",
+        kind="claude_code",
+        backend="claude_code",
+        default_cwd=str(tmp_path),
+        claude_code={"executable": sys.executable},
+    )
+
+    def bindings():
+        return ManagedSessions(tmp_path / "bindings", profile)
+
+    first = await peer(sessions=bindings())
+    try:
+        await initialize(first)
+        response, _ = await request(first, 2, "session/new", cwd=str(tmp_path))
+        sid = response["result"]["sessionId"]
+    finally:
+        await first.close()
+    assert not (tmp_path / ("claude-history-" + sid + ".json")).exists()
+    second = await peer(sessions=bindings())
+    try:
+        await initialize(second)
+        await request(second, 2, "session/load", sessionId=sid, cwd=str(tmp_path))
+        argv = [f["frame"]["argv"] for f in calls(tmp_path) if "argv" in f["frame"]][-1]
+        assert "--resume" not in argv and f"--session-id={sid}" in argv
+        assert not [f for f in calls(tmp_path) if f["frame"].get("type") == "user"]
+        response, _ = await request(
+            second, 3, "session/prompt", sessionId=sid, prompt=[{"type": "text", "text": "first"}]
+        )
+        assert response["result"]["stopReason"] == "end_turn"
+    finally:
+        await second.close()
+    third = await peer(sessions=bindings())
+    try:
+        await initialize(third)
+        await request(third, 2, "session/load", sessionId=sid, cwd=str(tmp_path))
+        argv = [f["frame"]["argv"] for f in calls(tmp_path) if "argv" in f["frame"]][-1]
+        assert argv[argv.index("--resume") + 1] == sid
+        response, frames = await request(
+            third, 3, "session/prompt", sessionId=sid, prompt=[{"type": "text", "text": "second"}]
+        )
+        assert response["result"]["stopReason"] == "end_turn"
+        text = "".join(
+            f.get("params", {}).get("update", {}).get("content", {}).get("text", "") for f in frames
+        )
+        assert text == "first|second"
+    finally:
+        await third.close()
+
+
+async def test_legacy_missing_claude_history_returns_error_without_fresh_session(peer, tmp_path):
+    from uuid import uuid4
+
+    from acp_gateway.adapters.managed_sessions import ManagedSessions
+
+    profile = AgentProfile(
+        alias="claude",
+        kind="claude_code",
+        backend="claude_code",
+        default_cwd=str(tmp_path),
+        claude_code={"executable": sys.executable},
+    )
+    storage = ManagedSessions(tmp_path / "bindings", profile)
+    sid = str(uuid4())
+    storage.create(sid, str(tmp_path))
+    storage.close()
+    stream = await peer(sessions=ManagedSessions(tmp_path / "bindings", profile))
+    try:
+        await initialize(stream)
+        response, _ = await request(stream, 2, "session/load", sessionId=sid, cwd=str(tmp_path))
+        assert response["error"]["code"] == -32001
+        assert "history" in response["error"]["message"]
+        argv = [f["frame"]["argv"] for f in calls(tmp_path) if "argv" in f["frame"]]
+        assert not any(f"--session-id={sid}" in args for args in argv)
+        assert not [f for f in calls(tmp_path) if f["frame"].get("type") == "user"]
+    finally:
+        await stream.close()
 
 
 @pytest.mark.parametrize(

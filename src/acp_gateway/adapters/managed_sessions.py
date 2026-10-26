@@ -70,12 +70,15 @@ class ManagedSessions:
             raise LocalPolicyError("native session already attached") from None
         self._locks[sid] = lock
 
-    def create(self, sid, cwd):
+    def create(self, sid, cwd, *, empty=False):
+        if empty and self.profile.kind != "claude_code":
+            raise LocalPolicyError("empty native bindings require Claude Code")
         self._acquire(sid)
         try:
             with closing(self._db()) as db, db:
                 db.execute(
-                    "INSERT INTO bindings VALUES (?, ?, ?, 'attached')", (self.scope, sid, cwd)
+                    "INSERT INTO bindings VALUES (?, ?, ?, ?)",
+                    (self.scope, sid, cwd, "empty-attached" if empty else "attached"),
                 )
         except BaseException:
             self._locks.pop(sid).release()
@@ -88,31 +91,38 @@ class ManagedSessions:
                 record = db.execute(
                     "SELECT cwd,state FROM bindings WHERE scope=? AND sid=?", (self.scope, sid)
                 ).fetchone()
-                if record != (cwd, "idle"):
+                if record not in ((cwd, "idle"), (cwd, "empty-idle")):
                     raise LocalPolicyError(
                         "native binding is unavailable or turn outcome is unknown"
                     )
                 db.execute(
-                    "UPDATE bindings SET state='attached' WHERE scope=? AND sid=?",
-                    (self.scope, sid),
+                    "UPDATE bindings SET state=? WHERE scope=? AND sid=?",
+                    (
+                        "empty-attached" if record[1] == "empty-idle" else "attached",
+                        self.scope,
+                        sid,
+                    ),
                 )
+                # Legacy idle bindings conservatively require real native history.
+                return record[1] == "idle"
         except BaseException:
             self._locks.pop(sid).release()
             raise
 
-    def _state(self, sid, before, after):
+    def _state(self, sid, before, after, *, alternative=None):
         if sid not in self._locks:
             raise LocalPolicyError("native binding is not owned")
         with closing(self._db()) as db, db:
             changed = db.execute(
-                "UPDATE bindings SET state=? WHERE scope=? AND sid=? AND state=?",
-                (after, self.scope, sid, before),
+                "UPDATE bindings SET state=? WHERE scope=? AND sid=? AND state IN (?,?)",
+                (after, self.scope, sid, before, alternative or before),
             ).rowcount
             if changed != 1:
                 raise LocalPolicyError("native turn outcome is unknown; no automatic replay")
 
     def begin(self, sid):
-        self._state(sid, "attached", "busy")
+        # Persist the busy fence BEFORE any first prompt may reach the native CLI.
+        self._state(sid, "attached", "busy", alternative="empty-attached")
 
     def finish(self, sid):
         self._state(sid, "busy", "attached")
@@ -124,7 +134,9 @@ class ManagedSessions:
         if confirmed and self._locks:
             with closing(self._db()) as db, db:
                 db.executemany(
-                    "UPDATE bindings SET state='idle' WHERE scope=? AND sid=? AND state='attached'",
+                    "UPDATE bindings SET state=CASE state WHEN 'empty-attached' "
+                    "THEN 'empty-idle' ELSE 'idle' END WHERE scope=? AND sid=? "
+                    "AND state IN ('attached','empty-attached')",
                     [(self.scope, sid) for sid in self._locks],
                 )
         for lock in self._locks.values():
