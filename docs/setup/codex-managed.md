@@ -2,7 +2,7 @@
 
 [Documentation](../README.md) · [P4.13 scope and evidence](../items/connector-harness-adapters.ru.md)
 
-Available in prerelease 0.2.3rc1 and the development checkout; not in stable 0.2.2.
+Available since 0.2.3 (first previewed in 0.2.3rc1); not in 0.2.2.
 It starts a dedicated local `codex app-server --listen stdio://` process and
 projects a restricted interface onto the existing gateway/connector transport.
 It does **not** attach to Codex Desktop, import a CLI conversation or resume an

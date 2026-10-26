@@ -3,22 +3,23 @@
 [Documentation](README.md) · [Roadmap and current queue](../road-map.md)
 
 This is a short orientation for readers, not a replacement for the roadmap
-or acceptance journals. Planning snapshot: **2026-10-26**; stable remains **0.2.2**,
-and the source/prerelease version is **0.2.3rc1**.
+or acceptance journals. Planning snapshot: **2026-10-26**; stable is **0.2.3**
+([release notes](releases/0.2.3.md)), which includes the changes below.
 Development changes after that tag suppress WSL console windows and add opt-in
 [owner profile administration through Telegram](setup/telegram-agent-profiles.md).
 These changes were [deployed to the owner's dispatcher and Windows connector](items/telegram-profiles-deployment.md)
 on 2026-10-26; they are not in published rc1 artifacts.
 The current development branch also separates Codex work summaries from final
 answers and improves [Telegram cards and multipart delivery](setup/telegram-presentation.md).
-These presentation changes are awaiting deployment.
+These presentation changes were deployed to the owner's dispatcher on 2026-10-26.
 
 ## Versions
 
 | Track | State |
 | --- | --- |
+| Stable `0.2.3` | Managed Codex/Claude Code (safe/work, Windows→WSL), Telegram profile management and presentation, Windows connector busy-cursor fix; [release notes](releases/0.2.3.md), [upgrade](setup/update-0.2.3.ru.md) |
 | Preview `0.2.3rc1` | Published GitHub/PyPI/GHCR; personal dispatcher deployed, Windows connector moved to editable Git/Python venv; both safe WSL routes initialized without model calls. [Publication and deployment](releases/0.2.3rc1-publication.md). Stable/latest remains 0.2.2. |
-| Stable `0.2.2` | Connector-first pairing, out-of-box updater, CLI artifact gate and recovery fixes; published GitHub/PyPI/GHCR; automated suite 1734 passed/38 skipped; [publication](releases/0.2.2-publication.md), [release notes](releases/0.2.2.md), [upgrade](setup/update-0.2.2.ru.md) |
+| Previous stable `0.2.2` | Connector-first pairing, out-of-box updater, CLI artifact gate and recovery fixes; published GitHub/PyPI/GHCR; automated suite 1734 passed/38 skipped; [publication](releases/0.2.2-publication.md), [release notes](releases/0.2.2.md), [upgrade](setup/update-0.2.2.ru.md) |
 | Previous stable `0.2.1` | Telegram updates, independent updater lifecycle, watcher/env fixes, context/recovery controls; [publication](releases/0.2.1-publication.md), [upgrade](setup/update-0.2.1.ru.md) |
 | Previous stable `0.2.0` | Install through uv/PyPI; independent setup sections, Telegram computer/job dashboards, controls and approvals, dialogue execution modes, managed update with service recovery, Docker dispatcher behind a host reverse proxy |
 | Previous candidates `0.2.0rc1`–`0.2.0rc8` | Published prereleases; upgrade with `acpgw update --stable --with-services` |
