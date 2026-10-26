@@ -23,9 +23,13 @@ def inventory():
             if os.environ.get(key):
                 suffix = "npm" if key == "APPDATA" else "Microsoft/WinGet/Links"
                 directories.append(Path(os.environ[key]) / suffix)
-    agents = []
+    agents, shims = [], []
     for kind, name in (("codex", "codex"), ("claude_code", "claude")):
         found = shutil.which(name)
+        shim = found is not None and Path(found).suffix.lower() in {".cmd", ".ps1"}
+        if windows and (shim or any((d / (name + ".cmd")).is_file() for d in directories)):
+            # An npm shim alone cannot be launched directly; reported as a hint only.
+            shims.append(kind)
         choices = ([Path(found)] if found else []) + [
             folder / (name + ".exe" if windows else name) for folder in directories
         ]
@@ -59,11 +63,13 @@ def inventory():
                     ]
                 agents.append({"kind": kind, "executable": executable, "path": path_dirs[:16]})
                 break
+    found = {row["kind"] for row in agents}
     return {
         "home": str(home),
         "user": __import__("pwd").getpwuid(os.getuid()).pw_name if not windows else "",
         "python": sys.executable,
         "agents": agents,
+        "shims": [kind for kind in shims if kind not in found],
     }
 
 

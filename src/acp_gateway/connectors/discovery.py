@@ -52,6 +52,18 @@ def _text(data):
     return data.decode("utf-16" if b"\x00" in data else "utf-8-sig").strip()
 
 
+PLATFORMS = {"win32": "Windows", "linux": "Linux", "darwin": "macOS"}
+NAMES = {"codex": "Codex CLI", "claude_code": "Claude Code"}
+
+
+def _record(data):
+    """The probe prints JSON last; a login shell profile may print text before it."""
+    lines = [line for line in _text(data).splitlines() if line.strip()]
+    if not lines:
+        raise ValueError("empty discovery output")
+    return json.loads(lines[-1])
+
+
 class AgentDiscovery:
     def __init__(self):
         self.candidates = {}
@@ -64,6 +76,8 @@ class AgentDiscovery:
 
     async def discover(self):
         profiles, hints = {}, []
+        # Missing-agent hints are shown only for kinds found nowhere on this PC.
+        found_anywhere, missing = set(), []
 
         async def collect(record, distribution=None, launcher=None):
             wsl = None
@@ -74,7 +88,11 @@ class AgentDiscovery:
                     python=record["python"],
                     home=record["home"],
                 )
-            where = f"{distribution} / {record['user']}" if wsl else sys.platform
+            where = (
+                f"{distribution} / {record['user']}"
+                if wsl
+                else PLATFORMS.get(sys.platform, sys.platform)
+            )
             found = set()
             for row in record["agents"][:2]:
                 kind = row["kind"]
@@ -122,12 +140,23 @@ class AgentDiscovery:
                     found.add(kind)
                 except (OSError, ValueError, TimeoutError, IndexError):
                     continue
-            for kind, name in (("codex", "Codex CLI"), ("claude_code", "Claude Code")):
-                if kind not in found:
-                    hints.append(
-                        f"{where}: {name} не найден или не запускается. "
-                        "Установите CLI локально и повторите поиск."[:256]
+            found_anywhere.update(found)
+            shims = record.get("shims", [])
+            for kind, name in NAMES.items():
+                if kind in found:
+                    continue
+                if kind == "claude_code" and kind in shims:
+                    text = (
+                        f"{where}: Claude Code установлен через npm, такой запуск не "
+                        "поддерживается. Выполните claude install (нативная сборка) и "
+                        "повторите поиск."
                     )
+                else:
+                    text = (
+                        f"{where}: {name} не найден или не запускается. "
+                        "Установите CLI локально и повторите поиск."
+                    )
+                missing.append((kind, text[:256]))
 
         async def scan_wsl():
             root = os.environ.get("SystemRoot", "")  # noqa: SIM112 -- Windows canonical key
@@ -169,7 +198,7 @@ class AgentDiscovery:
                         ],
                         timeout=5,
                     )
-                    await collect(json.loads(data), name, launcher)
+                    await collect(_record(data), name, launcher)
                 except (OSError, ValueError, KeyError, TypeError, TimeoutError):
                     hints.append(
                         f"{name}: проверьте python3, CLI и пользователя по умолчанию (не root)."[
@@ -190,5 +219,6 @@ class AgentDiscovery:
             hints.append(
                 "Поиск занял слишком долго; показаны доступные результаты. Повторите поиск."
             )
+        hints += [text for kind, text in missing if kind not in found_anywhere]
         self.candidates, self.expires = profiles, time.monotonic() + 300
         return public, hints[:32]

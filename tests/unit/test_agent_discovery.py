@@ -62,7 +62,8 @@ async def test_native_candidates_keep_paths_local_and_ids_expire(monkeypatch, pl
     public, hints = await discovery.discover()
     assert len(public) == 1
     candidate = public[0]
-    assert "1.2.3" in candidate.title and platform in candidate.title
+    assert "1.2.3" in candidate.title
+    assert {"linux": "Linux", "darwin": "macOS", "win32": "Windows"}[platform] in candidate.title
     assert "/opt/cli" not in candidate.model_dump_json()
     assert discovery.resolve(candidate.id).codex.executable == "/opt/cli/codex"
     assert any("Claude Code" in hint for hint in hints)
@@ -92,7 +93,8 @@ async def test_wsl2_discovery_pins_default_account_python_and_path(monkeypatch):
                 "  Old Linux         Stopped   1\n"
             ).encode("utf-16-le")
         if "/bin/sh" in argv:
-            return json.dumps(record()).encode()
+            # A login shell profile may print before the probe's JSON line.
+            return b"Welcome to Ubuntu\n" + json.dumps(record()).encode() + b"\n"
         return b"codex-cli 1.2.3\n"
 
     monkeypatch.setattr(module, "output", output)
@@ -168,3 +170,42 @@ def test_windows_npm_codex_resolves_native_binary(tmp_path, monkeypatch):
     monkeypatch.setenv("APPDATA", str(tmp_path))
     monkeypatch.setattr(module.shutil, "which", lambda name: str(shim) if name == "codex" else None)
     assert module.inventory()["agents"][0]["executable"] == str(binary)
+
+
+async def test_missing_hints_only_for_agents_found_nowhere(monkeypatch):
+    from acp_gateway.connectors import discovery as module
+
+    monkeypatch.setattr(module, "sys", SimpleNamespace(platform="win32"))
+    monkeypatch.setenv("SystemRoot", "C:/Windows")
+    native = {**record(), "agents": [], "shims": ["claude_code"]}
+    monkeypatch.setattr(module._discovery_probe, "inventory", lambda: native)
+
+    async def output(argv, **kwargs):
+        if "--list" in argv:
+            return "* Ubuntu   Running   2\n".encode("utf-16-le")
+        if "/bin/sh" in argv:
+            return json.dumps(record()).encode()
+        return b"codex-cli 1.2.3\n"
+
+    monkeypatch.setattr(module, "output", output)
+    public, hints = await module.AgentDiscovery().discover()
+    assert [c.kind for c in public] == ["codex"]
+    # Codex exists in WSL, so Windows does not report it missing.
+    assert not any("Codex" in hint for hint in hints)
+    assert any(h.startswith("Windows: Claude Code") and "claude install" in h for h in hints)
+    assert any(h.startswith("Ubuntu / alice: Claude Code") for h in hints)
+
+
+def test_windows_npm_claude_is_reported_as_shim(tmp_path, monkeypatch):
+    from acp_gateway.connectors import _discovery_probe as module
+
+    monkeypatch.setattr(module.Path, "home", lambda: tmp_path)
+    monkeypatch.setattr(module, "sys", SimpleNamespace(platform="win32", executable="python.exe"))
+    (tmp_path / "npm").mkdir()
+    (tmp_path / "npm" / "claude.cmd").write_text("@node cli.js %*")
+    monkeypatch.setenv("APPDATA", str(tmp_path))
+    monkeypatch.delenv("LOCALAPPDATA", raising=False)
+    monkeypatch.setattr(module.shutil, "which", lambda name: None)
+    result = module.inventory()
+    assert result["agents"] == []
+    assert result["shims"] == ["claude_code"]
