@@ -53,12 +53,21 @@ async def test_response_publication_failure_retries_ack_without_reapplying(
             async with asyncio.timeout(3):
                 while maintenance.read_status(tmp_path)["state"] != "running":
                     await asyncio.sleep(0.01)
-            response = await asyncio.to_thread(
-                LocalClient(tmp_path, timeout=1).request,
-                "POST",
-                "/maintenance/prepare",
-                json={"restart_uncertain": restart_uncertain},
-            )
+            for _ in range(10):
+                response = await asyncio.to_thread(
+                    LocalClient(tmp_path, timeout=1).request,
+                    "POST",
+                    "/maintenance/prepare",
+                    json={"restart_uncertain": restart_uncertain},
+                )
+                if response.status_code != 409:
+                    break
+                # A concurrent STATUS replacement can fail the inode check. Retry
+                # only this pre-admission refusal, never an applied/unknown request.
+                assert response.json()["detail"] == "Live connector activity is unavailable"
+                assert applied == []
+                assert not (tmp_path / maintenance.REQUEST).exists()
+                await asyncio.sleep(0.01)
             assert response.status_code == 200
             assert response.json()["token"] == controller.token
             assert applied == ["prepare"]
