@@ -74,15 +74,19 @@ async def test_response_publication_failure_retries_ack_without_reapplying(
 async def test_slow_status_publication_remains_fail_closed(tmp_path, monkeypatch, controller):
     """Known latency risk: keep the five-second freshness policy unchanged."""
     clock = SimpleNamespace(value=1000.0)
-    original = maintenance._atomic
 
-    def slow_status(path, content):
-        if path.name == maintenance.STATUS:
-            clock.value += 6
-        return original(path, content)
+    def slow(writer):
+        def write(path, content):
+            if path.name == maintenance.STATUS:
+                clock.value += 6
+            return writer(path, content)
+
+        return write
 
     monkeypatch.setattr(maintenance, "time", SimpleNamespace(time=lambda: clock.value))
-    monkeypatch.setattr(maintenance, "_atomic", slow_status)
+    # Both the verified and the plain status writer are slow here.
+    monkeypatch.setattr(maintenance, "_atomic", slow(maintenance._atomic))
+    monkeypatch.setattr(maintenance, "_write_status", slow(maintenance._write_status))
     with FileLock(tmp_path / "connector.lock"), control_record(tmp_path) as instance:
         task = asyncio.create_task(maintenance.watch(tmp_path, instance, controller, interval=0.01))
         try:
