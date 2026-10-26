@@ -1455,3 +1455,11 @@ WSL: `rtk test uv run --frozen pytest -q tests/unit/test_connector_profiles.py t
 Windows: pytest `tests/unit/test_wsl_launch.py tests/integration/test_wsl_adapters.py` — 60 passed/1 Linux skip. Profile/protocol scope — 56 passed/3 failed на уточнённых ожиданиях и setup approver; исправленные три ID — 3 passed; финальный `tests/integration/test_telegram_profiles.py` — 10 passed. Текущие исходники задавались явно через sys.path, первый запуск со старым wheel исключён из evidence.
 Реальный Windows→WSL echo peer — два обмена и verified cleanup PASS, без моделей; opt-in `test_wsl_windows.py` — 6 failures до запуска адаптера из-за уже существующего fixture `home`, не объявлены зелёными, инфраструктура не менялась.
 Ruff check/format clean. [Инструкция](../setup/telegram-agent-profiles.md). Только source: установленная Windows-копия, Docker, main и публичный rc1 не менялись; модельных вызовов 0.
+
+## Развёртывание 44ca89e — 2026-10-26
+Владелец подтвердил обновление: пересоздан только Docker gateway, Windows Git checkout обновлён fast-forward после graceful stop; remote_profiles включён.
+Docker healthy, Windows задача running на прежнем venv/pythonw, обычный Python без uv runtime; home/work connected, все пять home профилей сохранены.
+Приватные backup config/env/key/setup/task/data и SQLite сохранены; schema 10 unchanged, integrity ok, 9 dialogues/2 jobs/2 computers сохранены.
+Живой initialize-only Codex safe/Claude safe через relay — connected true/error null; Telegram private menu содержит profiles (25 commands). Новых диалогов/jobs/model calls 0.
+Старые три attached bindings сохранены без сброса fence; свежая runtime activity idle, все counters 0. Dispatcher reservations сняты.
+[Полный отчёт, image ID и rollback paths](telegram-profiles-deployment.md). Actual owner CRUD/визуальная проверка окон и модельная приёмка остаются; main/stable/public artifacts не менялись.

@@ -3,11 +3,12 @@
 [Documentation](README.md) · [Roadmap and current queue](../road-map.md)
 
 This is a short orientation for readers, not a replacement for the roadmap
-or acceptance journals. Planning snapshot: **2026-10-25**; stable remains **0.2.2**,
+or acceptance journals. Planning snapshot: **2026-10-26**; stable remains **0.2.2**,
 and the source/prerelease version is **0.2.3rc1**.
 Development changes after that tag suppress WSL console windows and add opt-in
 [owner profile administration through Telegram](setup/telegram-agent-profiles.md).
-These changes are not in published rc1 or the running owner installations yet.
+These changes were [deployed to the owner's dispatcher and Windows connector](items/telegram-profiles-deployment.md)
+on 2026-10-26; they are not in published rc1 artifacts.
 
 ## Versions
 

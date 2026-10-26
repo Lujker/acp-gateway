@@ -1052,8 +1052,10 @@ comparison принят как достаточный, неполный baseline
 
 **Доработки 2026-10-26:** в feature-ветке добавлены скрытый запуск WSL и управление
 managed-профилями через Telegram (локальное разрешение, owner-only, проверка idle,
-backup/revision/operation ID). В опубликованный rc1 и рабочие установки пока не
-внесены. [Инструкция и ограничения](docs/setup/telegram-agent-profiles.md).
+backup/revision/operation ID). Развёрнуты на личном Docker-диспетчере и Windows
+Git-коннекторе с разрешения владельца; в публичные rc1 artifacts не внесены.
+[Развёртывание](docs/items/telegram-profiles-deployment.md),
+[инструкция и ограничения](docs/setup/telegram-agent-profiles.md).
 
 1. **P4.13.1 — рабочий режим удалённой разработки (READY в source).** Профили «Безопасный» и
    «Рабочий» для Codex и Claude Code: native auto mode (`--permission-mode auto`,
