@@ -109,6 +109,10 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     probe.add_argument("--json", action="store_true")
     agent_sub.add_parser("configure", help="edit agent profiles interactively")
+    agent_sub.add_parser(
+        "allow-remote-profiles",
+        help="allow dispatcher profile management and refresh the installed connector service",
+    )
     install_agent = agent_sub.add_parser(
         "install", help="install Goose using its official installer"
     )
@@ -706,6 +710,10 @@ def _run_configured(args) -> int:
 
             return run(cfg, args)
         if args.command == "agents":
+            if args.agent_command == "allow-remote-profiles":
+                from acp_gateway.cli.remote_profiles import allow
+
+                return allow(cfg)
             from acp_gateway.cli.executors import run
 
             return run(cfg, args)

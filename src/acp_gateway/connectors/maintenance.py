@@ -26,9 +26,10 @@ FIELDS = (
     "opening",
 )
 # On Windows a full _atomic write starts three ACL verifier children. Activity is
-# republished every interval, so verify the directory with _atomic on start and
-# then once per this period; plain writes in between stay inside it.
+# republished every interval. Recheck a separate marker in the background halfway
+# through this validity period; plain writes stop if verification fails or expires.
 ACL_RECHECK_SECONDS = 60
+ACL_MARKER = ".connector-activity-acl-check"
 log = structlog.get_logger(__name__)
 
 
@@ -132,6 +133,7 @@ async def watch(directory, instance, controller, *, interval=0.2):
     pending_identity = None
     publish_failed = False
     verified_at = None
+    verification = None
     try:
         while True:
             status = {
@@ -143,10 +145,30 @@ async def watch(directory, instance, controller, *, interval=0.2):
             payload = json.dumps(status).encode()
             now = monotonic()
             try:
-                if verified_at is None or now - verified_at >= ACL_RECHECK_SECONDS:
-                    # Until the full check passes again, every write takes this branch.
-                    await asyncio.to_thread(_atomic, directory / STATUS, payload)
+                if (
+                    verified_at is not None
+                    and verification is None
+                    and now - verified_at >= ACL_RECHECK_SECONDS / 2
+                ):
+                    # Never let a slow recheck overwrite a newer activity snapshot.
+                    verification = asyncio.create_task(
+                        asyncio.to_thread(_atomic, directory / ACL_MARKER, b"")
+                    )
+                if verification is not None and verification.done():
+                    completed, verification = verification, None
+                    try:
+                        completed.result()
+                    except (OSError, ValueError):
+                        verified_at = None
+                        raise
                     verified_at = now
+                if verified_at is None:
+                    await asyncio.to_thread(_atomic, directory / STATUS, payload)
+                    verified_at = monotonic()
+                elif now - verified_at >= ACL_RECHECK_SECONDS:
+                    # Keep the existing validity bound even if the checker stalls.
+                    await asyncio.sleep(interval)
+                    continue
                 else:
                     await asyncio.to_thread(_write_status, directory / STATUS, payload)
             except (OSError, ValueError) as exc:
@@ -234,6 +256,9 @@ async def watch(directory, instance, controller, *, interval=0.2):
                 pass
             await asyncio.sleep(interval)
     finally:
+        if verification is not None:
+            verification.cancel()
+            await asyncio.gather(verification, return_exceptions=True)
         try:
             (directory / STATUS).unlink(missing_ok=True)
         except OSError as exc:

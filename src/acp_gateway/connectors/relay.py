@@ -145,6 +145,7 @@ class RelayPeer:
         update_operations=False,
         update_handler=None,
         agent_profiles=False,
+        agent_discovery=False,
         profiles_handler=None,
     ):
         self.connection, self.epoch = connection, epoch
@@ -155,6 +156,7 @@ class RelayPeer:
         self.update_operations = update_operations
         self.update_handler = update_handler
         self.agent_profiles = agent_profiles
+        self.agent_discovery = agent_discovery
         self.profiles_handler = profiles_handler
         self.update_requests = {}
         self.update_kinds = {}
@@ -309,6 +311,12 @@ class RelayPeer:
             if isinstance(frame, (ProfilesRequest, ProfilesResponse)):
                 if not self.agent_profiles or frame.epoch != self.epoch:
                     raise ProtocolError("unnegotiated profiles or invalid epoch")
+                if (
+                    isinstance(frame, ProfilesRequest)
+                    and (frame.action == "discover" or (frame.profile and frame.profile.candidate))
+                    and not self.agent_discovery
+                ):
+                    raise ProtocolError("unnegotiated discovery")
                 if isinstance(frame, ProfilesResponse):
                     if self.local_factory is not None:
                         raise ProtocolError("unexpected profile response")
@@ -434,6 +442,10 @@ class RelayPeer:
     async def profiles(self, frame, *, timeout=25):
         if self.local_factory is not None or not self.agent_profiles:
             raise AgentUnavailable("profile management unavailable; enable it locally")
+        if (
+            frame.action == "discover" or (frame.profile and frame.profile.candidate)
+        ) and not self.agent_discovery:
+            raise AgentUnavailable("agent discovery unavailable; upgrade connector locally")
         return await self._update_rpc(frame.model_copy(update={"epoch": self.epoch}), timeout)
 
     async def _operate_profiles(self, request):

@@ -238,3 +238,76 @@ async def test_codex_manager_keeps_uncertain_cleanup_when_reconfiguring(local):
     before = local.config.config_path.read_bytes()
     assert (await local.request(request(local, "remove", alias="first"))).status == "unknown"
     assert local.config.config_path.read_bytes() == before
+
+
+@pytest.mark.parametrize("initialization_fails", [False, True])
+async def test_first_discovered_agent_does_not_need_existing_managed_template(
+    local, monkeypatch, initialization_fails
+):
+    import acp_gateway.connectors.profiles as module
+    from acp_gateway.config import AgentProfile
+
+    # Existing profiles are unrelated execution identities, e.g. a Hermes-only PC.
+    candidate = AgentProfile.model_validate(
+        {
+            "alias": "claude_code",
+            "kind": "claude_code",
+            "backend": "claude_code",
+            "default_cwd": local.config.settings.agents[0].default_cwd,
+            "claude_code": {"executable": "/local/discovered/claude"},
+        }
+    )
+    local.discovery.candidates["a" * 32] = candidate
+    local.discovery.expires = time.monotonic() + 300
+    connect, close = AsyncMock(), AsyncMock()
+    if initialization_fails:
+        connect.side_effect = ValueError("private details")
+    monkeypatch.setattr(
+        module, "AgentClient", lambda *a, **kw: SimpleNamespace(connect=connect, close=close)
+    )
+    value = ProfileSpec(
+        alias="claude", candidate="a" * 32, title="Claude", cwd=candidate.default_cwd, mode="work"
+    )
+    req = request(local, "add", profile=value)
+    result = await local.request(req)
+    assert result.status == "ok"
+    assert result.initialization == ("failed" if initialization_fails else "ok")
+    saved = local.config.settings.agents[-1]
+    assert saved.backend == "claude_code"
+    assert saved.claude_code.executable == "/local/discovered/claude"
+    assert saved.claude_code.mode == "work"
+    connect.assert_awaited_once()
+    close.assert_awaited_once()
+    assert (await local.request(req)).status == "ok"
+    assert connect.await_count == 1
+    assert not local.maintenance.status()["reserved"]
+
+
+async def test_forged_expired_and_update_candidate_ids_do_not_change_config(local):
+    local.discovery.candidates["a" * 32] = local.config.settings.agents[0]
+    local.discovery.expires = time.monotonic() + 30
+    original = local.config.config_path.read_bytes()
+    value = ProfileSpec(
+        alias="third",
+        candidate="b" * 32,
+        title="Code",
+        cwd=local.config.settings.agents[0].default_cwd,
+        mode="safe",
+    )
+    assert (await local.request(request(local, "add", profile=value))).status == "invalid"
+    value = value.model_copy(update={"candidate": "a" * 32, "alias": "first"})
+    assert (await local.request(request(local, "update", profile=value))).status == "invalid"
+    local.discovery.expires = time.monotonic() - 1
+    value = value.model_copy(update={"alias": "third"})
+    assert (await local.request(request(local, "add", profile=value))).status == "invalid"
+    assert local.config.config_path.read_bytes() == original
+
+
+async def test_discovery_does_not_reserve_or_change_profiles(local):
+    original = local.config.config_path.read_bytes()
+    local.discovery.discover = AsyncMock(return_value=([], ["Install locally"]))
+    result = await local.request(request(local, "discover"))
+    assert result.status == "ok" and result.candidates == [] and result.hints
+    assert local.config.config_path.read_bytes() == original
+    assert not local.maintenance.status()["reserved"]
+    assert not local.clients

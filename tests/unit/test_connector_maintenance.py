@@ -2,6 +2,7 @@ import asyncio
 import json
 import subprocess
 import sys
+import threading
 import time
 from types import SimpleNamespace
 
@@ -351,7 +352,7 @@ async def test_activity_reverifies_acl_periodically_not_on_every_write(
 
     def atomic(path, content):
         nonlocal failures
-        if path.name == STATUS:
+        if path.name in {STATUS, ".connector-activity-acl-check"}:
             checked.append(clock.value)
             if failures:
                 failures -= 1
@@ -380,5 +381,45 @@ async def test_activity_reverifies_acl_periodically_not_on_every_write(
                     await asyncio.sleep(0.01)
                 assert checked[2] == clock.value
         finally:
+            task.cancel()
+            await asyncio.gather(task, return_exceptions=True)
+
+
+async def test_slow_periodic_acl_check_does_not_interrupt_fresh_status(
+    tmp_path, controller, monkeypatch
+):
+    from acp_gateway.connectors import maintenance
+
+    entered, release = threading.Event(), threading.Event()
+    clock = SimpleNamespace(value=100.0)
+    original = maintenance._atomic
+
+    def check(path, content):
+        if clock.value > 100 and path.name in {STATUS, ".connector-activity-acl-check"}:
+            entered.set()
+            if not release.wait(5):
+                raise ValueError("test check timeout")
+        return original(path, content)
+
+    monkeypatch.setattr(maintenance, "_atomic", check)
+    monkeypatch.setattr(maintenance, "monotonic", lambda: clock.value)
+    with FileLock(tmp_path / "connector.lock"), control_record(tmp_path) as instance:
+        task = asyncio.create_task(watch(tmp_path, instance, controller, interval=0.01))
+        try:
+            async with asyncio.timeout(3):
+                while read_status(tmp_path).get("state") != "running":
+                    await asyncio.sleep(0.01)
+            clock.value += maintenance.ACL_RECHECK_SECONDS / 2
+            assert await asyncio.to_thread(entered.wait, 1)
+            first = json.loads((tmp_path / STATUS).read_bytes())["published"]
+            async with asyncio.timeout(1):
+                for _ in range(2):
+                    while json.loads((tmp_path / STATUS).read_bytes())["published"] == first:
+                        await asyncio.sleep(0.01)
+                    first = json.loads((tmp_path / STATUS).read_bytes())["published"]
+            assert read_status(tmp_path)["state"] == "running"
+            assert not task.done()
+        finally:
+            release.set()
             task.cancel()
             await asyncio.gather(task, return_exceptions=True)

@@ -102,6 +102,7 @@ class ControlDispatcher:
             )
             row["active_streams"] = len(registration.relay.streams) if row["connected"] else 0
             row["update_inventory"] = bool(row["connected"] and registration.relay.update_inventory)
+            row["agent_discovery"] = bool(row["connected"] and registration.relay.agent_discovery)
             row["advertised_agents"] = (
                 [a.alias for a in registration.agents] if row["connected"] else []
             )
@@ -214,6 +215,7 @@ class ControlDispatcher:
             authorization = request.headers.get("Authorization", "")
             update_inventory = request.headers.get("X-ACP-Update-Inventory") == "1"
             agent_profiles = request.headers.get("X-ACP-Agent-Profiles") == "1"
+            agent_discovery = agent_profiles and request.headers.get("X-ACP-Agent-Discovery") == "1"
             update_operations = (
                 update_inventory and request.headers.get("X-ACP-Update-Operations") == "1"
             )
@@ -232,6 +234,7 @@ class ControlDispatcher:
         connection.computer_grant = (identity, generation)
         connection.update_inventory = update_inventory
         connection.agent_profiles = agent_profiles
+        connection.agent_discovery = agent_discovery
         connection.update_operations = update_operations
         return None
 
@@ -276,6 +279,7 @@ class ControlDispatcher:
                 update_inventory=connection.update_inventory,
                 update_operations=connection.update_operations,
                 agent_profiles=getattr(connection, "agent_profiles", False),
+                agent_discovery=getattr(connection, "agent_discovery", False),
             )
             self.active[identity] = registration
             if previous is not None:
@@ -301,6 +305,7 @@ class ControlDispatcher:
                         update_inventory=1 if registration.relay.update_inventory else None,
                         update_operations=1 if registration.relay.update_operations else None,
                         agent_profiles=1 if registration.relay.agent_profiles else None,
+                        agent_discovery=1 if registration.relay.agent_discovery else None,
                     )
                 )
             )
@@ -432,6 +437,7 @@ async def connect_control(
     update_inventory=False,
     update_operations=False,
     agent_profiles=False,
+    agent_discovery=False,
 ):
     parts = validate_url(url)
     if fingerprint is not None and parts.scheme != "wss":
@@ -459,6 +465,7 @@ async def connect_control(
                 **({"X-ACP-Update-Inventory": "1"} if update_inventory else {}),
                 **({"X-ACP-Update-Operations": "1"} if update_operations else {}),
                 **({"X-ACP-Agent-Profiles": "1"} if agent_profiles else {}),
+                **({"X-ACP-Agent-Discovery": "1"} if agent_discovery else {}),
             },
             ssl=tls,
             proxy=None,
@@ -506,6 +513,8 @@ async def connect_control(
             raise ProtocolError("unsolicited update operation negotiation")
         if welcome.agent_profiles is not None and not agent_profiles:
             raise ProtocolError("unsolicited profile negotiation")
+        if welcome.agent_discovery is not None and not (agent_discovery and welcome.agent_profiles):
+            raise ProtocolError("unsolicited discovery negotiation")
         return connection, welcome
     except BaseException as exc:
         close_code = connection.close_code
@@ -575,6 +584,7 @@ async def _run_connection(
         update_inventory=installation_report is not None,
         update_operations=update_handler is not None,
         agent_profiles=profiles_handler is not None,
+        agent_discovery=profiles_handler is not None,
     )
     try:
         get_logger(__name__).info(
@@ -595,6 +605,7 @@ async def _run_connection(
             update_operations=welcome.update_operations == 1,
             update_handler=update_handler,
             agent_profiles=welcome.agent_profiles == 1,
+            agent_discovery=welcome.agent_discovery == 1,
             profiles_handler=profiles_handler,
         )
         await peer.run()

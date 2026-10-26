@@ -68,14 +68,29 @@ class Welcome(_Frame):
     update_inventory: Literal[1] | None = None
     update_operations: Literal[1] | None = None
     agent_profiles: Literal[1] | None = None
+    agent_discovery: Literal[1] | None = None
 
 
 class ProfileSpec(_Model):
     alias: AgentAlias
-    template: AgentAlias
+    template: AgentAlias | None = None
+    candidate: Annotated[str, Field(pattern=r"^[0-9a-f]{32}$")] | None = None
     title: Annotated[str, Field(min_length=1, max_length=128)]
     cwd: Annotated[str, Field(min_length=1, max_length=4096)]
     mode: Literal["safe", "work"]
+
+    @model_validator(mode="after")
+    def one_source(self):
+        if (self.template is None) == (self.candidate is None):
+            raise ValueError("select one local source")
+        return self
+
+
+class AgentCandidate(_Model):
+    id: Annotated[str, Field(pattern=r"^[0-9a-f]{32}$")]
+    kind: Literal["codex", "claude_code"]
+    title: Annotated[str, Field(min_length=1, max_length=128)]
+    default_cwd: Annotated[str, Field(min_length=1, max_length=4096)]
 
 
 class ProfilesRequest(_Frame):
@@ -83,7 +98,7 @@ class ProfilesRequest(_Frame):
     epoch: UUID
     request: UUID
     operation: UUID
-    action: Literal["list", "add", "update", "remove"]
+    action: Literal["list", "discover", "add", "update", "remove"]
     revision: Annotated[str, Field(pattern=r"^[0-9a-f]{64}$")] | None = None
     actor: Annotated[str, Field(pattern=r"^telegram:[0-9]{1,20}$")]
     expires: Annotated[float, Field(allow_inf_nan=False)]
@@ -96,6 +111,11 @@ class ProfilesResult(_Model):
     revision: Annotated[str, Field(pattern=r"^[0-9a-f]{64}$")] | None = None
     profiles: Annotated[list[ProfileSpec], Field(max_length=100)] = Field(default_factory=list)
     agents: Annotated[list[AgentManifest], Field(max_length=100)] = Field(default_factory=list)
+    candidates: Annotated[list[AgentCandidate], Field(max_length=32)] | None = None
+    hints: Annotated[list[Annotated[str, Field(max_length=256)]], Field(max_length=32)] | None = (
+        None
+    )
+    initialization: Literal["ok", "failed"] | None = None
 
 
 class ProfilesResponse(_Frame):

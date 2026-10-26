@@ -1291,6 +1291,12 @@ def wizard(
             / "pending.json",
         )
         raw.setdefault("connector", {})["enabled"] = False
+    if role == "connector" and section in {"all", "connection"} and state.get("connection"):
+        connector = raw.setdefault("connector", {})
+        connector["remote_profiles"] = prompts.yes(
+            "Allow the dispatcher to manage profiles from locally discovered agents?",
+            connector.get("remote_profiles", True),
+        )
     if role != "connector" and section in {"all", "telegram"}:
         _telegram(prompts, raw, values)
     elif role == "connector":

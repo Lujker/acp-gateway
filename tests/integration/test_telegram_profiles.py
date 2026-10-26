@@ -134,3 +134,55 @@ async def test_rpc_expiry_has_clock_headroom_and_never_outlives_form(
     assert req.expires <= now + 30
     assert req.expires <= state["expires"]
     assert not server.log
+
+
+async def test_discovered_agent_can_be_added_on_hermes_only_pc_without_model(telegram):
+    from acp_gateway.connectors.protocol import AgentCandidate
+
+    core, channel, session, server = telegram
+    enable(channel)
+    discovered = ProfilesResult(
+        status="ok",
+        revision="a" * 64,
+        candidates=[
+            AgentCandidate(
+                id="a" * 32, kind="codex", title="Codex / Ubuntu", default_cwd="/home/alice"
+            ),
+        ],
+    )
+    channel.connector_dispatcher.profiles.side_effect = [
+        discovered,
+        ProfilesResult(status="ok", initialization="ok"),
+    ]
+    await channel._command(OWNER, "/profiles home discover")
+    state = channel._profile_drafts[OWNER]
+    assert not state["profiles"]
+    token = state["token"]
+    assert not core.maintenance_status()["reserved"]
+    await channel._command(OWNER, f"/profile_action {token} candidate {'a' * 32}")
+    await channel._command(OWNER, "/home/alice/project")
+    await channel._command(OWNER, f"/profile_action {token} work")
+    await channel._command(OWNER, f"/profile_action {token} save")
+    assert channel.connector_dispatcher.profiles.await_count == 1
+    await channel._command(OWNER, f"/profile_action {token} apply")
+    req = channel.connector_dispatcher.profiles.await_args.args[1]
+    assert req.action == "add" and req.profile.candidate == "a" * 32
+    assert req.profile.template is None and req.profile.mode == "work"
+    assert req.profile.cwd == "/home/alice/project" and req.profile.alias == "codex"
+    assert "Initialize пройден" in session.sent[-1].text
+    assert not core.maintenance_status()["reserved"]
+    assert not server.log
+
+
+async def test_empty_discovery_has_local_installation_hint(telegram):
+    _, channel, session, server = telegram
+    enable(channel)
+    channel.connector_dispatcher.profiles.return_value = ProfilesResult(
+        status="ok",
+        candidates=[],
+        hints=["Ubuntu: установите Codex CLI локально"],
+    )
+    await channel._command(OWNER, "/profiles home discover")
+    assert "Агенты не найдены" in session.sent[-1].text
+    assert "установите Codex CLI" in session.sent[-1].text
+    assert not server.log

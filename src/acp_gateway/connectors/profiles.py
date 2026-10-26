@@ -15,6 +15,7 @@ from acp_gateway.agents import AgentClient
 from acp_gateway.agents.errors import AgentError
 from acp_gateway.cli.wizard import _atomic
 from acp_gateway.config import AgentProfile
+from acp_gateway.connectors.discovery import AgentDiscovery
 from acp_gateway.connectors.launch import local_policies
 from acp_gateway.connectors.policy import _cwd
 from acp_gateway.connectors.protocol import ProfileSpec, ProfilesResult
@@ -68,6 +69,7 @@ class LocalProfiles:
         self.config, self.launch, self.maintenance = config, launch, maintenance
         self.clients, self.policies, self.managers = clients, policies, managers
         self.lock = asyncio.Lock()
+        self.discovery = AgentDiscovery()
         self.loaded_revision = (
             revision(config.config_path.read_bytes()) if config.config_path else None
         )
@@ -119,6 +121,15 @@ class LocalProfiles:
                 return ProfilesResult(status="stale")
             if request.action == "list":
                 return self.snapshot(original)
+            if request.action == "discover":
+                if request.profile is not None or request.alias is not None:
+                    return ProfilesResult(status="invalid")
+                candidates, hints = await self.discovery.discover()
+                if path.read_bytes() != original or time.time() > request.expires:
+                    return ProfilesResult(status="stale")
+                return self.snapshot(original).model_copy(
+                    update={"candidates": candidates, "hints": hints}
+                )
             identity = revision(
                 json.dumps(
                     request.model_dump(mode="json", exclude={"epoch", "request"}),
@@ -144,9 +155,16 @@ class LocalProfiles:
                 del profiles[alias]
             else:
                 spec = request.profile
-                if spec is None or request.alias is not None or spec.template not in profiles:
+                if spec is None or request.alias is not None:
                     return ProfilesResult(status="invalid")
-                template = profiles[spec.template]
+                if spec.candidate is not None:
+                    if request.action != "add":
+                        return ProfilesResult(status="invalid")
+                    template = self.discovery.resolve(spec.candidate)
+                elif spec.template in profiles:
+                    template = profiles[spec.template]
+                else:
+                    return ProfilesResult(status="invalid")
                 if template.backend not in {"codex", "claude_code"}:
                     return ProfilesResult(status="invalid")
                 alias = spec.alias
@@ -217,7 +235,18 @@ class LocalProfiles:
                 self.policies.update(local_policies(self.config))
                 self.maintenance.profiles = self.config.settings.agents
                 safe_to_resume = True
-                return self.snapshot(content)
+                result = self.snapshot(content)
+                if request.profile is not None and request.profile.candidate is not None:
+                    # Only initialize: no session/new, prompts, hooks or model requests.
+                    client = self.clients[alias]
+                    try:
+                        await asyncio.wait_for(client.connect(), 8)
+                        result.initialization = "ok"
+                    except (OSError, ValueError, AgentError, TimeoutError):
+                        result.initialization = "failed"
+                    finally:
+                        await client.close()
+                return result
             finally:
                 # Failed/unknown cleanup remains fenced until explicit local recovery.
                 if safe_to_resume:

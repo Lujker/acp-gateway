@@ -92,3 +92,58 @@ async def test_response_after_revocation_cannot_publish_catalog(tmp_path):
         release.set()
         with pytest.raises((AgentUnavailable, ConnectionError)):
             await task
+
+
+async def test_discovery_negotiates_separately_and_returns_candidates_without_streams(tmp_path):
+    from acp_gateway.connectors.protocol import AgentCandidate
+
+    async def handler(frame):
+        assert frame.action == "discover"
+        return result().model_copy(
+            update={
+                "candidates": [
+                    AgentCandidate(
+                        id="a" * 32,
+                        kind="codex",
+                        title="Codex / Linux",
+                        default_cwd="/home/alice",
+                    )
+                ]
+            }
+        )
+
+    async with connected(tmp_path, profiles=True, discovery=True, profiles_handler=handler) as (
+        dispatcher,
+        peer,
+        welcome,
+    ):
+        assert welcome.agent_discovery == 1
+        assert dispatcher.status()[0]["agent_discovery"]
+        found = await dispatcher.profiles("home", request("discover"))
+        assert found.candidates[0].id == "a" * 32
+        assert not peer.streams
+
+
+async def test_old_profile_capability_still_lists_but_never_receives_discovery(tmp_path):
+    from unittest.mock import AsyncMock
+
+    handler = AsyncMock(return_value=result())
+    async with connected(tmp_path, profiles=True, profiles_handler=handler) as (
+        dispatcher,
+        _,
+        welcome,
+    ):
+        assert welcome.agent_discovery is None
+        assert not dispatcher.status()[0]["agent_discovery"]
+        assert (await dispatcher.profiles("home", request())).status == "ok"
+        with pytest.raises(AgentUnavailable, match="discovery unavailable"):
+            await dispatcher.profiles("home", request("discover"))
+        assert handler.await_count == 1
+
+
+async def test_unnegotiated_discovery_is_rejected_at_receiver(tmp_path):
+    async with connected(tmp_path, profiles=True) as (dispatcher, peer, welcome):
+        await peer.send(request("discover").model_copy(update={"epoch": welcome.connection_id}))
+        async with asyncio.timeout(5):
+            await dispatcher.active["home"].relay.closed.wait()
+        assert peer.connection.close_code in {None, 1008}

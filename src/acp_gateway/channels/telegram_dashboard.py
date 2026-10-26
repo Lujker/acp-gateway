@@ -265,6 +265,8 @@ class Dashboard:
                     )
             if not any(r["computer_id"] == cid for r in snapshot["routes"]):
                 lines.append("Агенты пока не обнаружены.")
+            if computer.get("agent_discovery"):
+                rows.append([("Добавить агента", f"/profiles {cid} discover")])
             rows += [
                 [("Настроить профили", f"/profiles {cid}")],
                 [("↻ Обновить", f"/computers id {cid}"), ("← Компьютеры", "/computers")],

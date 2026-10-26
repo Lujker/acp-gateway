@@ -35,6 +35,7 @@ async def connected(
     operations=False,
     update_handler=None,
     profiles=False,
+    discovery=False,
     profiles_handler=None,
 ):
     store = Store.open_in(tmp_path / "data")
@@ -62,6 +63,7 @@ async def connected(
             update_inventory=offered,
             update_operations=operations,
             agent_profiles=profiles,
+            agent_discovery=discovery,
         )
 
         async def factory(alias):
@@ -77,6 +79,7 @@ async def connected(
             update_operations=welcome.update_operations == 1,
             update_handler=update_handler,
             agent_profiles=welcome.agent_profiles == 1,
+            agent_discovery=welcome.agent_discovery == 1,
             profiles_handler=profiles_handler,
         )
         task = asyncio.create_task(peer.run())

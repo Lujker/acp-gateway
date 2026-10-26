@@ -49,6 +49,10 @@ def main() -> None:
         "mcp",
         "--collect-data",
         "acp_gateway",
+        "--add-data",
+        str(ROOT / "src/acp_gateway/connectors/_discovery_probe.py")
+        + os.pathsep
+        + "acp_gateway/connectors",
         "--collect-submodules",
         "acp_gateway",
         "--collect-submodules",
