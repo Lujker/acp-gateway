@@ -79,7 +79,65 @@ async def test_partial_messages_are_correlated_and_not_duplicated(peer, tmp_path
             f["params"]["update"]["content"]["text"]
             for f in frames
             if f.get("method") == "session/update"
-        ] == ["streamed ", "reply"]
+        ] == ["streamed reply"]
+    finally:
+        await stream.close()
+
+
+def updates(frames):
+    return [
+        (f["params"]["update"]["sessionUpdate"], f["params"]["update"]["content"]["text"])
+        for f in frames
+        if f.get("method") == "session/update" and "content" in f["params"]["update"]
+    ]
+
+
+@pytest.mark.parametrize("scenario", ["native-blocks", "native-blocks-plain"])
+async def test_per_block_frames_keep_work_updates_and_final_answer(peer, tmp_path, scenario):
+    # Claude Code splits one API message into an `assistant` frame per content block
+    # (thinking, text, tool_use) with the same message id. Text after thinking and
+    # the final answer must survive; text before a tool call is a work update.
+    stream = await peer(scenario)
+    try:
+        await initialize(stream)
+        created, _ = await request(stream, 2, "session/new", cwd=str(tmp_path))
+        response, frames = await request(
+            stream,
+            3,
+            "session/prompt",
+            sessionId=created["result"]["sessionId"],
+            prompt=[{"type": "text", "text": "go"}],
+        )
+        assert response["result"]["stopReason"] == "end_turn"
+        assert updates(frames) == [
+            ("agent_thought_chunk", "Plan."),
+            ("agent_thought_chunk", "\n\nChecking."),
+            ("agent_message_chunk", "Final answer."),
+        ]
+        assert "hmm" not in json.dumps(frames)
+    finally:
+        await stream.close()
+
+
+async def test_turn_limit_keeps_the_stream_and_reports_latest_progress(peer, tmp_path):
+    stream = await peer("native-blocks-max-turns")
+    try:
+        await initialize(stream)
+        created, _ = await request(stream, 2, "session/new", cwd=str(tmp_path))
+        response, frames = await request(
+            stream,
+            3,
+            "session/prompt",
+            sessionId=created["result"]["sessionId"],
+            prompt=[{"type": "text", "text": "go"}],
+        )
+        assert response["result"]["stopReason"] == "max_turn_requests"
+        assert updates(frames) == [
+            ("agent_thought_chunk", "Plan."),
+            ("agent_thought_chunk", "\n\nChecking."),
+        ]
+        assert not stream.closed.is_set()
+        assert stream.uncertain == 0
     finally:
         await stream.close()
 
@@ -870,13 +928,7 @@ async def controlled_native_turn(peer, monkeypatch):
     child["reader"].cancel()
     await asyncio.gather(child["reader"], return_exceptions=True)
     sid = child["sid"]
-    turn = {
-        "done": asyncio.get_running_loop().create_future(),
-        "text": False,
-        "streamed": set(),
-        "completed": set(),
-        "message_id": None,
-    }
+    turn = stream._new_turn(asyncio.get_running_loop().create_future())
     stream._sessions[sid] = child
     stream._turns[sid] = turn
     frames = asyncio.Queue()
@@ -950,9 +1002,8 @@ async def test_error_marked_assistant_never_publishes_diagnostics(
         assert "native-private-diagnostic" not in repr(child["reader"].exception())
         assert not turn["done"].done()
         assert stream.uncertain == 1
-        assert [f["params"]["update"]["content"]["text"] for f in published] == (
-            ["safe"] if streamed else []
-        )
+        # Text of an unfinished native message is held, so a failed turn publishes none.
+        assert published == []
     finally:
         await stream.close()
 

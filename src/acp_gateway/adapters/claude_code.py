@@ -25,6 +25,7 @@ MAX_FRAME = 262_144
 MAX_EVENTS = 128
 MAX_REQUESTS = 32
 TOOLS = "Read,Glob,Grep,Edit,Write,Bash"
+TOOL_BLOCKS = {"tool_use", "server_tool_use", "mcp_tool_use"}
 
 
 class ClaudeCodeAcpTransport:
@@ -386,7 +387,7 @@ class ClaudeCodeAcpTransport:
         finally:
             self._requests.pop(rid, None)
 
-    def _text(self, sid, text):
+    def _text(self, sid, text, *, work=False):
         if not isinstance(text, str):
             raise ValueError
         self._emit(
@@ -395,28 +396,70 @@ class ClaudeCodeAcpTransport:
                 "params": {
                     "sessionId": sid,
                     "update": {
-                        "sessionUpdate": "agent_message_chunk",
+                        "sessionUpdate": "agent_thought_chunk" if work else "agent_message_chunk",
                         "content": {"type": "text", "text": text},
                     },
                 },
             }
         )
 
+    @staticmethod
+    def _new_turn(done):
+        return {
+            "done": done,
+            "answered": False,
+            "worked": False,
+            "messages": set(),
+            "streamed": set(),
+            "message_id": None,
+            "pending": [],
+            "pending_chars": 0,
+            "cancelling": False,
+            "interrupt_acked": False,
+            "cancel_result": None,
+        }
+
+    # Claude Code sends one `assistant` frame per content block (thinking, text,
+    # tool_use), all with the same API message id. Text is held per message until
+    # it is known whether a tool call follows: then it is a work update, otherwise
+    # it is answer text. Thinking is never forwarded.
+    def _message(self, sid, turn, mid):
+        if not isinstance(mid, str) or not mid or len(mid) > 128:
+            raise ValueError
+        if mid == turn["message_id"]:
+            return
+        self._flush(sid, turn, work=False)
+        if mid not in turn["messages"]:
+            if len(turn["messages"]) >= MAX_EVENTS:
+                raise ValueError
+            turn["messages"].add(mid)
+        turn["message_id"] = mid
+
+    def _hold(self, turn, text):
+        if not isinstance(text, str):
+            raise ValueError
+        turn["pending_chars"] += len(text)
+        if turn["pending_chars"] > MAX_FRAME:
+            raise ValueError("managed Claude Code message buffer exceeded")
+        turn["pending"].append(text)
+
+    def _flush(self, sid, turn, *, work):
+        text = "".join(turn["pending"])
+        turn["pending"].clear()
+        turn["pending_chars"] = 0
+        if not text.strip():
+            return
+        key = "worked" if work else "answered"
+        prefix = "\n\n" if turn[key] else ""
+        turn[key] = True
+        self._text(sid, prefix + text, work=work)
+
     async def _prompt(self, params):
         sid = params["sessionId"]
         if sid not in self._sessions or sid in self._turns:
             raise ValueError
         child = self._sessions[sid]
-        turn = {
-            "done": asyncio.get_running_loop().create_future(),
-            "text": False,
-            "streamed": set(),
-            "completed": set(),
-            "message_id": None,
-            "cancelling": False,
-            "interrupt_acked": False,
-            "cancel_result": None,
-        }
+        turn = self._new_turn(asyncio.get_running_loop().create_future())
         self._turns[sid] = turn
         try:
             if self.sessions is not None:
@@ -473,17 +516,27 @@ class ClaudeCodeAcpTransport:
         if turn.get("cancelling", False) and not turn.get("interrupt_acked", False):
             turn["cancel_result"] = frame
             return
-        normal = frame.get("subtype") == "success" and frame.get("is_error") is False
+        subtype, is_error = frame.get("subtype"), frame.get("is_error")
+        normal = subtype == "success" and is_error is False
+        # The native turn limit ends the turn, not the conversation.
+        limited = subtype == "error_max_turns" and isinstance(is_error, bool)
         interrupted = (
             turn.get("interrupt_acked", False)
-            and frame.get("subtype") == "error_during_execution"
-            and frame.get("is_error") is True
+            and subtype == "error_during_execution"
+            and is_error is True
         )
-        if not normal and not interrupted:
+        if not normal and not limited and not interrupted:
             raise ValueError
-        if normal and not turn["text"] and isinstance(frame.get("result"), str):
-            self._text(child["sid"], frame["result"])
-        turn["done"].set_result("cancelled" if turn.get("cancelling", False) else "end_turn")
+        sid = child["sid"]
+        self._flush(sid, turn, work=False)
+        if normal and not turn["answered"] and isinstance(frame.get("result"), str):
+            self._hold(turn, frame["result"])
+            self._flush(sid, turn, work=False)
+        if turn.get("cancelling", False):
+            reason = "cancelled"
+        else:
+            reason = "max_turn_requests" if limited else "end_turn"
+        turn["done"].set_result(reason)
 
     def _withdraw(self, child, native_id=None):
         for local_id, (owner, _, rid, _) in list(self._permissions.items()):
@@ -662,36 +715,28 @@ class ClaudeCodeAcpTransport:
                 if frame.get("type") == "stream_event":
                     event = frame["event"]
                     if event.get("type") == "message_start":
-                        mid = event["message"]["id"]
-                        if not isinstance(mid, str) or not mid or len(mid) > 128:
-                            raise ValueError
-                        turn["message_id"] = mid
+                        self._message(sid, turn, event["message"]["id"])
+                    elif event.get("type") == "content_block_start":
+                        if event.get("content_block", {}).get("type") in TOOL_BLOCKS:
+                            self._flush(sid, turn, work=True)
                     elif (
                         event.get("type") == "content_block_delta"
                         and event.get("delta", {}).get("type") == "text_delta"
                     ):
-                        mid = turn["message_id"]
-                        if mid is None or len(turn["streamed"]) >= MAX_EVENTS:
+                        if turn["message_id"] is None:
                             raise ValueError
-                        if mid not in turn["completed"]:
-                            self._text(sid, event["delta"]["text"])
-                            turn["text"] = True
-                            turn["streamed"].add(mid)
+                        turn["streamed"].add(turn["message_id"])
+                        self._hold(turn, event["delta"]["text"])
                 elif frame.get("type") == "assistant":
                     if frame.get("error"):
                         raise ValueError("managed Claude Code assistant failed")
                     mid = frame["message"]["id"]
-                    if mid in turn["completed"]:
-                        continue
-                    if len(turn["completed"]) >= MAX_EVENTS:
-                        raise ValueError
-                    turn["completed"].add(mid)
-                    if mid in turn["streamed"]:
-                        continue
+                    self._message(sid, turn, mid)
                     for block in frame["message"]["content"]:
-                        if block.get("type") == "text":
-                            self._text(sid, block["text"])
-                            turn["text"] = True
+                        if block.get("type") == "text" and mid not in turn["streamed"]:
+                            self._hold(turn, block["text"])
+                        elif block.get("type") in TOOL_BLOCKS:
+                            self._flush(sid, turn, work=True)
                 elif frame.get("type") == "result":
                     self._finish_result(child, turn, frame)
         except asyncio.CancelledError:

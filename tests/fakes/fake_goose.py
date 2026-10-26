@@ -166,6 +166,8 @@ class FakeGooseAgent:
             return await self._reply(session_id, session.memory.get("word", "unknown"))
         if "pong" in text:
             return await self._reply(session_id, "pong")
+        if "exhaust the step limit" in text:
+            return PromptResponse(stop_reason="max_turn_requests")
         return await self._reply(session_id, f"echo: {text}")
 
     async def _shell(self, session_id: str, session: FakeSession, command: str) -> PromptResponse:

@@ -290,6 +290,84 @@ for line in sys.stdin:
                         },
                     }
                 )
+        if SCENARIO.startswith("native-blocks"):
+            # Real Claude Code: one `assistant` frame per content block, all sharing
+            # the API message id; partial events precede each block's frame.
+            partial = SCENARIO != "native-blocks-plain"
+            messages = [
+                ("m-0", [("text", "Plan."), ("tool_use", None)]),
+                ("m-1", [("thinking", "hmm"), ("text", "Checking."), ("tool_use", None)]),
+                ("m-2", [("thinking", "done"), ("text", "Final answer.")]),
+            ]
+            if SCENARIO == "native-blocks-max-turns":
+                messages[2] = ("m-2", [("thinking", "more"), ("tool_use", None)])
+            for mid, blocks in messages:
+
+                def event(payload):
+                    emit(
+                        {
+                            "type": "stream_event",
+                            "session_id": SID,
+                            "parent_tool_use_id": None,
+                            "event": payload,
+                        }
+                    )
+
+                if partial:
+                    event({"type": "message_start", "message": {"id": mid}})
+                for index, (kind, text) in enumerate(blocks):
+                    block = {"type": kind}
+                    if kind == "tool_use":
+                        block.update(id=f"tool-{mid}", name="Bash", input={"command": "ls"})
+                    else:
+                        block[kind] = text
+                    if partial:
+                        start = {**block, kind: ""} if kind != "tool_use" else block
+                        event(
+                            {"type": "content_block_start", "index": index, "content_block": start}
+                        )
+                        if kind == "text":
+                            for piece in (text[:3], text[3:]):
+                                event(
+                                    {
+                                        "type": "content_block_delta",
+                                        "index": index,
+                                        "delta": {"type": "text_delta", "text": piece},
+                                    }
+                                )
+                        event({"type": "content_block_stop", "index": index})
+                    emit(
+                        {
+                            "type": "assistant",
+                            "session_id": SID,
+                            "parent_tool_use_id": None,
+                            "message": {"id": mid, "role": "assistant", "content": [block]},
+                        }
+                    )
+                if partial:
+                    stop = "tool_use" if blocks[-1][0] == "tool_use" else "end_turn"
+                    event({"type": "message_delta", "delta": {"stop_reason": stop}})
+                    event({"type": "message_stop"})
+            if SCENARIO == "native-blocks-max-turns":
+                emit(
+                    {
+                        "type": "result",
+                        "subtype": "error_max_turns",
+                        "is_error": True,
+                        "session_id": SID,
+                    }
+                )
+            else:
+                emit(
+                    {
+                        "type": "result",
+                        "subtype": "success",
+                        "is_error": False,
+                        "session_id": SID,
+                        "result": "Final answer.",
+                    }
+                )
+            continue
         if SCENARIO != "result-permission":
             emit(
                 {

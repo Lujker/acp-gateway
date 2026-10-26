@@ -170,3 +170,13 @@ async def test_cancel_policy_does_not_prevent_shutdown(core, tmp_path):
         assert reopened.job(job.id).status is JobStatus.INTERRUPTED
     finally:
         reopened.close()
+
+
+async def test_step_limit_completes_with_a_visible_notice(core):
+    gateway, _ = core
+    job = await gateway.submit(MCP, "exhaust the step limit")
+    result = await gateway.wait(job.id, 5)
+    assert result.status is JobStatus.COMPLETED
+    assert result.stop_reason == "max_turn_requests"
+    assert result.answer == ""
+    assert "step limit" in result.error

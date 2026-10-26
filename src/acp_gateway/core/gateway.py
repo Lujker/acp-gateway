@@ -55,6 +55,14 @@ def _new_job_id() -> str:
     return secrets.token_hex(6)
 
 
+# A completed turn that the agent cut short: say so instead of an empty result.
+STOPPED_EARLY = {
+    "max_turn_requests": "the agent stopped at its step limit before finishing; "
+    "send a follow-up message to continue",
+    "max_tokens": "the agent stopped at its output limit; send a follow-up message to continue",
+}
+
+
 class _RunningJob:
     def __init__(self, job: Job) -> None:
         self.job = job
@@ -963,7 +971,7 @@ class GatewayCore:
                 status = JobStatus.CANCELLED
             elif finished is not None:
                 status = JobStatus.COMPLETED
-                error = run.notice
+                error = run.notice or STOPPED_EARLY.get(finished.stop_reason)
             else:
                 error = "the turn ended without a result"
         except (AgentError, GatewayError) as exc:
