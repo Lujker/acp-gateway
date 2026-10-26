@@ -180,3 +180,22 @@ async def test_step_limit_completes_with_a_visible_notice(core):
     assert result.stop_reason == "max_turn_requests"
     assert result.answer == ""
     assert "step limit" in result.error
+
+
+async def test_untitled_dialogue_is_named_after_the_first_prompt(core):
+    gateway, _ = core
+    job = await gateway.submit(MCP, "\n  exhaust the step limit   now\nsecond line")
+    await gateway.wait(job.id, 5)
+    assert gateway.store.session(job.session_id).title == "exhaust the step limit now"
+    # Later prompts keep the first name.
+    job = await gateway.submit(MCP, "exhaust the step limit again")
+    await gateway.wait(job.id, 5)
+    assert gateway.store.session(job.session_id).title == "exhaust the step limit now"
+
+
+def test_prompt_title_is_bounded():
+    from acp_gateway.core.gateway import _prompt_title
+
+    assert _prompt_title("   \n") is None
+    long = _prompt_title("word " * 40)
+    assert len(long) == 60 and long.endswith("…")

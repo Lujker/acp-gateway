@@ -43,7 +43,7 @@ from acp_gateway.core.errors import (
 )
 from acp_gateway.core.policy import Policy
 from acp_gateway.core.rate_limits import WorkRateLimiter
-from acp_gateway.log import get_logger
+from acp_gateway.log import get_logger, redact_text
 from acp_gateway.storage import Conversation, Job, JobStatus, SessionRecord, Store
 from acp_gateway.storage.records import utcnow
 
@@ -53,6 +53,15 @@ DEFAULT_CANCEL_GRACE = 10.0
 
 def _new_job_id() -> str:
     return secrets.token_hex(6)
+
+
+def _prompt_title(text: str, limit: int = 60) -> str | None:
+    """A dialogue name from the first prompt line, without secrets."""
+    line = next((line for line in text.splitlines() if line.strip()), "")
+    line = " ".join(redact_text(line).split())
+    if not line:
+        return None
+    return line if len(line) <= limit else line[: limit - 1].rstrip() + "…"
 
 
 # A completed turn that the agent cut short: say so instead of an empty result.
@@ -841,6 +850,9 @@ class GatewayCore:
             )
             self._model_confirmations.pop(conversation, None)
             self.store.touch_session(session.id)
+            if not session.title and (title := _prompt_title(text)):
+                # Managed Codex/Claude Code do not name dialogues; an agent title wins later.
+                self.store.set_session_title(session.id, title)
             run = _RunningJob(job)
             self._running[job.id] = run
             self._busy[session.id] = job.id
