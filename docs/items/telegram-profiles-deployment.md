@@ -83,3 +83,12 @@ The Windows service/config was not changed. Private SQLite backup:
 `state/update-snapshots/deploy-0158dea/gateway.db`; previous override:
 `compose.release.yaml.before-0158dea`. Schema 10 and the existing records were
 preserved. Open a fresh `/profiles home` after the bot restart.
+
+## Owner-reported acceptance — 2026-10-26
+
+The owner confirmed Codex and Claude usage in WSL, deleting one agent profile,
+and changing the other profiles' working directories. Native stop/resume and
+safe allow/deny were not separately confirmed. Follow-up UI observations: a long
+Claude answer was split across two Telegram messages (supported behavior), and
+Codex intermediate text appeared merged into its answer. Separating phases and
+improving multipart presentation remain proposed changes, not deployed fixes.

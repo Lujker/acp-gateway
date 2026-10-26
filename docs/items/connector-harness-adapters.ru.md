@@ -1471,3 +1471,10 @@ RED: новый clock-headroom test — 1 failed/1 passed; GREEN: `rtk test uv r
 Read-only probe с реальными часами VPS/Windows и установленным конфигом: старый TTL120 → stale, TTL30 → ok/4 managed profiles; записей/модельных вызовов нет.
 Одно независимое ревью: блокеров нет. Ruff check/format clean. Исправляется только sender диспетчера; коннектор и локальные настройки не требуют обновления.
 Развёрнут `0158dea`: Docker healthy, Telegram/MCP и оба ПК connected; schema 10/integrity ok, 9 dialogues/2 jobs/2 computers сохранены. Backup/старый override сохранены, reservation снят, новых prompts/model calls нет. [Отчёт](telegram-profiles-deployment.md#profile-deadline-hotfix--2026-10-26).
+
+## Пользовательская проверка и замечания по ответам — 2026-10-26
+Владелец сообщил: проверены Codex и Claude в WSL, удаление одного профиля и изменение cwd остальных работают. Это owner-reported acceptance, не автоматический прогон; stop/resume и safe allow/deny отдельно не подтверждены.
+Длинный ответ Claude разделился на два сообщения: текущая Telegram delivery уже поддерживает независимые HTML chunks по 2000 символов и журнал доставки частей.
+Замечание Codex: промежуточный текст попадает в общий ответ без разделения. Source verification: все agentMessage/delta преобразуются в agent_message_chunk без учёта фазы; native reasoning отдельно здесь не отображается. Тип конкретного пользовательского фрагмента без trace не подтверждён.
+Обсуждаемое улучшение: отделить промежуточные сообщения/доступные reasoning summaries от финала, показывать ход работы отдельно; улучшить разбиение по абзацам и маркировку частей ответа.
+Этот заход — исследование и запись результата, без production-правок, развёртывания и модельных вызовов.
