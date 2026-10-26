@@ -81,7 +81,9 @@ def _local_ipc_acl(tmp_path, monkeypatch, request):
             return await asyncio.shield(job)
         except asyncio.CancelledError:
             # The OS write must finish before watcher cleanup removes STATUS.
-            await job
+            # Its own error (e.g. a missing request file) must not replace the
+            # cancellation: the watcher ignores OSError and would never stop.
+            await asyncio.gather(job, return_exceptions=True)
             raise
 
     monkeypatch.setattr(

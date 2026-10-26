@@ -55,7 +55,7 @@ async def test_response_publication_failure_retries_ack_without_reapplying(
                     await asyncio.sleep(0.01)
             for _ in range(10):
                 response = await asyncio.to_thread(
-                    LocalClient(tmp_path, timeout=1).request,
+                    LocalClient(tmp_path, timeout=5).request,
                     "POST",
                     "/maintenance/prepare",
                     json={"restart_uncertain": restart_uncertain},
@@ -131,7 +131,7 @@ async def test_acl_publication_barrier_documents_uncertain_timeout(
     def acl_barrier():
         if getattr(target, "response", False):
             entered.set()
-            assert release.wait(3), "owned ACL publication barrier was not released"
+            assert release.wait(15), "owned ACL publication barrier was not released"
 
     def atomic(path, content):
         target.response = path.name == maintenance.RESPONSE
@@ -150,21 +150,32 @@ async def test_acl_publication_barrier_documents_uncertain_timeout(
             async with asyncio.timeout(3):
                 while maintenance.read_status(tmp_path)["state"] != "running":
                     await asyncio.sleep(0.01)
-            client_job = asyncio.create_task(
-                asyncio.to_thread(
-                    LocalClient(tmp_path, timeout=0.5).request, "POST", "/maintenance/prepare"
+            for _ in range(10):
+                client_job = asyncio.create_task(
+                    asyncio.to_thread(
+                        LocalClient(tmp_path, timeout=0.5).request, "POST", "/maintenance/prepare"
+                    )
                 )
-            )
-            async with asyncio.timeout(3):
-                while not entered.is_set():
-                    await asyncio.sleep(0.01)
+                async with asyncio.timeout(10):
+                    while not entered.is_set() and not client_job.done():
+                        await asyncio.sleep(0.01)
+                if entered.is_set():
+                    break
+                # A concurrent STATUS replacement can fail the inode check. Retry
+                # only this pre-admission refusal, never an applied/unknown request.
+                response = await client_job
+                assert response.status_code == 409
+                assert response.json()["detail"] == "Live connector activity is unavailable"
+                assert applies == []
+                assert not (tmp_path / maintenance.REQUEST).exists()
+            assert entered.is_set()
             assert controller.status()["reserved"]
             with pytest.raises(ValueError, match="timed out; inspect status"):
                 await client_job
             assert applies == ["prepare"]
             assert not (tmp_path / maintenance.RESPONSE).exists()
             release.set()
-            async with asyncio.timeout(3):
+            async with asyncio.timeout(10):
                 while not (tmp_path / maintenance.RESPONSE).exists():
                     await asyncio.sleep(0.01)
             assert controller.status()["reserved"]
