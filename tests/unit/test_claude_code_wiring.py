@@ -117,7 +117,7 @@ def test_connector_uses_one_owned_claude_manager_and_closes_it(tmp_path, monkeyp
     )
 
     async def connect(url, **kwargs):
-        assert kwargs["hello"].agents[0].kind == "claude_code"
+        assert kwargs["hello"]().agents[0].kind == "claude_code"
         await kwargs["local_factory"]("claude")
         await kwargs["local_factory"]("claude")
 
