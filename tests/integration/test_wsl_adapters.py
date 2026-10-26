@@ -86,7 +86,7 @@ async def test_managed_adapter_routes_wsl_launch_and_close_without_native_fallba
         assert cwd == "/home/alice/project"
         assert argv[0] == "/opt/agent"
         assert home == ("CODEX_HOME" if kind == "codex" else "CLAUDE_CONFIG_DIR")
-        assert limit == 262144
+        assert limit == 16 * 1024 * 1024
         if kind == "codex":
             assert argv[1:] == ["app-server", "--listen", "stdio://"]
         else:

@@ -192,6 +192,29 @@ for line in sys.stdin:
                 )
             complete()
             continue
+        if SCENARIO == "large-output":
+            # Native item/completed carries the full command output (up to ~1 MiB),
+            # far above one outgoing request frame; rollouts keep only 64 KiB.
+            for method, status in (("item/started", "inProgress"), ("item/completed", "completed")):
+                note(
+                    method,
+                    {
+                        "threadId": "owned-thread",
+                        "turnId": "owned-turn",
+                        "item": {
+                            "type": "commandExecution",
+                            "id": "tool-1",
+                            "command": "cat road-notes.md",
+                            "cwd": str(Path.cwd()),
+                            "status": status,
+                            "aggregatedOutput": "строка\n" * 100_000
+                            if status == "completed"
+                            else None,
+                        },
+                    },
+                )
+            finish()
+            continue
         if SCENARIO in {"hold", "early", "interrupt"}:
             continue
         if SCENARIO == "disconnect":
@@ -200,7 +223,7 @@ for line in sys.stdin:
             print("credential-secret-not-json", flush=True)
             continue
         if SCENARIO == "oversized":
-            print("credential-secret" * 30_000, flush=True)
+            print("credential-secret" * 1_000_000, flush=True)
             continue
         if SCENARIO == "failed":
             complete(status="failed")

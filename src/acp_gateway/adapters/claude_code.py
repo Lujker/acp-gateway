@@ -22,6 +22,9 @@ if TYPE_CHECKING:
     from acp_gateway.config import ClaudeCodeSettings
 
 MAX_FRAME = 262_144
+# Native output lines are larger than our own requests: Claude Code reports a whole
+# tool result (often over 256 KiB) in one line. A shorter limit drops the turn.
+MAX_NATIVE_LINE = 16 * 1024 * 1024
 MAX_EVENTS = 128
 MAX_REQUESTS = 32
 TOOLS = "Read,Glob,Grep,Edit,Write,Bash"
@@ -154,7 +157,7 @@ class ClaudeCodeAcpTransport:
                     argv,
                     cwd=cwd,
                     agent_home_env="CLAUDE_CONFIG_DIR",
-                    limit=MAX_FRAME,
+                    limit=MAX_NATIVE_LINE,
                 )
             else:
                 process = await asyncio.create_subprocess_exec(
@@ -164,7 +167,7 @@ class ClaudeCodeAcpTransport:
                     stderr=asyncio.subprocess.PIPE,
                     cwd=cwd,
                     env=env,
-                    limit=MAX_FRAME,
+                    limit=MAX_NATIVE_LINE,
                 )
         except (OSError, ValueError, RuntimeError):
             raise AgentUnavailable("managed Claude Code executable could not be started") from None
@@ -204,7 +207,7 @@ class ClaudeCodeAcpTransport:
 
     async def _frame(self, child):
         line = await child["process"].stdout.readline()
-        if not line or len(line) > MAX_FRAME or not line.endswith(b"\n"):
+        if not line or len(line) > MAX_NATIVE_LINE or not line.endswith(b"\n"):
             raise ConnectionError("managed Claude Code stream unavailable")
         frame = json.loads(line)
         if not isinstance(frame, dict):

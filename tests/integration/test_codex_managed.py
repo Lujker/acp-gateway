@@ -532,6 +532,17 @@ async def test_native_completed_items_supply_text_once_and_tool_progress(peer):
         await client.close()
 
 
+async def test_large_native_command_output_keeps_turn_running(peer):
+    client = peer("large-output")
+    try:
+        sid = await client.new_session()
+        assert (await client.ask(sid, "hello")).text == "Hello world"
+        assert client.session_availability(sid) == "attached"
+        assert client._transport.uncertain == 0
+    finally:
+        await client.close()
+
+
 def test_live_codex_doctor_uses_owned_runner_and_only_initializes(peer, tmp_path, monkeypatch):
     from acp_gateway.cli import doctor, setup_asyncio
 

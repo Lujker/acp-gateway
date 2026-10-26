@@ -19,8 +19,12 @@ from acp import PROTOCOL_VERSION
 from acp_gateway.agents.errors import AgentUnavailable
 from acp_gateway.config import CodexSettings
 from acp_gateway.connectors.policy import LocalAgentPolicy, LocalPolicyError
+from acp_gateway.log import get_logger
 
 MAX_FRAME = 262_144
+# Native output lines are larger than our own requests: Codex reports a whole
+# tool result (often over 256 KiB) in one line. A shorter limit drops the turn.
+MAX_NATIVE_LINE = 16 * 1024 * 1024
 MAX_EVENTS = 128
 MAX_REQUESTS = 32
 MAX_SESSIONS = 1024
@@ -104,7 +108,7 @@ class CodexAcpTransport:
                     [settings.executable, "app-server", "--listen", "stdio://"],
                     cwd=policy.allowed_cwds[0],
                     agent_home_env="CODEX_HOME",
-                    limit=MAX_FRAME,
+                    limit=MAX_NATIVE_LINE,
                 )
             else:
                 process = await asyncio.create_subprocess_exec(
@@ -117,7 +121,7 @@ class CodexAcpTransport:
                     stderr=asyncio.subprocess.PIPE,
                     cwd=policy.allowed_cwds[0],
                     env=env,
-                    limit=MAX_FRAME,
+                    limit=MAX_NATIVE_LINE,
                 )
         except (OSError, ValueError, RuntimeError):
             raise AgentUnavailable("managed Codex executable could not be started") from None
@@ -170,7 +174,7 @@ class CodexAcpTransport:
     async def _read(self):
         try:
             while line := await self.process.stdout.readline():
-                if len(line) > MAX_FRAME or not line.endswith(b"\n"):
+                if len(line) > MAX_NATIVE_LINE or not line.endswith(b"\n"):
                     raise ValueError
                 frame = json.loads(line)
                 if not isinstance(frame, dict):
@@ -190,11 +194,13 @@ class CodexAcpTransport:
                         raise ValueError
                 else:
                     self._events.put_nowait(frame)
-        except (Exception, asyncio.CancelledError):
+        except asyncio.CancelledError:
+            self._schedule_close()
+        except Exception as exc:
             # Do not log native payloads or exception text (they may contain credentials).
-            self._schedule_close()
+            self._schedule_close("invalid native output", exc)
         finally:
-            self._schedule_close()
+            self._schedule_close("native process exited")
 
     async def _drain_stderr(self):
         # Discard continuously in bounded chunks. Diagnostics may contain credentials.
@@ -324,8 +330,8 @@ class CodexAcpTransport:
             self._emit({"id": rid, "result": result})
         except asyncio.CancelledError:
             raise
-        except Exception:
-            self._schedule_close()
+        except Exception as exc:
+            self._schedule_close("request failed", exc)
         finally:
             self._requests.pop(rid, None)
 
@@ -671,8 +677,8 @@ class CodexAcpTransport:
                     turn.done.set_result(params["turn"].get("status"))
         except asyncio.CancelledError:
             pass
-        except Exception:
-            self._schedule_close()
+        except Exception as exc:
+            self._schedule_close("native event rejected", exc)
 
     async def receive(self):
         if not self._out.empty():
@@ -689,8 +695,16 @@ class CodexAcpTransport:
             closed.cancel()
             await asyncio.gather(read, closed, return_exceptions=True)
 
-    def _schedule_close(self):
+    def _schedule_close(self, reason=None, error=None):
         if self._closing is None:
+            if reason is not None:
+                # Only a fixed reason and the error type: never native text.
+                get_logger(__name__).warning(
+                    "managed Codex stream closed",
+                    reason=reason,
+                    error=type(error).__name__ if error is not None else None,
+                    running_turns=len(self._turns),
+                )
             self.uncertain = max(self.uncertain, len(self._turns))
             self.closed.set()
             self._closing = asyncio.create_task(self._shutdown())
