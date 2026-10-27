@@ -444,7 +444,6 @@ async def test_duplicate_native_permission_identity_fails_closed(peer, tmp_path)
 @pytest.mark.parametrize(
     "scenario",
     [
-        "error-result",
         "error-subtype",
         "disconnect",
         "hang",
@@ -990,20 +989,45 @@ async def test_error_marked_assistant_never_publishes_diagnostics(
                 "is_error": True,
             }
         )
-        await asyncio.wait_for(stream.closed.wait(), 2)
-        await stream.close()
+        # A reported API error is a known end of the turn: the CLI stays usable.
+        assert await asyncio.wait_for(turn["done"], 2) == "end_turn"
+        assert turn["failed"]
+        assert not stream.closed.is_set()
+        assert stream.uncertain == 0
         published = []
-        while (frame := await stream.receive()) is not None:
-            published.append(frame)
+        while not stream._out.empty():
+            published.append(stream._out.get_nowait())
         assert "native-private-diagnostic" not in json.dumps(published)
         assert "authentication_failed" not in json.dumps(published)
         assert "native-private-diagnostic" not in caplog.text
         assert "authentication_failed" not in caplog.text
-        assert "native-private-diagnostic" not in repr(child["reader"].exception())
-        assert not turn["done"].done()
-        assert stream.uncertain == 1
-        # Text of an unfinished native message is held, so a failed turn publishes none.
+        # Text of the failed native message is dropped, so the turn publishes none.
         assert published == []
+    finally:
+        await stream.close()
+
+
+async def test_api_error_result_ends_turn_and_keeps_the_dialogue(peer, tmp_path, caplog):
+    stream = await peer("error-result")
+    try:
+        await initialize(stream)
+        created, _ = await request(stream, 2, "session/new", cwd=str(tmp_path))
+        sid = created["result"]["sessionId"]
+        prompt = {"sessionId": sid, "prompt": [{"type": "text", "text": "hello"}]}
+        response, frames = await request(stream, 3, "session/prompt", **prompt)
+        assert response["result"] == {
+            "stopReason": "end_turn",
+            "_meta": {"acp-gateway": {"turnFailed": True}},
+        }
+        assert "native-secret" not in json.dumps(frames)
+        assert "native-secret" not in caplog.text
+        assert not stream.closed.is_set() and stream.uncertain == 0
+        # The same process accepts the next prompt; nothing was replayed.
+        response, _ = await request(stream, 4, "session/prompt", **prompt)
+        assert response["result"]["_meta"]["acp-gateway"]["turnFailed"]
+        users = [f for f in calls(tmp_path) if f["frame"].get("type") == "user"]
+        assert len(users) == 2
+        assert len({f["pid"] for f in users}) == 1
     finally:
         await stream.close()
 
@@ -1078,3 +1102,159 @@ async def test_queued_permission_decision_remains_revocable(peer, monkeypatch, c
         if decision is not None:
             await asyncio.gather(decision, return_exceptions=True)
         await stream.close()
+
+
+async def test_interrupted_turn_resumes_only_explicitly_and_never_replays(peer, tmp_path):
+    from acp_gateway.adapters.managed_sessions import ManagedSessions
+
+    profile = AgentProfile(
+        alias="claude",
+        kind="claude_code",
+        backend="claude_code",
+        default_cwd=str(tmp_path),
+        claude_code={"executable": sys.executable},
+    )
+
+    def bindings():
+        return ManagedSessions(tmp_path / "bindings", profile)
+
+    first = await peer("hang", sessions=bindings(), turn_timeout=0.15)
+    try:
+        response, _ = await initialize(first)
+        flags = response["result"]["agentCapabilities"]["_meta"]["acp-gateway"]
+        assert flags["resumeInterrupted"] == 1
+        created, _ = await request(first, 2, "session/new", cwd=str(tmp_path))
+        sid = created["result"]["sessionId"]
+        await first.send(
+            {
+                "jsonrpc": "2.0",
+                "id": 3,
+                "method": "session/prompt",
+                "params": {"sessionId": sid, "prompt": [{"type": "text", "text": "lost"}]},
+            }
+        )
+        await asyncio.wait_for(first.closed.wait(), 2)
+    finally:
+        await first.close()
+    assert first.uncertain == 1
+
+    second = await peer(sessions=bindings())
+    try:
+        await initialize(second)
+        refused, _ = await request(second, 2, "session/load", sessionId=sid, cwd=str(tmp_path))
+        assert refused["error"]["code"] == -32002
+        assert not second.closed.is_set()
+        argv = [f["frame"]["argv"] for f in calls(tmp_path) if "argv" in f["frame"]]
+        assert not any("--resume" in args for args in argv)
+        resumed, _ = await request(
+            second,
+            3,
+            "session/load",
+            sessionId=sid,
+            cwd=str(tmp_path),
+            _meta={"acp-gateway": {"resumeInterrupted": True}},
+        )
+        assert resumed["result"] == {}
+        argv = [f["frame"]["argv"] for f in calls(tmp_path) if "argv" in f["frame"]][-1]
+        assert argv[argv.index("--resume") + 1] == sid
+        response, frames = await request(
+            second, 4, "session/prompt", sessionId=sid, prompt=[{"type": "text", "text": "next"}]
+        )
+        assert response["result"]["stopReason"] == "end_turn"
+        text = "".join(
+            f.get("params", {}).get("update", {}).get("content", {}).get("text", "") for f in frames
+        )
+        # History keeps the interrupted request; it was delivered exactly once.
+        assert text == "lost|next"
+        users = [
+            f["frame"]["message"]["content"]
+            for f in calls(tmp_path)
+            if f["frame"].get("type") == "user"
+        ]
+        assert users == ["lost", "next"]
+    finally:
+        await second.close()
+
+
+async def test_agent_client_marks_interrupted_dialogue_and_resumes_on_request(peer, tmp_path):
+    from acp_gateway.adapters.managed_sessions import ManagedSessions
+    from acp_gateway.agents.errors import AgentError, SessionInterrupted
+
+    profile = AgentProfile(
+        alias="claude",
+        kind="claude_code",
+        backend="claude_code",
+        default_cwd=str(tmp_path),
+        claude_code={"executable": sys.executable},
+    )
+    scenario = ["hang"]
+
+    async def factory():
+        return await peer(
+            scenario[0],
+            sessions=ManagedSessions(tmp_path / "bindings", profile),
+            turn_timeout=0.15,
+        )
+
+    client = AgentClient(
+        profile,
+        pin_dir=tmp_path,
+        request_timeout=2,
+        reconnect_delays=(),
+        transport_factory=factory,
+    )
+    try:
+        sid = await client.new_session()
+        with pytest.raises(AgentError):
+            await asyncio.wait_for(client.ask(sid, "lost"), 3)
+        assert client.session_availability(sid) == "interrupted"
+        scenario[0] = "happy"
+        before = calls(tmp_path)
+        # A new message never silently continues or replays the interrupted turn.
+        with pytest.raises(SessionInterrupted):
+            await client.ask(sid, "ignored")
+        assert calls(tmp_path) == before
+        await client.resume_interrupted(sid)
+        assert client.session_availability(sid) == "attached"
+        reply = await asyncio.wait_for(client.ask(sid, "next"), 3)
+        assert reply.text == "lost|next"
+        users = [
+            f["frame"]["message"]["content"]
+            for f in calls(tmp_path)
+            if f["frame"].get("type") == "user"
+        ]
+        assert users == ["lost", "next"]
+    finally:
+        await client.close()
+
+
+async def test_agent_client_reports_failed_turn_and_keeps_the_dialogue(peer, tmp_path):
+    from acp_gateway.agents.errors import TurnFailed
+
+    stream = await peer("error-result")
+
+    async def factory():
+        return stream
+
+    client = AgentClient(
+        AgentProfile(
+            alias="code",
+            kind="claude_code",
+            backend="claude_code",
+            default_cwd=str(tmp_path),
+            claude_code=stream.settings,
+        ),
+        pin_dir=tmp_path,
+        request_timeout=2,
+        reconnect_delays=(),
+        transport_factory=factory,
+    )
+    try:
+        sid = await client.new_session()
+        for _ in range(2):
+            with pytest.raises(TurnFailed, match="dialogue is kept"):
+                await asyncio.wait_for(client.ask(sid, "hello"), 3)
+            assert client.session_availability(sid) == "attached"
+        assert not stream.closed.is_set()
+    finally:
+        await client.close()

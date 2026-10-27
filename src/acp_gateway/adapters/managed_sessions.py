@@ -2,7 +2,9 @@
 
 Only IDs created by this profile can be loaded. An OS lock excludes other gateway
 processes; a committed busy marker survives a crash. No prompts or credentials are
-stored here, and releasing a lease never clears an unknown turn.
+stored here, and releasing a lease never clears an unknown turn by itself: only a
+confirmed process stop turns it into ``interrupted``, which the owner may resume
+explicitly. The interrupted prompt is never replayed.
 """
 
 from __future__ import annotations
@@ -17,6 +19,10 @@ from pathlib import Path
 from filelock import FileLock, Timeout
 
 from acp_gateway.connectors.policy import LocalPolicyError
+
+
+class InterruptedTurn(LocalPolicyError):
+    """The last turn's outcome is unknown; only an explicit resume may continue."""
 
 
 class ManagedSessions:
@@ -84,14 +90,19 @@ class ManagedSessions:
             self._locks.pop(sid).release()
             raise
 
-    def load(self, sid, cwd):
+    def load(self, sid, cwd, *, resume_interrupted=False):
         self._acquire(sid)
         try:
             with closing(self._db()) as db, db:
                 record = db.execute(
                     "SELECT cwd,state FROM bindings WHERE scope=? AND sid=?", (self.scope, sid)
                 ).fetchone()
-                if record not in ((cwd, "idle"), (cwd, "empty-idle")):
+                if record == (cwd, "interrupted") and not resume_interrupted:
+                    raise InterruptedTurn("native turn was interrupted; resume explicitly")
+                allowed = {(cwd, "idle"), (cwd, "empty-idle")}
+                if resume_interrupted:
+                    allowed.add((cwd, "interrupted"))
+                if record not in allowed:
                     raise LocalPolicyError(
                         "native binding is unavailable or turn outcome is unknown"
                     )
@@ -104,7 +115,8 @@ class ManagedSessions:
                     ),
                 )
                 # Legacy idle bindings conservatively require real native history.
-                return record[1] == "idle"
+                # An interrupted turn already reached the CLI, so history exists.
+                return record[1] in {"idle", "interrupted"}
         except BaseException:
             self._locks.pop(sid).release()
             raise
@@ -127,17 +139,22 @@ class ManagedSessions:
     def finish(self, sid):
         self._state(sid, "busy", "attached")
 
-    def close(self, *, confirmed=True):
+    def close(self, *, confirmed=True, interrupted=False):
         # Persisted 'attached' is already a fence if a process crashes, disk
         # writes fail, or WSL cleanup cannot prove termination. Only a confirmed
-        # stop may make idle sessions available again; busy is never cleared.
+        # stop may make idle sessions available again. ``interrupted`` (also only
+        # after a confirmed stop) marks unknown turns as explicitly resumable;
+        # busy is never cleared silently.
         if confirmed and self._locks:
             with closing(self._db()) as db, db:
                 db.executemany(
                     "UPDATE bindings SET state=CASE state WHEN 'empty-attached' "
-                    "THEN 'empty-idle' ELSE 'idle' END WHERE scope=? AND sid=? "
-                    "AND state IN ('attached','empty-attached')",
-                    [(self.scope, sid) for sid in self._locks],
+                    "THEN 'empty-idle' WHEN 'busy' THEN 'interrupted' ELSE 'idle' END "
+                    "WHERE scope=? AND sid=? AND state IN ('attached','empty-attached',?)",
+                    [
+                        (self.scope, sid, "busy" if interrupted else "attached")
+                        for sid in self._locks
+                    ],
                 )
         for lock in self._locks.values():
             lock.release()

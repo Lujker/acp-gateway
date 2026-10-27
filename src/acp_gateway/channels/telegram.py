@@ -31,7 +31,7 @@ from aiogram.types import (
 )
 from pydantic import SecretStr
 
-from acp_gateway.agents import AgentError, SessionNotFound
+from acp_gateway.agents import AgentError, SessionInterrupted, SessionNotFound
 from acp_gateway.agents.events import ThoughtChunk
 from acp_gateway.channels.base import Channel
 from acp_gateway.channels.telegram_context import ContextCard
@@ -133,6 +133,7 @@ def _session_state(session):
         "unknown": "не проверен",
         "busy": "выполняет задачу",
         "uncertain": "предыдущая операция требует проверки",
+        "interrupted": "предыдущий ход прерван — диалог можно продолжить",
     }.get(session.availability, session.availability)
 
 
@@ -160,12 +161,22 @@ def _recovery_text(session):
     )
 
 
+def _interrupted_text(session):
+    return (
+        f"Диалог #{session.id}: предыдущий ход был прерван (обрыв связи, таймаут или "
+        "остановка агента), его исход неизвестен.\n"
+        "Прерванный запрос повторно не отправляется. Часть работы могла быть уже "
+        "выполнена — агент увидит её в истории диалога.\n"
+        "Нажмите «Возобновить диалог», затем отправьте следующее сообщение."
+    )
+
+
 def _dialogue_summary(session):
     lines = [f"Агент / ПК: {_label(session.conversation.agent)}"]
     if session.title:
         lines.append(f"Название: {_label(session.title)}")
     lines.append(f"Папка: {_label(session.cwd, 500)}")
-    if session.binding or session.availability == "restore-unavailable":
+    if session.binding or session.availability in {"restore-unavailable", "interrupted"}:
         lines.append(f"Состояние: {_session_state(session)}")
     return "\n".join(lines)
 
@@ -1321,7 +1332,10 @@ class TelegramChannel(
                     marker = "▶" if selected else "•"
                     title = _label(session.title) if session.title else "Без названия"
                     lines += ["", f"{marker} #{session.id} — {title}"]
-                    if session.binding or session.availability == "restore-unavailable":
+                    if session.binding or session.availability in {
+                        "restore-unavailable",
+                        "interrupted",
+                    }:
                         lines.append(f"Состояние: {_session_state(session)}")
                     lines.append(f"Последняя активность: {session.last_used_at:%Y-%m-%d %H:%M} UTC")
                     lines.append(f"Папка: {_label(session.cwd, 500)}")
@@ -1398,6 +1412,9 @@ class TelegramChannel(
             if profile_text:
                 lines.append("Профиль агента: " + profile_text)
             rows = []
+            if session.availability == "interrupted":
+                lines += ["", _interrupted_text(session)]
+                rows.append([("▶ Возобновить диалог", f"/resume_dialogue {session.id}")])
             if _restore_unavailable(session):
                 lines += ["", _recovery_text(session)]
                 rows += [
@@ -1430,6 +1447,17 @@ class TelegramChannel(
                 "Название Hermes не менялось.",
                 [[("💬 Открыть диалог", f"/dialogue {session.id}")], *self._back_rows()],
             )
+        elif command == "/resume_dialogue":
+            if not argument.isascii() or not argument.isdecimal() or len(argument) > 19:
+                raise GatewayError("Use /resume_dialogue ID.")
+            session = await self.core.resume_interrupted(conv, int(argument))
+            await self._panel(
+                chat,
+                f"Диалог #{session.id} продолжен.\n"
+                "Прерванный запрос не отправлялся повторно. Отправьте следующее сообщение — "
+                "например, попросите агента проверить, что успело выполниться.",
+                [[("💬 Открыть диалог", f"/dialogue {session.id}")], *self._back_rows()],
+            )
         elif command == "/stop":
             jobs = await self.core.cancel(conv)
             await self._send(
@@ -1451,6 +1479,12 @@ class TelegramChannel(
                 return
             try:
                 job = await self.core.submit_selected(conv, text, delivery_namespace=self.namespace)
+            except SessionInterrupted:
+                current = self.core.active_session(conv)
+                if current is None:
+                    raise
+                await self._interrupted_panel(chat, current)
+                return
             except SessionNotFound:
                 # A disconnect can invalidate the binding while submit waits for its lock.
                 current = self.core.active_session(conv)
@@ -1470,6 +1504,17 @@ class TelegramChannel(
                 if len(self._statuses) >= 32:
                     self._statuses.pop(next(iter(self._statuses)))
                 self._statuses[job.id] = (chat, message.message_id, status_text, 0)
+
+    async def _interrupted_panel(self, chat, session):
+        await self._panel(
+            chat,
+            _interrupted_text(session) + "\n\nЭто сообщение не отправлено агенту.",
+            [
+                [("▶ Возобновить диалог", f"/resume_dialogue {session.id}")],
+                [("➕ Новый диалог", "/new"), ("📋 История задач", "/jobs")],
+                *self._back_rows(),
+            ],
+        )
 
     async def _recovery_panel(self, chat, session):
         await self._panel(

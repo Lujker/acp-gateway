@@ -15,6 +15,7 @@ from uuid import UUID, uuid4
 
 from acp import PROTOCOL_VERSION
 
+from acp_gateway.adapters.managed_sessions import InterruptedTurn
 from acp_gateway.agents.errors import AgentUnavailable
 from acp_gateway.connectors.policy import LocalAgentPolicy, LocalPolicyError
 
@@ -46,6 +47,8 @@ class ClaudeCodeAcpTransport:
         self._permissions = {}
         self._initialized = False
         self.uncertain = 0
+        # Set when a child process could not be proven stopped (WSL cleanup).
+        self.cleanup_unconfirmed = False
         self.admission = None
         self.child_reservation = None
 
@@ -283,6 +286,7 @@ class ClaudeCodeAcpTransport:
                             "acp-gateway": {
                                 "cancel": True,
                                 "coldResume": self.sessions is not None,
+                                "resumeInterrupted": 1 if self.sessions is not None else None,
                                 "conversationMode": "dedicated",
                                 "profileMode": self.settings.mode,
                                 "executionEnvironment": "wsl" if self.settings.wsl else "native",
@@ -314,10 +318,27 @@ class ClaudeCodeAcpTransport:
                         if self._sessions[sid]["cwd"] != params["cwd"] or sid in self._turns:
                             raise ValueError
                     else:
+                        flags = (params.get("_meta") or {}).get("acp-gateway") or {}
                         try:
                             if self.sessions is None:
                                 raise LocalPolicyError("resume is unavailable")
-                            has_history = self.sessions.load(sid, params["cwd"])
+                            has_history = self.sessions.load(
+                                sid,
+                                params["cwd"],
+                                resume_interrupted=flags.get("resumeInterrupted") is True,
+                            )
+                        except InterruptedTurn:
+                            self._emit(
+                                {
+                                    "id": rid,
+                                    "error": {
+                                        "code": -32002,
+                                        "message": "Previous turn was interrupted; its outcome "
+                                        "is unknown. Resume explicitly; it is not replayed.",
+                                    },
+                                }
+                            )
+                            return
                         except LocalPolicyError:
                             self._emit(
                                 {
@@ -420,6 +441,8 @@ class ClaudeCodeAcpTransport:
             "cancelling": False,
             "interrupt_acked": False,
             "cancel_result": None,
+            # Claude reported an error for this turn (API failure, limits).
+            "failed": False,
         }
 
     # Claude Code sends one `assistant` frame per content block (thinking, text,
@@ -482,6 +505,9 @@ class ClaudeCodeAcpTransport:
             reason = await asyncio.wait_for(turn["done"], self.settings.turn_timeout)
             if self.sessions is not None:
                 self.sessions.finish(sid)
+            if turn["failed"] and reason != "cancelled":
+                # A known end: the CLI is idle and the dialogue continues normally.
+                return {"stopReason": reason, "_meta": {"acp-gateway": {"turnFailed": True}}}
             return {"stopReason": reason}
         except BaseException:
             self.uncertain = max(1, self.uncertain)
@@ -528,9 +554,19 @@ class ClaudeCodeAcpTransport:
             and subtype == "error_during_execution"
             and is_error is True
         )
-        if not normal and not limited and not interrupted:
+        # Claude ended the turn itself with an error (API, auth, budget): the
+        # outcome is known and the process stays usable for the next prompt.
+        failed = isinstance(subtype, str) and is_error is True and not interrupted and not limited
+        if not normal and not limited and not interrupted and not failed:
             raise ValueError
         sid = child["sid"]
+        if failed or turn.get("failed", False):
+            # Native error text may carry diagnostics; it is never published.
+            turn["failed"] = True
+            turn["pending"].clear()
+            turn["pending_chars"] = 0
+            turn["done"].set_result("cancelled" if turn.get("cancelling", False) else "end_turn")
+            return
         self._flush(sid, turn, work=False)
         if normal and not turn["answered"] and isinstance(frame.get("result"), str):
             self._hold(turn, frame["result"])
@@ -732,7 +768,12 @@ class ClaudeCodeAcpTransport:
                         self._hold(turn, event["delta"]["text"])
                 elif frame.get("type") == "assistant":
                     if frame.get("error"):
-                        raise ValueError("managed Claude Code assistant failed")
+                        # The turn failed; its result frame follows. Drop held text,
+                        # which may include native diagnostics.
+                        turn["failed"] = True
+                        turn["pending"].clear()
+                        turn["pending_chars"] = 0
+                        continue
                     mid = frame["message"]["id"]
                     self._message(sid, turn, mid)
                     for block in frame["message"]["content"]:
@@ -775,13 +816,15 @@ class ClaudeCodeAcpTransport:
         await asyncio.shield(self._closing)
 
     async def _shutdown(self):
-        confirmed = False
+        stopped = False
         try:
             await self._shutdown_children()
-            confirmed = self.uncertain == 0
+            stopped = not self.cleanup_unconfirmed
         finally:
             if self.sessions is not None:
-                self.sessions.close(confirmed=confirmed)
+                # Every owned process is proven stopped: idle dialogues are free again
+                # and unknown turns become explicitly resumable (never replayed).
+                self.sessions.close(confirmed=stopped, interrupted=stopped)
 
     async def _shutdown_children(self):
         self._permissions.clear()
@@ -810,6 +853,7 @@ class ClaudeCodeAcpTransport:
 
             if await close_wsl(process) is False:
                 self.uncertain = max(self.uncertain, 1)
+                self.cleanup_unconfirmed = True
             return
         process.stdin.close()
         transport = process._transport

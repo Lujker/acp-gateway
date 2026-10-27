@@ -158,3 +158,50 @@ def test_empty_claude_binding_still_requires_exact_scope_cwd_and_exclusive_owner
         ManagedSessions(directory, changed).load("native-id", str(tmp_path))
     assert second.load("native-id", str(tmp_path)) is False
     second.close()
+
+
+def test_interrupted_turn_needs_confirmed_stop_and_explicit_resume(tmp_path):
+    from acp_gateway.adapters.managed_sessions import InterruptedTurn
+
+    p = profile(tmp_path)
+    cwd = str(tmp_path)
+    first = ManagedSessions(tmp_path / "bindings", p)
+    first.create("native-id", cwd)
+    first.begin("native-id")
+    # Unproven process stop: the unknown turn stays fenced as before.
+    first.close(confirmed=False, interrupted=True)
+    second = ManagedSessions(tmp_path / "bindings", p)
+    with pytest.raises(LocalPolicyError, match="unknown") as raised:
+        second.load("native-id", cwd)
+    assert not isinstance(raised.value, InterruptedTurn)
+    with pytest.raises(LocalPolicyError, match="unknown"):
+        second.load("native-id", cwd, resume_interrupted=True)
+    second.close()
+
+    third = ManagedSessions(tmp_path / "bindings", p)
+    third._acquire("native-id")  # the owner that still holds the busy lease
+    third.close(confirmed=True, interrupted=True)
+    after = ManagedSessions(tmp_path / "bindings", p)
+    with pytest.raises(InterruptedTurn):
+        after.load("native-id", cwd)
+    with pytest.raises(LocalPolicyError):
+        after.load("native-id", str(tmp_path / "elsewhere"), resume_interrupted=True)
+    assert after.load("native-id", cwd, resume_interrupted=True) is True
+    after.close()
+    # Resumed and closed cleanly: an ordinary idle dialogue again.
+    again = ManagedSessions(tmp_path / "bindings", p)
+    assert again.load("native-id", cwd) is True
+    again.close()
+
+
+def test_default_close_keeps_unknown_turn_fenced(tmp_path):
+    # Codex keeps the strict fence: no interrupted state without opting in.
+    p = profile(tmp_path)
+    first = ManagedSessions(tmp_path / "bindings", p)
+    first.create("native-id", str(tmp_path))
+    first.begin("native-id")
+    first.close()
+    after = ManagedSessions(tmp_path / "bindings", p)
+    with pytest.raises(LocalPolicyError, match="unknown"):
+        after.load("native-id", str(tmp_path), resume_interrupted=True)
+    after.close()

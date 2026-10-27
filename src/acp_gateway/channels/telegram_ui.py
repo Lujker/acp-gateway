@@ -45,6 +45,7 @@ class Panels:
                 verb = command.split(" ", 1)[0]
                 bound = verb in {
                     "/new",
+                    "/resume_dialogue",
                     "/sessions",
                     "/dialogue",
                     "/rename_hint",
@@ -70,6 +71,7 @@ class Panels:
                     "/mode",
                 }
                 once = verb in {
+                    "/resume_dialogue",
                     "/update_confirm",
                     "/update_cancel",
                     "/new",

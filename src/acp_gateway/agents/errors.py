@@ -27,6 +27,13 @@ class SessionNotFound(AgentError):
     """The agent does not know the session (or cannot load it)."""
 
 
+class SessionInterrupted(SessionNotFound):
+    """The dialogue's last turn was interrupted with an unknown outcome.
+
+    It can be resumed explicitly; the interrupted prompt is never replayed.
+    """
+
+
 class SessionBusy(AgentError):
     """The session already has a running turn."""
 
@@ -37,6 +44,10 @@ class ModeNotAvailable(AgentError):
 
 class PromptFailed(AgentError):
     """The agent returned an error for a prompt."""
+
+
+class TurnFailed(PromptFailed):
+    """The agent ended the turn with an error; the dialogue stays usable."""
 
 
 class ModelRefused(AgentError):

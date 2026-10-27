@@ -6,6 +6,7 @@ from acp_gateway.agents import (
     AuthenticationFailed,
     ModeNotAvailable,
     SessionBusy,
+    SessionInterrupted,
     SessionNotFound,
     TLSFingerprintMismatch,
     TransportDisconnected,
@@ -47,6 +48,13 @@ def error_card(error):
     elif isinstance(error, UnknownAgent):
         text = "Агент не выбран или больше недоступен. Откройте список доступных агентов."
         rows = [[("Выбрать агента", "/agent"), ("Компьютеры", "/computers")]]
+    elif isinstance(error, SessionInterrupted):
+        text = (
+            "Предыдущий ход в этом диалоге был прерван, его исход неизвестен. "
+            "Прерванный запрос повторно не отправляется. Продолжите диалог явно "
+            "или создайте новый."
+        )
+        rows = [[("💬 Диалоги", "/sessions"), ("➕ Новый диалог", "/new")]]
     elif isinstance(error, (UnknownSession, SessionNotFound)):
         text = "Диалог не выбран или недоступен. Откройте список диалогов либо историю задач."
         rows = [[("Диалоги", "/sessions"), ("История задач", "/jobs")]]

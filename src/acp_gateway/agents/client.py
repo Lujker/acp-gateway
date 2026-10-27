@@ -43,9 +43,11 @@ from acp_gateway.agents.errors import (
     ModeNotAvailable,
     PromptFailed,
     SessionBusy,
+    SessionInterrupted,
     SessionNotFound,
     TLSFingerprintMismatch,
     TransportDisconnected,
+    TurnFailed,
 )
 from acp_gateway.agents.events import AgentEvent, MessageChunk, TurnFinished, normalize
 from acp_gateway.agents.model_control import (
@@ -70,6 +72,8 @@ T = TypeVar("T")
 
 DEFAULT_RECONNECT_DELAYS: tuple[float, ...] = (1, 2, 5, 10, 30)
 DEFAULT_CANCEL_TIMEOUT = 5.0
+# Connector error for a managed dialogue whose last turn was interrupted.
+INTERRUPTED_TURN = -32002
 
 
 @dataclass(frozen=True)
@@ -213,6 +217,8 @@ class AgentClient:
         self._connect_lock = asyncio.Lock()
         self._attached: set[str] = set()  # sessions usable on the current connection
         self._uncertain: set[str] = set()  # cancellation not confirmed on this connection
+        # Managed dialogues whose last turn was interrupted; continue only explicitly.
+        self._interrupted: set[str] = set()
         self._bindings: dict[str, dict] = {}
         self._session_cwds: dict[str, str] = {}
         self._loading: set[str] = set()  # sessions whose history replay is suppressed
@@ -485,6 +491,8 @@ class AgentClient:
 
     def session_availability(self, session_id: str) -> str:
         connected = self._transport is not None and not self._transport.closed.is_set()
+        if session_id in self._interrupted and session_id not in self._turns:
+            return "interrupted"
         if (
             session_id in self._model_uncertain
             or session_id in self._uncertain
@@ -510,7 +518,28 @@ class AgentClient:
             return "restore-unavailable"
         return "restore-required"
 
-    async def load_session(self, session_id: str, cwd: str | None = None) -> None:
+    @property
+    def supports_interrupted_resume(self) -> bool:
+        caps = self.agent_capabilities
+        meta = getattr(caps, "field_meta", None)
+        flags = meta.get("acp-gateway") if isinstance(meta, dict) else None
+        return isinstance(flags, dict) and flags.get("resumeInterrupted") == 1
+
+    async def resume_interrupted(self, session_id: str, cwd: str | None = None) -> None:
+        """Explicitly continue a dialogue after an interrupted turn; nothing is replayed."""
+        if session_id in self._turns or session_id in self._loading:
+            raise SessionBusy("Dialogue already has an active operation")
+        await self.ensure_connected()
+        if not self.supports_interrupted_resume:
+            raise SessionNotFound(
+                f"{self.profile.display_name} on this computer cannot resume interrupted "
+                "dialogues; update the connector or create a new dialogue"
+            )
+        await self.load_session(session_id, cwd, resume_interrupted=True)
+
+    async def load_session(
+        self, session_id: str, cwd: str | None = None, *, resume_interrupted: bool = False
+    ) -> None:
         """Attach an existing session to this connection; its history replay is dropped."""
         if (
             self.profile.kind in {"codex", "claude_code"}
@@ -537,10 +566,11 @@ class AgentClient:
             metadata = getattr(caps, "field_meta", None) or {}
             if (metadata.get("acp-gateway") or {}).get("connectorLiveResume") is not True:
                 raise SessionNotFound("Connector cannot restore this live Hermes dialogue")
+        extra = {"acp-gateway": {"resumeInterrupted": True}} if resume_interrupted else {}
         self._loading.add(session_id)
         try:
             response = await self._call(
-                self._conn.load_session(cwd=cwd, session_id=session_id, mcp_servers=[]),
+                self._conn.load_session(cwd=cwd, session_id=session_id, mcp_servers=[], **extra),
                 not_found=(
                     "The live Hermes dialogue is unavailable, busy or uncertain. "
                     "Your selected dialogue is unchanged; use /new only to create a different one."
@@ -550,8 +580,22 @@ class AgentClient:
             )
             # Replayed updates were scheduled before the response; let them drain.
             await asyncio.sleep(0)
+        except SessionNotFound as exc:
+            cause = exc.__cause__
+            if isinstance(cause, RequestError) and cause.code == INTERRUPTED_TURN:
+                self._interrupted.add(session_id)
+                raise SessionInterrupted(
+                    f"The last {self.profile.display_name} turn in this dialogue was "
+                    "interrupted and its outcome is unknown. Continue the dialogue "
+                    "explicitly; the interrupted request is not sent again."
+                ) from cause
+            # The connector does not offer an explicit resume for this dialogue
+            # (still fenced or unknown): stop offering one here.
+            self._interrupted.discard(session_id)
+            raise
         finally:
             self._loading.discard(session_id)
+        self._interrupted.discard(session_id)
         if binding and binding.get("restore") == "connector-live":
             metadata = getattr(response, "field_meta", None) or {}
             actual = (metadata.get("acp-gateway") or {}).get("sessionBinding")
@@ -704,6 +748,12 @@ class AgentClient:
 
         Closing the iterator before the end cancels the turn on the agent.
         """
+        if session_id in self._interrupted:
+            raise SessionInterrupted(
+                f"The last {self.profile.display_name} turn in this dialogue was interrupted "
+                "and its outcome is unknown. Continue the dialogue explicitly; the "
+                "interrupted request is not sent again."
+            )
         if self.profile.kind in {"codex", "claude_code"} and (
             session_id in self._uncertain
             or (
@@ -766,6 +816,12 @@ class AgentClient:
             response = await self._result(request, transport)
             finished = True
             self._log.info("turn finished", session_id=session_id, stop_reason=response.stop_reason)
+            flags = (getattr(response, "field_meta", None) or {}).get("acp-gateway") or {}
+            if flags.get("turnFailed") is True:
+                raise TurnFailed(
+                    f"{self.profile.display_name} ended the turn with an error. "
+                    "The dialogue is kept: send a message to continue."
+                )
             yield TurnFinished(
                 session_id,
                 stop_reason=str(response.stop_reason),
@@ -779,6 +835,9 @@ class AgentClient:
                     # Closing our owned child is not an assertion of exact-turn cancellation.
                     self._uncertain.add(session_id)
                     self._attached.discard(session_id)
+                    if self.supports_interrupted_resume:
+                        # The connector fences the dialogue until an explicit resume.
+                        self._interrupted.add(session_id)
                     await self._abandon(transport)
                 if not finished and not request.done():
                     self._uncertain.add(session_id)

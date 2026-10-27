@@ -15,9 +15,11 @@ from acp_gateway.agents.errors import (
     ModeNotAvailable,
     PromptFailed,
     SessionBusy,
+    SessionInterrupted,
     SessionNotFound,
     TLSFingerprintMismatch,
     TransportDisconnected,
+    TurnFailed,
 )
 
 __all__ = [
@@ -32,8 +34,10 @@ __all__ = [
     "PermissionRequest",
     "PromptFailed",
     "SessionBusy",
+    "SessionInterrupted",
     "SessionNotFound",
     "TLSFingerprintMismatch",
     "TransportDisconnected",
+    "TurnFailed",
     "reject_all",
 ]

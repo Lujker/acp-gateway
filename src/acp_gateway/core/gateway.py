@@ -24,7 +24,13 @@ from dataclasses import replace
 from datetime import timedelta
 from functools import partial
 
-from acp_gateway.agents import AgentClient, AgentError, SessionBusy, SessionNotFound
+from acp_gateway.agents import (
+    AgentClient,
+    AgentError,
+    SessionBusy,
+    SessionInterrupted,
+    SessionNotFound,
+)
 from acp_gateway.agents.client import PermissionRequest
 from acp_gateway.agents.events import MessageChunk, SessionInfoUpdated, TurnFinished
 from acp_gateway.agents.model_control import identifier
@@ -836,6 +842,13 @@ class GatewayCore:
             if durable and durable["state"] in {"intent", "unknown"}:
                 raise SessionBusy("Model selection outcome is unknown; no automatic retry")
             state = self._session_view(session).availability
+            if state == "interrupted":
+                # Fail before creating a job: the owner must continue explicitly.
+                raise SessionInterrupted(
+                    "The last turn in this dialogue was interrupted and its outcome is "
+                    "unknown. Continue the dialogue explicitly; the interrupted request "
+                    "is not sent again."
+                )
             if state == "restore-unavailable" or (
                 state == "uncertain"
                 and session.binding
@@ -864,6 +877,30 @@ class GatewayCore:
             "job started", job_id=job.id, conversation=str(conversation), chars=len(text)
         )
         return job
+
+    async def resume_interrupted(
+        self, conversation: Conversation, dialogue_id: int
+    ) -> SessionRecord:
+        """Owner's explicit choice to continue a dialogue after an interrupted turn.
+
+        The native dialogue is reopened with its history; no prompt is replayed.
+        """
+        self._check_admission()
+        client = self.agent(conversation.agent)
+        async with self._locks[conversation]:
+            self._check_admission()
+            record = self.store.session(dialogue_id) if type(dialogue_id) is int else None
+            if record is None or record.conversation != conversation:
+                raise UnknownSession("This chat does not own that dialogue.")
+            if record.id in self._busy:
+                raise SessionBusy("The dialogue is running a job.")
+            resume = getattr(client, "resume_interrupted", None)
+            if resume is None:
+                raise SessionNotFound("This agent cannot resume interrupted dialogues.")
+            await resume(record.acp_session_id, record.cwd)
+            self.store.touch_session(record.id)
+            self._log.info("interrupted dialogue resumed", dialogue_id=record.id)
+        return self._session_view(record)
 
     async def ask(self, conversation: Conversation, text: str, wait: float | None = None) -> Job:
         """Submit and wait up to ``wait`` seconds (forever if ``None``)."""

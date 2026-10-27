@@ -126,6 +126,11 @@ class LocalAgentPolicy:
                 clean["additionalDirectories"] = []
             if method == "session/load":
                 clean["sessionId"] = _text(params.get("sessionId"))
+                meta = params.get("_meta")
+                flags = meta.get("acp-gateway") if isinstance(meta, dict) else None
+                if isinstance(flags, dict) and flags.get("resumeInterrupted") is True:
+                    # Explicit owner choice to continue after an unknown turn; no replay.
+                    clean["_meta"] = {"acp-gateway": {"resumeInterrupted": True}}
             if method == "session/list" and params.get("cursor") is not None:
                 clean["cursor"] = _text(params["cursor"])
         elif method in MODEL_METHODS | {MODEL_RECOVER}:

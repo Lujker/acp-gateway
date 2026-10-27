@@ -4,10 +4,11 @@
 
 Available since 0.2.3 (first previewed in 0.2.3rc1), **not in 0.2.2**.
 Safe/work profiles, cancellation and scoped persisted resume are implemented in
-source. Current scoped checks and independent review are recorded in the
-[evidence journal](../items/connector-harness-adapters.ru.md). Live authenticated
-Windows/WSL and Telegram acceptance remains a separate next step; synthetic peers
-do not establish a production release or Desktop support.
+stable releases since 0.2.3. Scoped checks and independent review are recorded
+in the [evidence journal](../items/connector-harness-adapters.ru.md). Live authenticated
+work/tool/cancel/resume/approval acceptance remains open; the owner has confirmed
+basic Windows→WSL use. Synthetic peers do not establish live model or Desktop
+support. Use connector **0.2.6 or later** for the answer and recovery fixes below.
 
 The adapter launches a dedicated native Claude Code `stream-json` child per
 conversation and uses the existing AgentClient, connector relay and human approval
@@ -135,8 +136,11 @@ separate aliases; choose the profile in Telegram. `/mode` controls dispatcher
 approvals independently and does not switch the native permission profile.
 
 Both profiles now save native sessions. After a confirmed clean connector restart,
-ACP `session/load` launches `--resume` with the original UUID and cwd. Native
-history lives in Claude's profile; local gateway bindings live under the connector
+ACP `session/load` launches `--resume` with the original UUID and cwd for a used
+conversation. An explicitly empty dialogue (no prompt sent) can reopen with its
+original UUID without a native transcript, which Claude has not created yet.
+Used and legacy bindings still require native history; missing history is not
+replaced with a fresh conversation. Native history lives in Claude's profile; local gateway bindings live under the connector
 data directory's `pins/managed-sessions`. Preserve both. Bindings check profile,
 mode, cwd, executable and native home or WSL distribution/user/profile. An OS
 lease excludes another gateway owner.
@@ -145,13 +149,34 @@ ACP `session/cancel` sends native interrupt. Cancellation requires a successful
 interrupt acknowledgement and a terminal result; an acknowledgement alone does
 not prove the turn stopped. Already completed actions are not rolled back.
 
+## Answers, work updates and turn limits (0.2.6)
+
+Text after thinking frames is retained even when frames share a message ID.
+Text preceding a tool call appears as a work update in the live task card and
+**🧭 Ход работы**; other text becomes the final answer, with paragraph boundaries
+between messages. Thinking is not forwarded. A turn with no intermediate text
+can therefore have no work updates; this alone does not indicate lost output.
+Tool activity/thinking display remains deferred.
+
+At the native turn limit, the turn finishes instead of closing the transport.
+The dispatcher explains early stops (`max_turn_requests` or `max_tokens`); send a
+follow-up explicitly to continue. [Presentation](telegram-presentation.md).
+
 ## Loss, lifecycle and missing features
 
-- **Unknown work stays fenced:** attached and busy state is persisted before
-  native resume/prompt. Only confirmed cleanup makes an idle chat resumable;
-  crash, timeout or unconfirmed cleanup blocks automatic resume after restart.
-  No uncertain prompt is resent and no substitute conversation is created.
-  Inspect actual work before explicitly starting a different dialogue.
+- **Claude API errors keep the dialogue:** when Claude itself reports an error
+  for the turn (overload, rate or budget limit, authentication), the task fails
+  with a short notice, native diagnostics are not shown, and the same dialogue
+  accepts the next message.
+- **Unknown work stays fenced until an explicit resume:** attached and busy state
+  is persisted before native resume/prompt. After a timeout, a lost connection or
+  an unconfirmed stop, the connector stops the owned process; once the stop is
+  confirmed, the dialogue becomes *interrupted*. Telegram then refuses new
+  messages to it and offers **▶ Возобновить диалог**: the native chat is reopened
+  with `--resume`, and the interrupted request is never resent. Part of its work
+  may already be done; ask the agent to check. A crash or unconfirmed cleanup
+  (e.g. WSL) keeps the old hard fence. Requires dispatcher and connector from the
+  same release; older peers keep the hard fence.
 - Transport cleanup closes owned processes and pipes, not proof that every
   descendant stopped or an action was undone.
   Uncertain work blocks safe maintenance even after connection loss. Other
