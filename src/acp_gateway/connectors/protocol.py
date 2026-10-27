@@ -69,6 +69,7 @@ class Welcome(_Frame):
     update_operations: Literal[1] | None = None
     agent_profiles: Literal[1] | None = None
     agent_discovery: Literal[1] | None = None
+    stream_resume: Literal[1] | None = None
 
 
 class ProfileSpec(_Model):
@@ -230,9 +231,35 @@ class Opened(_StreamFrame):
     type: Literal["opened"] = "opened"
 
 
+RelaySequence = Annotated[int, Field(ge=0, le=2**53 - 1)]
+
+
 class Data(_StreamFrame):
     type: Literal["data"] = "data"
+    # Present only when stream resume is negotiated; starts at 1 per direction.
+    seq: Annotated[int, Field(ge=1, le=2**53 - 1)] | None = None
     message: dict[str, Any]
+
+
+class Ack(_StreamFrame):
+    """The sender may forget data up to ``received``."""
+
+    type: Literal["ack"] = "ack"
+    received: RelaySequence
+
+
+class Resume(_StreamFrame):
+    """Dispatcher asks to move a parked stream to this connection epoch."""
+
+    type: Literal["resume"] = "resume"
+    received: RelaySequence
+
+
+class Resumed(_StreamFrame):
+    """Connector accepted the stream; each side replays data after ``received``."""
+
+    type: Literal["resumed"] = "resumed"
+    received: RelaySequence
 
 
 class Close(_StreamFrame):
@@ -250,6 +277,9 @@ ControlFrame = (
     | Opened
     | Data
     | Close
+    | Ack
+    | Resume
+    | Resumed
     | UpdateInfoRequest
     | UpdateInfoResponse
     | UpdateRequest

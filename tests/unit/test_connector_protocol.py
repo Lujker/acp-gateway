@@ -191,3 +191,23 @@ async def test_mcp_catalog_cannot_confuse_computer_and_alias_components():
     assert "work__goose_ask" in {tool.name for tool in tools}
     channel.agent_removed("a/b__c")
     assert len(await channel.server.list_tools()) == 18
+
+
+def test_stream_resume_frames_round_trip_and_bound_sequences():
+    from acp_gateway.connectors.protocol import Ack, Resume, Resumed
+
+    route = dict(epoch=uuid4(), stream=uuid4(), alias="codex")
+    for frame in (
+        Data(**route, seq=1, message={"jsonrpc": "2.0", "method": "x"}),
+        Ack(**route, received=16),
+        Resume(**route, received=0),
+        Resumed(**route, received=3),
+        Welcome(connection_id=uuid4(), stream_resume=1),
+    ):
+        assert decode_frame(encode_frame(frame)) == frame
+    legacy = Data(**route, message={"jsonrpc": "2.0", "method": "x"})
+    assert "seq" not in encode_frame(legacy)
+    for bad in ({"seq": 0}, {"seq": 2**53}, {"seq": True}):
+        payload = json.loads(encode_frame(legacy)) | bad
+        with pytest.raises(ProtocolError):
+            decode_frame(json.dumps(payload))

@@ -4,9 +4,10 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import json
 import sqlite3
+from collections import deque
 from collections.abc import Awaitable, Callable
-from dataclasses import dataclass
 from uuid import UUID, uuid4
 
 from websockets.exceptions import ConnectionClosed
@@ -20,6 +21,7 @@ from acp_gateway.agents.transport import AgentTransport, _acceptable
 from acp_gateway.connectors.policy import LocalPolicyError
 from acp_gateway.connectors.protocol import (
     MAX_DATA_BYTES,
+    Ack,
     Close,
     Data,
     Open,
@@ -30,6 +32,8 @@ from acp_gateway.connectors.protocol import (
     ProfilesResponse,
     ProfilesResult,
     ProtocolError,
+    Resume,
+    Resumed,
     UpdateInfoRequest,
     UpdateInfoResponse,
     UpdateRequest,
@@ -45,6 +49,14 @@ MAX_STREAM_IDS = 4096
 MAX_QUEUE_BYTES = 2 * MAX_DATA_BYTES
 MAX_QUEUE_MESSAGES = 128
 MAX_CONTROL_MESSAGES = 64
+# A resumable stream survives a computer connection drop for this long. The
+# local agent keeps working; unacknowledged data is replayed after reconnect.
+RESUME_GRACE = 300.0
+# After reconnecting, the dispatcher must reclaim parked streams this quickly.
+RESUME_WINDOW = 30.0
+ACK_EVERY = 16
+MAX_REPLAY_MESSAGES = 4096
+MAX_REPLAY_BYTES = 16 * MAX_DATA_BYTES
 
 LocalFactory = Callable[[str], Awaitable[AgentTransport]]
 
@@ -83,46 +95,227 @@ class _Inbox:
         self.queue.put_nowait(None)
 
 
-class RelayTransport:
+class _Link:
+    """One relay stream. A resumable stream numbers its data and keeps it until
+    acknowledged, so it can move to the next connection epoch of the same computer.
+    """
+
+    def __init__(self, peer: RelayPeer, alias: str, stream: UUID):
+        self.peer: RelayPeer | None = peer
+        self.alias, self.stream, self.epoch = alias, stream, peer.epoch
+        self.resumable = peer.stream_resume
+        self.inbox = _Inbox()
+        self.closed = self.inbox.closed
+        self.established = False
+        self.parking: StreamParking | None = None
+        self.parked_at: float | None = None
+        self.sent = 0
+        self.received = 0
+        self.unacked: deque = deque()
+        self.unacked_bytes = 0
+        self.since_ack = 0
+        self.lock = asyncio.Lock()
+
+    @property
+    def route(self):
+        return dict(epoch=self.epoch, alias=self.alias, stream=self.stream)
+
+    def acked(self, received):
+        if received > self.sent:
+            raise ProtocolError("invalid relay acknowledgement")
+        while self.unacked and self.unacked[0][0] <= received:
+            self.unacked_bytes -= self.unacked.popleft()[2]
+
+    def accept(self, seq):
+        """True for the next message, False for a replayed duplicate."""
+        if not self.resumable:
+            if seq is not None:
+                raise ProtocolError("unnegotiated relay sequence")
+            return True
+        if seq is None or seq > self.received + 1:
+            raise ProtocolError("invalid relay sequence")
+        if seq <= self.received:
+            return False
+        self.received = seq
+        return True
+
+    def ack_due(self):
+        if not self.resumable:
+            return False
+        self.since_ack += 1
+        if self.since_ack < ACK_EVERY:
+            return False
+        self.since_ack = 0
+        return True
+
+    async def deliver(self, message):
+        async with self.lock:
+            if self.closed.is_set():
+                raise ConnectionError("relay stream closed")
+            peer = self.peer
+            if not self.resumable:
+                await peer.send(Data(**self.route, message=message))
+                return
+            # Envelope margin; the writer still enforces the exact frame bound.
+            size = len(json.dumps(message, ensure_ascii=False).encode()) + 512
+            if size > MAX_DATA_BYTES:
+                raise ProtocolError("ACP relay message exceeds limits")
+            if (
+                len(self.unacked) >= MAX_REPLAY_MESSAGES
+                or self.unacked_bytes + size > MAX_REPLAY_BYTES
+            ):
+                raise BufferError("relay replay buffer overflow")
+            self.sent += 1
+            self.unacked.append((self.sent, message, size))
+            self.unacked_bytes += size
+            if peer is None:
+                return  # Parked: replayed after the computer reconnects.
+            try:
+                await peer.send(Data(**self.route, seq=self.sent, message=message))
+            except ConnectionError:
+                if self.closed.is_set():
+                    raise
+                # Connection lost, stream parked: the message stays queued for replay.
+
+    async def replay(self, peer: RelayPeer, *, resumed=False):
+        """Attach to ``peer`` and resend unacknowledged data in order."""
+        async with self.lock:
+            if (
+                self.closed.is_set()
+                or peer.closed.is_set()
+                or peer.streams.get(self.stream) is not self
+            ):
+                return
+            self.peer, self.epoch = peer, peer.epoch
+            if resumed:
+                await peer.send(Resumed(**self.route, received=self.received))
+            for seq, message, _ in list(self.unacked):
+                await peer.send(Data(**self.route, seq=seq, message=message))
+
+    def halt(self, code=None):
+        raise NotImplementedError
+
+
+class StreamParking:
+    """Streams waiting for the next connection of the same computer."""
+
+    def __init__(self, grace: float = RESUME_GRACE, *, generation=None):
+        self.grace, self.generation = grace, generation
+        self._links: dict[UUID, tuple[_Link, asyncio.TimerHandle]] = {}
+
+    def __len__(self):
+        return len(self._links)
+
+    def links(self):
+        return [link for link, _ in self._links.values()]
+
+    def park(self, links):
+        loop = asyncio.get_running_loop()
+        for link in links:
+            link.peer, link.parking = None, self
+            if link.parked_at is None:
+                link.parked_at = loop.time()
+            self._schedule(link, link.parked_at + self.grace - loop.time())
+        if links:
+            get_logger(__name__).info("relay streams parked", streams=len(links))
+
+    def _schedule(self, link, delay):
+        previous = self._links.get(link.stream)
+        if previous is not None:
+            previous[1].cancel()
+        handle = asyncio.get_running_loop().call_later(max(0, delay), self.expire, link.stream)
+        self._links[link.stream] = (link, handle)
+
+    def shorten(self, seconds):
+        loop = asyncio.get_running_loop()
+        for link, handle in list(self._links.values()):
+            remaining = handle.when() - loop.time()
+            if remaining > seconds:
+                self._schedule(link, seconds)
+
+    def take(self, stream: UUID) -> _Link | None:
+        entry = self._links.pop(stream, None)
+        if entry is None:
+            return None
+        link, handle = entry
+        handle.cancel()
+        link.parking, link.parked_at = None, None
+        return link
+
+    def discard(self, link):
+        entry = self._links.get(link.stream)
+        if entry is not None and entry[0] is link:
+            self.take(link.stream)
+
+    def expire(self, stream: UUID):
+        link = self.take(stream)
+        if link is not None:
+            get_logger(__name__).warning("parked relay stream expired")
+            link.halt("unavailable")
+
+    def close_all(self):
+        for stream in list(self._links):
+            link = self.take(stream)
+            if link is not None:
+                link.halt("unavailable")
+
+
+class RelayTransport(_Link):
     """VPS-side AgentTransport; closure affects only this stream."""
 
     def __init__(self, peer: RelayPeer, alias: str, stream: UUID):
-        self.peer, self.alias, self.stream = peer, alias, stream
-        self.inbox = _Inbox()
-        self.closed = self.inbox.closed
+        super().__init__(peer, alias, stream)
         self.opened = asyncio.get_running_loop().create_future()
 
     async def send(self, message):
-        if self.closed.is_set() or self.peer.closed.is_set():
+        if self.closed.is_set():
             raise ConnectionError("relay stream closed")
         if not _acceptable(message):
             raise ConnectionError("invalid ACP message")
         try:
-            await self.peer.send(Data(**self.route, message=message))
+            await self.deliver(message)
         except (BufferError, ProtocolError):
             await self.close(code="overflow")
             raise ConnectionError("ACP relay message exceeds limits") from None
 
-    @property
-    def route(self):
-        return dict(epoch=self.peer.epoch, alias=self.alias, stream=self.stream)
-
     async def receive(self):
         return await self.inbox.receive()
+
+    def halt(self, code=None):
+        self.inbox.close()
+        if not self.opened.done():
+            error = (
+                AuthenticationFailed("computer rejected agent access")
+                if code in {"access_denied", "policy_denied"}
+                else AgentUnavailable("remote agent stream is unavailable")
+            )
+            self.opened.set_exception(error)
 
     async def close(self, *, code="closed"):
         if self.closed.is_set():
             return
-        self.peer.stop(self.stream, code)
+        peer = self.peer
+        if peer is None or peer.streams.get(self.stream) is not self:
+            # Parked or still resuming: nothing to tell; the computer expires its copy.
+            if self.parking is not None:
+                self.parking.discard(self)
+            self.halt(code)
+            return
+        route = self.route
+        peer.stop(self.stream, code)
         with contextlib.suppress(ConnectionError, BufferError):
-            await self.peer.send(Close(**self.route, code=code))
+            await peer.send(Close(**route, code=code))
 
 
-@dataclass
-class _LocalStream:
-    alias: str
-    inbox: _Inbox
+class _LocalStream(_Link):
+    """Computer-side stream owning one local agent transport task."""
+
     task: asyncio.Task | None = None
+
+    def halt(self, code=None):
+        self.inbox.close()
+        if self.task is not None:
+            self.task.cancel()
 
 
 class RelayPeer:
@@ -147,6 +340,10 @@ class RelayPeer:
         agent_profiles=False,
         agent_discovery=False,
         profiles_handler=None,
+        stream_resume=False,
+        parking: StreamParking | None = None,
+        on_park: Callable[[list[_Link]], None] | None = None,
+        pending_resume: StreamParking | None = None,
     ):
         self.connection, self.epoch = connection, epoch
         self.aliases = frozenset(aliases)
@@ -158,10 +355,16 @@ class RelayPeer:
         self.agent_profiles = agent_profiles
         self.agent_discovery = agent_discovery
         self.profiles_handler = profiles_handler
+        # Resume is opt-in per connection; old peers keep close-on-drop streams.
+        self.stream_resume = stream_resume
+        self.parking = parking  # computer side: streams this connection may reclaim
+        self.on_park = on_park if stream_resume else None
+        self.pending_resume = pending_resume if stream_resume else None  # dispatcher side
+        self.resuming: dict[UUID, _Link] = {}
         self.update_requests = {}
         self.update_kinds = {}
         self.update_workers = set()
-        self.streams: dict[UUID, RelayTransport | _LocalStream] = {}
+        self.streams: dict[UUID, _Link] = {}
         self.seen: set[UUID] = set()
         self.closed = asyncio.Event()
         self.ready = asyncio.Event()
@@ -229,8 +432,12 @@ class RelayPeer:
                 else:
                     self.out_bytes -= size
 
-    def invalidate(self):
-        """Synchronous fencing for replacement and in-process revocation."""
+    def invalidate(self, *, park=True):
+        """Synchronous fencing for loss, replacement and in-process revocation.
+
+        On connection loss established resumable streams are parked for the next
+        epoch; revocation passes ``park=False`` and closes every stream.
+        """
         if self.closed.is_set():
             return
         self.closed.set()
@@ -238,8 +445,26 @@ class RelayPeer:
         for pending in self.update_requests.values():
             if not pending.done():
                 pending.set_exception(ConnectionError("computer disconnected"))
-        for stream in list(self.streams):
-            self.stop(stream)
+        parked = []
+        for stream_id in list(self.streams):
+            link = self.streams[stream_id]
+            if (
+                park
+                and self.on_park is not None
+                and link.resumable
+                and link.established
+                and not link.closed.is_set()
+            ):
+                del self.streams[stream_id]
+                task = getattr(link, "task", None)
+                if task is not None:
+                    self.tasks.discard(task)
+                parked.append(link)
+            else:
+                self.stop(stream_id)
+        self.resuming.clear()
+        if parked:
+            self.on_park(parked)
         while not self.outbox.empty():
             _, _, _, done = self.outbox.get_nowait()
             if not done.done():
@@ -250,19 +475,7 @@ class RelayPeer:
         if stream is None:
             return
         self.record_failure(stream.alias, code)
-        if isinstance(stream, RelayTransport):
-            stream.inbox.close()
-            if not stream.opened.done():
-                error = (
-                    AuthenticationFailed("computer rejected agent access")
-                    if code in {"access_denied", "policy_denied"}
-                    else AgentUnavailable("remote agent stream is unavailable")
-                )
-                stream.opened.set_exception(error)
-        else:
-            stream.inbox.close()
-            if stream.task is not None:
-                stream.task.cancel()
+        stream.halt(code)
 
     async def open(self, alias: str) -> RelayTransport:
         await self.ready.wait()
@@ -295,12 +508,19 @@ class RelayPeer:
         writer = asyncio.create_task(self._write())
         reader = asyncio.create_task(self._read())
         self.ready.set()
+        if self.pending_resume is not None and len(self.pending_resume):
+            task = asyncio.create_task(self._resume_parked(self.pending_resume))
+            self.tasks.add(task)
+            task.add_done_callback(self.tasks.discard)
         try:
             done, _ = await asyncio.wait({reader, writer}, return_when=asyncio.FIRST_COMPLETED)
             for task in done:
                 task.result()
         finally:
-            self.invalidate()
+            # Park only on abnormal loss. A clean close (1000/1001) is a deliberate
+            # stop of either side; 1008 means access changed or a replacement.
+            code = getattr(self.connection, "close_code", None)
+            self.invalidate(park=code not in (1000, 1001, 1008))
             for task in (reader, writer, *self.tasks):
                 task.cancel()
             await asyncio.gather(reader, writer, *self.tasks, return_exceptions=True)
@@ -382,9 +602,20 @@ class RelayPeer:
             if isinstance(frame, Pong) and self.local_factory is None and frame.sequence == 0:
                 # A single v1 compatibility probe; liveness uses native WS ping/pong.
                 continue
-            if not isinstance(frame, (Open, Opened, Data, Close)) or frame.epoch != self.epoch:
+            if (
+                not isinstance(frame, (Open, Opened, Data, Close, Ack, Resume, Resumed))
+                or frame.epoch != self.epoch
+            ):
                 raise ProtocolError("invalid relay epoch or frame")
             route = dict(epoch=self.epoch, alias=frame.alias, stream=frame.stream)
+            if isinstance(frame, (Ack, Resume, Resumed)) and not self.stream_resume:
+                raise ProtocolError("unnegotiated stream resume")
+            if isinstance(frame, Resume):
+                await self._reclaim(frame, route)
+                continue
+            if isinstance(frame, Resumed):
+                await self._resumed(frame, route)
+                continue
             if isinstance(frame, Open):
                 if self.local_factory is None or frame.stream in self.seen:
                     raise ProtocolError("invalid stream open")
@@ -396,12 +627,20 @@ class RelayPeer:
                     await self.send(Close(**route, code="access_denied"))
                     continue
                 self.seen.add(frame.stream)
-                stream = _LocalStream(frame.alias, _Inbox())
+                stream = _LocalStream(self, frame.alias, frame.stream)
                 self.streams[frame.stream] = stream
                 task = asyncio.create_task(self._local(frame.stream, stream))
                 stream.task = task
                 self.tasks.add(task)
                 task.add_done_callback(self.tasks.discard)
+                continue
+            if isinstance(frame, Close) and frame.stream in self.resuming:
+                # The computer no longer has this stream (e.g. it restarted): fail fast.
+                link = self.resuming.pop(frame.stream)
+                if link.alias != frame.alias:
+                    raise ProtocolError("invalid stream alias")
+                if link.parking is not None:
+                    link.parking.expire(frame.stream)
                 continue
             stream = self.streams.get(frame.stream)
             if stream is None:
@@ -411,10 +650,13 @@ class RelayPeer:
                 raise ProtocolError("invalid stream alias")
             if isinstance(frame, Close):
                 self.stop(frame.stream, frame.code)
+            elif isinstance(frame, Ack):
+                stream.acked(frame.received)
             elif isinstance(frame, Opened):
                 if not isinstance(stream, RelayTransport) or stream.opened.done():
                     raise ProtocolError("unexpected stream acknowledgement")
                 stream.opened.set_result(None)
+                stream.established = True
                 self.failures.pop(frame.alias, None)
             else:
                 if not _acceptable(frame.message):
@@ -423,6 +665,8 @@ class RelayPeer:
                     continue
                 if isinstance(stream, RelayTransport) and not stream.opened.done():
                     raise ProtocolError("agent data before stream acknowledgement")
+                if not stream.accept(frame.seq):
+                    continue  # Replayed after resume; already delivered.
                 try:
                     stream.inbox.offer(
                         frame.message,
@@ -431,6 +675,73 @@ class RelayPeer:
                 except BufferError:
                     self.stop(frame.stream, "overflow")
                     await self.send(Close(**route, code="overflow"))
+                    continue
+                if stream.ack_due():
+                    await self.send(Ack(**route, received=stream.received))
+
+    async def _resume_parked(self, parking: StreamParking):
+        """Dispatcher side: ask the reconnected computer for each parked stream."""
+        for link in parking.links():
+            if self.closed.is_set():
+                return
+            if link.alias not in self.aliases:
+                parking.expire(link.stream)
+                continue
+            if link.stream in self.seen or link.stream in self.resuming:
+                continue
+            self.seen.add(link.stream)
+            self.resuming[link.stream] = link
+            try:
+                await self.send(
+                    Resume(
+                        epoch=self.epoch,
+                        alias=link.alias,
+                        stream=link.stream,
+                        received=link.received,
+                    )
+                )
+            except (ConnectionError, BufferError):
+                return
+
+    async def _reclaim(self, frame, route):
+        """Computer side: move a parked local stream to this epoch."""
+        if self.local_factory is None or frame.stream in self.seen:
+            raise ProtocolError("invalid stream resume")
+        self.seen.add(frame.stream)
+        link = self.parking.take(frame.stream) if self.parking is not None else None
+        if link is None or link.alias != frame.alias or link.closed.is_set():
+            if link is not None:
+                link.halt("unavailable")
+            await self.send(Close(**route, code="unavailable"))
+            return
+        link.acked(frame.received)
+        self.streams[frame.stream] = link
+        self.tasks.add(link.task)
+        link.task.add_done_callback(self.tasks.discard)
+        self._spawn_replay(link, resumed=True)
+
+    async def _resumed(self, frame, route):
+        """Dispatcher side: the computer still runs this stream; replay our side."""
+        link = self.resuming.pop(frame.stream, None)
+        if self.local_factory is not None or link is None or link.alias != frame.alias:
+            raise ProtocolError("unexpected stream resume")
+        parking = link.parking
+        if link.closed.is_set() or parking is None or parking.take(frame.stream) is not link:
+            await self.send(Close(**route, code="closed"))
+            return
+        link.acked(frame.received)
+        self.streams[frame.stream] = link
+        self._spawn_replay(link)
+        get_logger(__name__).info("relay stream resumed")
+
+    def _spawn_replay(self, link, *, resumed=False):
+        async def replay():
+            with contextlib.suppress(ConnectionError, BufferError, ProtocolError):
+                await link.replay(self, resumed=resumed)
+
+        task = asyncio.create_task(replay())
+        self.tasks.add(task)
+        task.add_done_callback(self.tasks.discard)
 
     async def update_info(self, *, timeout=5):
         if self.local_factory is not None or not self.update_inventory:
@@ -527,12 +838,12 @@ class RelayPeer:
     async def _local(self, stream_id, stream):
         transport = None
         pumps = []
-        route = dict(epoch=self.epoch, alias=stream.alias, stream=stream_id)
         code = "unavailable"
         try:
             async with asyncio.timeout(15):
                 transport = await self.local_factory(stream.alias)
-            await self.send(Opened(**route))
+            await self.send(Opened(**stream.route))
+            stream.established = True
 
             async def to_agent():
                 while (message := await stream.inbox.receive()) is not None:
@@ -542,7 +853,8 @@ class RelayPeer:
                 while (message := await transport.receive()) is not None:
                     if not _acceptable(message):
                         raise LocalPolicyError("invalid agent response")
-                    await self.send(Data(**route, message=message))
+                    # Parked streams keep draining the agent into the replay buffer.
+                    await stream.deliver(message)
 
             pumps = [asyncio.create_task(to_agent()), asyncio.create_task(from_agent())]
             done, _ = await asyncio.wait(pumps, return_when=asyncio.FIRST_COMPLETED)
@@ -566,9 +878,14 @@ class RelayPeer:
             if transport is not None:
                 with contextlib.suppress(Exception):
                     await transport.close()
+            # The stream may have moved to a later epoch or be parked.
+            peer = stream.peer
+            if stream.parking is not None:
+                stream.parking.discard(stream)
             # Do not cancel ourselves through stop().
-            if self.streams.get(stream_id) is stream:
-                self.streams.pop(stream_id)
+            if peer is not None and peer.streams.get(stream_id) is stream:
+                peer.streams.pop(stream_id)
             stream.inbox.close()
-            with contextlib.suppress(ConnectionError, BufferError):
-                await self.send(Close(**route, code=code))
+            if peer is not None:
+                with contextlib.suppress(ConnectionError, BufferError):
+                    await peer.send(Close(**stream.route, code=code))

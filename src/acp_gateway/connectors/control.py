@@ -37,7 +37,7 @@ from acp_gateway.connectors.protocol import (
     decode_frame,
     encode_frame,
 )
-from acp_gateway.connectors.relay import RelayPeer
+from acp_gateway.connectors.relay import RESUME_GRACE, RESUME_WINDOW, RelayPeer, StreamParking
 from acp_gateway.log import get_logger, register_secret
 
 # Library DEBUG traces include handshake headers. Never enable wire tracing.
@@ -47,6 +47,9 @@ _WIRE_LOG.setLevel(logging.WARNING)
 
 class ConnectorUnavailable(ValueError):
     """Transient computer connection failure; safe to retry registration."""
+
+    # True when a registered connection ended (not a failed attempt).
+    established = False
 
 
 class ConnectorAccessError(ValueError):
@@ -87,6 +90,8 @@ class ControlDispatcher:
         self.max_connections = max_connections
         self.on_registration = None
         self.active: dict[str, Registration] = {}
+        # Streams of a dropped connection, waiting for the same computer to return.
+        self.parked: dict[str, StreamParking] = {}
         self._closing: set[asyncio.Task] = set()
         self.registry.subscribe(self._access_changed)
         self.registry.settle_connections()
@@ -121,10 +126,31 @@ class ControlDispatcher:
         except sqlite3.Error:
             get_logger(__name__).warning("computer connection diagnostics unavailable")
 
+    def _park(self, registration, links):
+        parking = self.parked.get(registration.computer_id)
+        if parking is None or parking.generation != registration.generation:
+            if parking is not None:
+                parking.close_all()
+            parking = StreamParking(RESUME_GRACE, generation=registration.generation)
+            self.parked[registration.computer_id] = parking
+        parking.park(links)
+
+    def _drop_parked(self, computer_id):
+        parking = self.parked.pop(computer_id, None)
+        if parking is not None:
+            parking.close_all()
+
+    def _revoke(self, registration):
+        """Access changed or unverifiable: no stream may survive into a later epoch."""
+        if registration.relay is not None:
+            registration.relay.invalidate(park=False)
+        self._drop_parked(registration.computer_id)
+
     def _access_changed(self, computer_id):
+        self._drop_parked(computer_id)
         registration = self.active.get(computer_id)
         if registration is not None and not registration.relay.closed.is_set():
-            registration.relay.invalidate()
+            registration.relay.invalidate(park=False)
             self._disconnected(registration, "access_changed", 1008)
             task = asyncio.create_task(
                 registration.connection.close(code=1008, reason="computer access changed")
@@ -167,12 +193,12 @@ class ControlDispatcher:
         try:
             valid = self.registry.grant_valid(computer_id, registration.generation)
         except sqlite3.Error:
-            registration.relay.invalidate()
+            self._revoke(registration)
             self._disconnected(registration, "access_check_failed", 1011)
             await registration.connection.close(code=1011, reason="access check unavailable")
             raise AgentUnavailable("computer access check is unavailable") from None
         if not valid:
-            registration.relay.invalidate()
+            self._revoke(registration)
             self._disconnected(registration, "access_changed", 1008)
             await registration.connection.close(code=1008, reason="computer access changed")
             raise AgentUnavailable("computer access changed")
@@ -219,6 +245,7 @@ class ControlDispatcher:
             update_operations = (
                 update_inventory and request.headers.get("X-ACP-Update-Operations") == "1"
             )
+            stream_resume = request.headers.get("X-ACP-Stream-Resume") == "1"
         except MultipleValuesError:
             return connection.respond(401, "Unauthorized\n")
         if not authorization.startswith("Bearer "):
@@ -236,6 +263,7 @@ class ControlDispatcher:
         connection.agent_profiles = agent_profiles
         connection.agent_discovery = agent_discovery
         connection.update_operations = update_operations
+        connection.stream_resume = stream_resume
         return None
 
     async def _watch_grant(self, registration):
@@ -244,14 +272,12 @@ class ControlDispatcher:
             try:
                 valid = self.registry.grant_valid(registration.computer_id, registration.generation)
             except sqlite3.Error:
-                if registration.relay is not None:
-                    registration.relay.invalidate()
+                self._revoke(registration)
                 self._disconnected(registration, "access_check_failed", 1011)
                 await registration.connection.close(code=1011, reason="access check unavailable")
                 return
             if not valid:
-                if registration.relay is not None:
-                    registration.relay.invalidate()
+                self._revoke(registration)
                 self._disconnected(registration, "access_changed", 1008)
                 await registration.connection.close(code=1008, reason="computer access changed")
                 return
@@ -272,6 +298,7 @@ class ControlDispatcher:
             registration = Registration(
                 identity, uuid4(), generation, tuple(frame.agents), connection
             )
+            stream_resume = getattr(connection, "stream_resume", False)
             registration.relay = RelayPeer(
                 connection,
                 registration.connection_id,
@@ -280,6 +307,8 @@ class ControlDispatcher:
                 update_operations=connection.update_operations,
                 agent_profiles=getattr(connection, "agent_profiles", False),
                 agent_discovery=getattr(connection, "agent_discovery", False),
+                stream_resume=stream_resume,
+                on_park=lambda links, r=registration: self._park(r, links),
             )
             self.active[identity] = registration
             if previous is not None:
@@ -306,10 +335,18 @@ class ControlDispatcher:
                         update_operations=1 if registration.relay.update_operations else None,
                         agent_profiles=1 if registration.relay.agent_profiles else None,
                         agent_discovery=1 if registration.relay.agent_discovery else None,
+                        stream_resume=1 if registration.relay.stream_resume else None,
                     )
                 )
             )
             await connection.send(encode_frame(Ping(sequence=0)))
+            # Read after a replaced connection has parked its streams.
+            parking = self.parked.get(identity)
+            if parking is not None and (parking.generation != generation or not stream_resume):
+                self._drop_parked(identity)
+                parking = None
+            if stream_resume:
+                registration.relay.pending_resume = parking
             await registration.relay.run()
         except (ProtocolError, TimeoutError):
             if registration is not None:
@@ -438,6 +475,7 @@ async def connect_control(
     update_operations=False,
     agent_profiles=False,
     agent_discovery=False,
+    stream_resume=False,
 ):
     parts = validate_url(url)
     if fingerprint is not None and parts.scheme != "wss":
@@ -466,6 +504,7 @@ async def connect_control(
                 **({"X-ACP-Update-Operations": "1"} if update_operations else {}),
                 **({"X-ACP-Agent-Profiles": "1"} if agent_profiles else {}),
                 **({"X-ACP-Agent-Discovery": "1"} if agent_discovery else {}),
+                **({"X-ACP-Stream-Resume": "1"} if stream_resume else {}),
             },
             ssl=tls,
             proxy=None,
@@ -515,6 +554,8 @@ async def connect_control(
             raise ProtocolError("unsolicited profile negotiation")
         if welcome.agent_discovery is not None and not (agent_discovery and welcome.agent_profiles):
             raise ProtocolError("unsolicited discovery negotiation")
+        if welcome.stream_resume is not None and not stream_resume:
+            raise ProtocolError("unsolicited stream resume negotiation")
         return connection, welcome
     except BaseException as exc:
         close_code = connection.close_code
@@ -544,25 +585,37 @@ async def run_connector(
 ):
     delays = (1, 2, 5, 10, 30)
     attempt = 0
-    while True:
-        try:
-            await _run_connection(
-                url,
-                credential=credential,
-                hello=hello() if callable(hello) else hello,
-                fingerprint=fingerprint,
-                local_factory=local_factory,
-                installation_report=installation_report,
-                update_handler=update_handler,
-                profiles_handler=profiles_handler,
-            )
-        except ConnectorUnavailable as exc:
-            delay = delays[min(attempt, len(delays) - 1)]
-            get_logger(__name__).warning(
-                "dispatcher connection interrupted; retrying", retry_seconds=delay, error=str(exc)
-            )
-            await asyncio.sleep(delay)
-            attempt += 1
+    # Local agent streams survive a dropped connection until the dispatcher reclaims them.
+    parking = StreamParking(RESUME_GRACE)
+    try:
+        while True:
+            try:
+                await _run_connection(
+                    url,
+                    credential=credential,
+                    hello=hello() if callable(hello) else hello,
+                    fingerprint=fingerprint,
+                    local_factory=local_factory,
+                    installation_report=installation_report,
+                    update_handler=update_handler,
+                    profiles_handler=profiles_handler,
+                    parking=parking,
+                )
+            except ConnectorUnavailable as exc:
+                if exc.established:
+                    # A working connection dropped: reconnect quickly, parked work is waiting.
+                    attempt = 0
+                delay = delays[min(attempt, len(delays) - 1)]
+                get_logger(__name__).warning(
+                    "dispatcher connection interrupted; retrying",
+                    retry_seconds=delay,
+                    error=str(exc),
+                    parked_streams=len(parking),
+                )
+                await asyncio.sleep(delay)
+                attempt += 1
+    finally:
+        parking.close_all()
 
 
 async def _run_connection(
@@ -575,6 +628,7 @@ async def _run_connection(
     installation_report=None,
     update_handler=None,
     profiles_handler=None,
+    parking: StreamParking | None = None,
 ):
     connection, welcome = await connect_control(
         url,
@@ -585,7 +639,15 @@ async def _run_connection(
         update_operations=update_handler is not None,
         agent_profiles=profiles_handler is not None,
         agent_discovery=profiles_handler is not None,
+        stream_resume=parking is not None,
     )
+    stream_resume = parking is not None and welcome.stream_resume == 1
+    if parking is not None:
+        if stream_resume:
+            # Work the dispatcher does not reclaim promptly is abandoned.
+            parking.shorten(RESUME_WINDOW)
+        else:
+            parking.close_all()
     try:
         get_logger(__name__).info(
             "computer connected", computer_id=hello.computer_id, epoch=str(welcome.connection_id)
@@ -607,6 +669,9 @@ async def _run_connection(
             agent_profiles=welcome.agent_profiles == 1,
             agent_discovery=welcome.agent_discovery == 1,
             profiles_handler=profiles_handler,
+            stream_resume=stream_resume,
+            parking=parking if stream_resume else None,
+            on_park=parking.park if stream_resume else None,
         )
         await peer.run()
     except ProtocolError:
@@ -614,10 +679,14 @@ async def _run_connection(
     except (ConnectionClosed, ConnectionError, TimeoutError):
         if connection.close_code == 1008:
             raise ConnectorAccessError("computer access changed or connection replaced") from None
-        raise ConnectorUnavailable("dispatcher connection ended") from None
+        ended = ConnectorUnavailable("dispatcher connection ended")
+        ended.established = True
+        raise ended from None
     else:
         if connection.close_code == 1008:
             raise ConnectorAccessError("computer access changed or connection replaced")
-        raise ConnectorUnavailable("dispatcher connection ended")
+        ended = ConnectorUnavailable("dispatcher connection ended")
+        ended.established = True
+        raise ended
     finally:
         await connection.close()
