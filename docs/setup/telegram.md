@@ -54,14 +54,14 @@ is created automatically. Older direct/disabled bindings retain their refusal ru
 | Plain text | Send to the selected dialogue; refuse if none is selected |
 | `/start`, `/menu` | Open the inline control panel (rc6) |
 | `/help` | Show commands |
-| `/context` | Working branch: enable or explicitly refresh one durable context card for this chat |
-| `/recent` | Working branch: preview the 10 most recently used dialogues across this chat’s agents |
-| `/favorites [PAGE]` | Working branch: saved route shortcuts with current availability |
+| `/context` | Enable or explicitly refresh one durable context card for this chat |
+| `/recent` | Preview the 10 most recently used dialogues across this chat’s agents |
+| `/favorites [PAGE]` | Saved route shortcuts with current availability |
 | `/agent`, `/agent ALIAS` | List available routes or select one, e.g. `home/goose` |
 | `/new [ALIAS]` | Create and activate a new session |
 | `/sessions [PAGE]` | Dialogue cards for the selected agent, 10 per page; ▶ marks the active one |
 | `/dialogue ID [PAGE]` | Preview an owned dialogue without changing selection; return to the supplied list page |
-| `/cancel` | Working branch: cancel name input begun by the dialogue rename button; other commands cancel it too |
+| `/cancel` | Cancel name input begun by the dialogue rename button; other commands cancel it too |
 | `/rename ID TITLE` | Persistent dispatcher display name; does not rename Hermes |
 | `/approval REQUEST_ID [PAGE]` | Complete pending request input by page |
 | `/switch ID [PAGE]` | Activate a session owned by this chat and selected agent |
@@ -142,16 +142,20 @@ since its HTTP interface does not imply a persistent client connection.
 
 
 Dialogue cards show the saved title (or “Без названия”), last activity in UTC,
-connection state when known, and the working folder on a separate line. `/new`
+connection state when known, and the working folder on a separate line. Since
+0.2.7, an untitled dialogue gets a name from the first non-empty line of its next
+prompt (secrets masked, up to 60 characters). An agent title can replace this
+automatic name; an explicit dispatcher display name keeps precedence. `/new`
 and `/switch` confirm the dialogue ID, agent and folder. The list is scoped to
 this private chat and selected agent; `/sessions 2` opens the next page.
 
-In the development UI, a dialogue list button opens a preview without changing
+A dialogue list button opens a preview without changing
 the selected dialogue or contacting the agent. The preview shows the saved title,
 agent, folder, last activity and whether messages will go to that dialogue.
-Use **Выбрать диалог** to select it explicitly. **Переименовать** explains the
-explicit `/rename ID TITLE` command; plain text continues to go to the agent. **← Диалоги** returns to the
-original page, including after selection. Text commands `/dialogue ID [PAGE]`
+Use **Выбрать диалог** to select it explicitly. **Переименовать** starts the
+name-entry form described below; `/rename ID TITLE` is also available. Outside
+an active form, plain text goes to the selected dialogue. **← Диалоги** returns
+to the original page, including after selection. Text commands `/dialogue ID [PAGE]`
 and `/switch ID [PAGE]` offer the same actions; the default return page is 1.
 Invalid pages and dialogues outside this chat/agent are rejected before selection.
 
@@ -252,11 +256,11 @@ History → job → delivery → job → history preserves the active filter and
 dialogue without an ACP prompt. Retired agents keep their saved results but do
 not offer a dialogue selection action.
 
-These capabilities are included in 0.2.0. Live acceptance must still check
-concurrent dialogues on both PCs, allow/deny/expiry, names after reconnect,
-and status/result delivery independently.
+These capabilities are included in 0.2.0. The older Telegram acceptance was
+provisionally closed by the owner on 2026-10-16; reopen on reported problems.
+For remaining managed-agent and updater checks, see [project status](../project-status.md).
 
-## Current working branch (unpublished)
+## Recovery and dialogue controls (shipped)
 
 P2.5 adds Russian delivery explanations and a saved-result button, actions for
 a dialogue that cannot be restored, name input from the rename button with a
@@ -268,12 +272,11 @@ and survives a dispatcher restart without converting a name into a prompt.
 
 Errors offer explicit navigation, never an automatic retry of agent work.
 Connection loss directs the user to task history to inspect the outcome before
-resubmitting. Diagnostics remain redacted. These branch changes have not been
-released, installed or checked against live Telegram; see the
-[implementation evidence and remaining UX](../items/telegram-recovery.ru.md).
+resubmitting. Diagnostics remain redacted. These controls are shipped.
+See [implementation evidence and remaining UX](../items/telegram-recovery.ru.md).
 
 
-### Context card (current working branch, unpublished)
+### Context card
 
 Use `/menu` → **Текущий контекст**, or `/context`, to enable a separate message
 showing the computer/route, agent, selected dialogue, dispatcher name, cwd and
@@ -294,10 +297,12 @@ is not replayed automatically; an independent warning says the snapshot may be
 stale. Use `/context` to request recovery explicitly. After an unknown send, this
 can create a new card while an earlier copy may already exist. Explicit 429 edit
 rejections back off; unknown delivery of results retains its separate fences.
-Live Telegram acceptance and release remain outstanding.
+The owner provisionally closed the older Telegram acceptance on 2026-10-16;
+reopen it on reported problems. New managed-agent/onboarding checks remain
+separate; see [current status](../project-status.md).
 
 
-### Dialogue actions on results (current working branch, unpublished)
+### Dialogue actions on results
 
 The last result fragment offers **Продолжить диалог** and **Новый диалог**.
 Continue selects that task's exact owned route and dialogue without sending a
@@ -314,7 +319,7 @@ silently replacing a newer choice; there is no automatic new-session retry.
 The result message is never edited into a navigation panel or confirmation.
 
 
-### Recent dialogues and favorite routes (current working branch, unpublished)
+### Recent dialogues and favorite routes
 
 Use `/menu` → **Недавние** or `/recent` for the ten most recently used dialogues
 across all agents in this private chat. Opening a row previews its title, route,

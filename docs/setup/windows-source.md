@@ -12,7 +12,7 @@ installation built from a checkout. Use `run-source.ps1` for this editable route
 From PowerShell, choose the reviewed branch and an ordinary installed Python:
 
 ```powershell
-git clone --branch feature/p4.13-codex-managed https://github.com/Lujker/acp-gateway.git
+git clone --branch main https://github.com/Lujker/acp-gateway.git
 cd acp-gateway
 py -3.12 -m venv .venv
 .\.venv\Scripts\python.exe -m pip install -e .
@@ -78,5 +78,5 @@ Python imports use the Git sources directly. Tests and development tools may be
 installed in this venv or a separate test venv. This connector stays on the Git
 branch; other machines can continue using releases.
 
-Development builds after 0.2.3rc1 also support opt-in
+Stable releases since 0.2.3 support opt-in
 [profile management through Telegram](telegram-agent-profiles.md).

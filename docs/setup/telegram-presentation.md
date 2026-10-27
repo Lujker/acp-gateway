@@ -32,6 +32,15 @@ Legacy peers that omit item completion still flush their pending messages when
 the turn ends. Native identity, permissions, cancellation and resume fences are
 unchanged. This affects new turns; old saved answers are not rewritten.
 
+## Claude Code output (0.2.6)
+
+The connector retains text following thinking frames with the same message ID.
+Text before a tool call becomes a work update; other text becomes answer text.
+Thinking is not forwarded. If Claude emits no intermediate text, the work view
+can be empty even while tools run; tool activity display remains deferred.
+At a native step/token limit, the dispatcher adds an early-stop explanation.
+Update the connector to get the Claude stream fix.
+
 ## Work view
 
 The live task card shows public work updates separately from any answer preview.

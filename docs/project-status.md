@@ -2,181 +2,105 @@
 
 [Documentation](README.md) · [Roadmap and current queue](../road-map.md)
 
-This is a short orientation for readers, not a replacement for the roadmap
-or acceptance journals. Planning snapshot: **2026-10-26**; stable is **0.2.3**
-([release notes](releases/0.2.3.md)), which includes the changes below.
-0.2.3 suppresses WSL console windows, adds opt-in
-[owner profile administration through Telegram](setup/telegram-agent-profiles.md),
-separates Codex work summaries from final answers and improves
-[Telegram cards and multipart delivery](setup/telegram-presentation.md).
-The owner's dispatcher and both Windows connectors run it:
-[publication and deployment](releases/0.2.3-publication.md).
-Next planned item: **P4.18** — add agents on a connected PC from Telegram using
-agents the connector discovers itself ([plan](items/agent-onboarding.ru.md)).
+Snapshot: **2026-10-26**, through commit `aa691b7`. Stable is **0.2.7**.
+Deployment state below is from publication records, not a new inspection of
+running installations.
 
-## Versions
+## Versions and deployment
 
 | Track | State |
 | --- | --- |
-| Stable `0.2.3` | Managed Codex/Claude Code (safe/work, Windows→WSL), Telegram profile management and presentation, Windows connector busy-cursor fix; [release notes](releases/0.2.3.md), [publication](releases/0.2.3-publication.md), [upgrade](setup/update-0.2.3.ru.md) |
-| Preview `0.2.3rc1` | Published GitHub/PyPI/GHCR; personal dispatcher deployed, Windows connector moved to editable Git/Python venv; both safe WSL routes initialized without model calls. [Publication and deployment](releases/0.2.3rc1-publication.md). Stable/latest remains 0.2.2. |
-| Previous stable `0.2.2` | Connector-first pairing, out-of-box updater, CLI artifact gate and recovery fixes; published GitHub/PyPI/GHCR; automated suite 1734 passed/38 skipped; [publication](releases/0.2.2-publication.md), [release notes](releases/0.2.2.md), [upgrade](setup/update-0.2.2.ru.md) |
-| Previous stable `0.2.1` | Telegram updates, independent updater lifecycle, watcher/env fixes, context/recovery controls; [publication](releases/0.2.1-publication.md), [upgrade](setup/update-0.2.1.ru.md) |
-| Previous stable `0.2.0` | Install through uv/PyPI; independent setup sections, Telegram computer/job dashboards, controls and approvals, dialogue execution modes, managed update with service recovery, Docker dispatcher behind a host reverse proxy |
-| Previous candidates `0.2.0rc1`–`0.2.0rc8` | Published prereleases; upgrade with `acpgw update --stable --with-services` |
+| Stable `0.2.7` | Published GitHub/PyPI/GHCR. Prompt-based dialogue names and maintenance test cancellation/retry fixes. [Notes](releases/0.2.7.md), [publication](releases/0.2.7-publication.md), [upgrade](setup/update-0.2.7.ru.md) |
+| Connector baseline `0.2.6` | Claude Code text after thinking and final answers retained; turn limits complete the turn instead of breaking the connection; clearer discovery hints and tolerant WSL output parsing. [Notes](releases/0.2.6.md), [publication](releases/0.2.6-publication.md) |
+| Earlier stable `0.2.3` | Managed Codex/Claude safe/work, cancellation, scoped persisted resume, Telegram profile management and presentation. [Notes](releases/0.2.3.md), [publication](releases/0.2.3-publication.md) |
+| Earlier stable `0.2.2` | Connector-first pairing and out-of-box updater. [Notes](releases/0.2.2.md), [publication](releases/0.2.2-publication.md) |
 
-A production dispatcher runs in Docker behind a host nginx with two Windows/Hermes
-connectors (owner acceptance 2026-10-15). See
-[installation](setup/self-install-pypi.ru.md),
-[delivery evidence](items/p48-delivery-plan.ru.md) and
-[review findings/fixes](items/project-review-2026-10-14.ru.md).
+The owner's Docker dispatcher was switched to the official **0.2.7 GHCR image by
+digest**, with an integrity-checked SQLite snapshot (schema 10). Health,
+Telegram/MCP and both PC connections were verified after deployment. Both
+connectors remain **0.2.6**; 0.2.7 requires only a dispatcher update. The home
+connector uses editable Git/Python venv on `main`; registry updates are disabled
+for that installation. See the [latest deployment record](releases/0.2.7-publication.md).
 
 ## Available paths
 
-- **Dispatcher + connectors:** one dispatcher, enrolled outgoing connections
-  from PCs, discovered agent routes and per-chat dialogues/jobs.
-- **Hermes Desktop:** dedicated managed conversations through a local connector.
-  The owner has confirmed basic Telegram prompts/results on two Windows PCs.
-- **Telegram:** private user allowlist, command menu, agent/dialogue/model controls,
-  human approval buttons, formatted answers and restart-aware delivery.
-  Stable 0.2.0 includes computer cards and scoped task history. Recovery, renaming,
-  context cards, recent dialogues and favorites are published in main `d42c430`.
-  The owner reports a successful Docker VPS update and connected agents; development
-  is closed; remaining live acceptance was provisionally closed by the owner
-  on 2026-10-16, to reopen on reported problems. See
-  the [Telegram journal](items/telegram-recovery.ru.md).
-- **CLI, local HTTP/SSE API and MCP:** additional interfaces to the same core.
-  MCP does not receive human approval controls.
-- **Direct Goose:** ACP connection, TLS pinning, sessions and approvals;
-  deployment instructions and historical checks have their own guides.
+- **Dispatcher + connectors:** outgoing PC connections, discovered agent routes,
+  per-chat dialogues/jobs, retained results and approvals.
+- **Hermes Desktop:** dedicated managed conversations through local connectors;
+  the owner confirmed basic Telegram prompts/results on two Windows PCs.
+- **Experimental managed Codex and Claude Code:** safe/work profiles, Windows→WSL,
+  native cancellation and scoped persisted resume. The owner confirmed WSL use
+  and Telegram profile edits; the full work/cancel/resume/approval matrix remains
+  open. [Codex](setup/codex-managed.md), [Claude Code](setup/claude-code-managed.md),
+  [WSL](setup/windows-wsl-managed.md), [acceptance plan](plans/p4.13-work-mode.ru.md).
+- **Telegram:** computer/job cards, agent/dialogue/model controls, human approvals,
+  recovery, renaming, recent/favorite dialogues, work updates and multipart results.
+  Untitled dialogues get a title from the first non-empty prompt line (redacted,
+  up to 60 characters) on their next message; an agent title can replace it.
+- **Agent onboarding (P4.18):** the connector discovers installed Codex/Claude CLI
+  candidates on Windows/WSL, Linux and macOS. Telegram can add the first managed
+  profile without an existing template. Executable/account settings remain local; the dispatcher
+  selects an opaque candidate ID. Connection setup asks for permission (default
+  yes); existing PCs can grant it with `acpgw agents allow-remote-profiles`.
+  [Guide](setup/telegram-agent-profiles.md), [remaining checks](items/agent-onboarding.ru.md).
+- **CLI, local HTTP/SSE and MCP:** interfaces to the same core; MCP receives no
+  human approval controls. Direct Goose supports ACP, TLS pinning and approvals;
+  parity with Hermes remains conditional future work.
 
-## Current work and limits
+## Recent fixes and verification
 
-**Owner resumed development on 2026-10-25.** P4.13.1 is implemented in source:
-explicit safe/work profiles, native automatic review in work, cancellation and
-scoped persisted resume in both profiles, setup and Telegram profile cards.
-Safe remains the default. Local bindings and OS leases exclude other gateway
-owners; durable attached/busy state prevents resume after an unknown prompt or
-unconfirmed process cleanup. A confirmed clean restart resumes the original chat
-without repeating prompts. Native chat catalogue/import and shared Desktop
-attachment remain separate work.
+- `99cc9ba` adds discovery, onboarding, the local permission command and background
+  ACL rechecks outside heartbeat publication. `e732a4b` measures ACL validity from
+  verification start; failed or expired verification stops writes.
+- `4ec9f83` restores explicitly empty Claude dialogues with their original ID
+  without requiring a native transcript. Used/legacy dialogues still require
+  native history; unknown outcomes and unconfirmed cleanup still block resume.
+- `49aa93c` preserves text across Claude thinking/tool frames and separates work
+  updates from final answers. `481a8f3` improves discovery diagnostics.
+- `7fbb065` adds dialogue titles; `64425d6` fixes maintenance test hangs/flakes,
+  with no connector runtime change in 0.2.7.
 
-Scoped checks: 165 profile/setup tests and 162 adapter/client/binding tests in WSL;
-82 Telegram tests, plus two dialogue-card checks. Native Windows adapter/relay/
-wiring and setup scope: 122 passed/2 POSIX skips; cleanup regressions: 11 passed;
-additional negative interrupt cases: 2 passed. Scopes overlap and are not a new
-full-suite total. Independent security reviews completed with one fix cycle each.
-The owner approved rc publication and installation updates on 2026-10-25; these
-are complete. The personal Docker dispatcher is healthy on rc1, database schema
-9→10 migrated with a pre-upgrade snapshot and preserved records. The Windows
-connector runs from a Git clone using an ordinary Python venv, with no uv runtime
-dependency; its registry updater is disabled. The same home enrollment advertises
-Hermes and four safe/work WSL profiles. Both safe routes passed real initialize
-through the dispatcher/connector, with zero new dialogues/jobs/model calls.
+The 0.2.7 publication records **2300 passed / 229 skipped** locally in WSL and
+clean Ruff checks. Its main CI run passed full pytest, platform/binary/connector
+smokes, native Windows, both macOS runners, Linux ARM and Docker image publication.
+These are recorded release results, not tests rerun for this documentation update.
+Successful release jobs do not close historical full native Windows baseline debt
+or establish live model acceptance.
 
-The owner explicitly excluded model calls. Actual model/tool/cancel/resume and
-Telegram approval acceptance awaits a model budget; main/stable release remains
-pending. See the [deployment record](releases/0.2.3rc1-publication.md) and
-[current checkpoint](plans/p4.13-resumption.ru.md#resume-2026-10-25).
-Incomplete full-main baseline and Windows/interop issues remain documented debt.
-The older full-suite counts below are historical, not a current all-green suite.
+## Remaining work and limits
 
-**P4.13 is PARTIAL (source only):** managed Codex CLI/App Server and Claude Code
-CLI adapters, configuration/setup/doctor and connector relay wiring are implemented.
-They are not in published 0.2.2. The final post-review-fix WSL suite passed
-**1985 tests, 42 skipped**; native Windows Claude config/setup/bridge checks passed
-**128 tests** with a synthetic subprocess peer. Independent re-review accepted
-both Claude fixes; this is not live model/Telegram/Desktop acceptance.
-Both paths use dedicated dialogues and once/deny approvals for surfaced questions.
-Claude has one native child per conversation, explicit safe-mode ask rules and
-persisted history; work enables the user's normal tools/settings. Manual
-permissions are not an OS sandbox. Windows subprocess peer tests and real WSL Claude initialize-only
-smoke do not establish live authenticated Windows/model/Telegram support.
-Joint live Codex/Claude acceptance on the Windows host and WSL follows this
-implementation. The known short-lived Codex
-startup `git.exe` directory lock remains open. No Desktop shared attach, native
-chat catalogue/import or Telegram native attach-by-ID is implemented.
-See [Codex configuration](setup/codex-managed.md),
-[Claude Code configuration](setup/claude-code-managed.md) and
-[implementation evidence](items/connector-harness-adapters.ru.md).
-For resuming the committed but unreleased source work, use the
-[handoff and acceptance plan](plans/p4.13-resumption.ru.md); documentation recording
-does not start live acceptance or change production.
+- **P4.18: PARTIAL.** Implementation is shipped; complete the real-machine
+  onboarding matrix, including a real Mac and older connector compatibility.
+  Initialize-only success does not prove CLI authentication/model access.
+- **P4.19: PARTIAL.** Heartbeat/ACL fix shipped; a successful Telegram updater
+  round trip still needs evidence. Visible message target, PC diagnostics,
+  sanitized refusal reasons, Docker host companion setup, Git update policy,
+  idle-process investigation and release automation remain open. The narrow
+  maintenance CI hang is fixed; broader native Windows test debt remains.
+- **P4.13: PARTIAL.** Complete work/tool/cancel/resume and safe allow/deny acceptance
+  with an agreed model budget. Native chat catalogue/import (4a) and live shared
+  CLI/Desktop attachment (4b, research then decision) are separate future stages.
+- **P4.17/P4.15.1: PARTIAL.** Pairing/updater source is delivered. Keep outstanding
+  native/Telegram/reboot/logon scenarios open. Manual Docker replacement is proven;
+  replacement from Telegram with a host companion is not established.
+- Hermes cold resume has limits. Shared Desktop observation gives no write,
+  cancel or approval authority. No automatic prompt replay after unknown outcomes.
+- Registry updates require a supported uv installation; Docker replacement needs
+  a host companion and an allowed immutable image. Git installs and RC updates
+  are outside the remote update MVP. See [updater setup](setup/remote-updates.md).
+- Basic OS actions/modules and schedules remain deferred. VK versus multi-user
+  is an owner decision after P4.13; public client API/mobile remains future work.
 
-**Windows-host connector → explicit WSL is implemented in unreleased source for
-new managed chats.** Configuration/setup/doctor and owned Linux supervision are
-wired; independent review of S1/L1/L2/L3 fixes was accepted on 2026-10-22.
-Parent real installed-CLI initialize succeeded for both backends (exit 0, no
-cleanup uncertainty, no prompts); Windows→WSL focused tests passed 135/34 skipped.
-Final post-format full WSL suite passed **2148 tests,48 skipped**; this
-source-checkout managed-launch substage is complete. The broader native
-Windows unit run is **not green**. On 2026-10-23 the owner authorized local
-full Windows runs without the strict isolation runner. The later main/branch
-comparison is partial; its accepted targeted results and unresolved debt are
-recorded in the current checkpoint. More baseline work is not the next step.
-Stop and report if a test actually mutates
-services or Task Scheduler tasks. See the
-[current owner directive](plans/p4.13-resumption.ru.md#owner-directive-2026-10-23). No native catalogue/ID/live Desktop attachment, authenticated
-model or Telegram acceptance follows from these checks. See the
-[WSL guide](setup/windows-wsl-managed.md),
-[current checkpoint](plans/p4.13-resumption.ru.md#windows-wsl-current-checkpoint)
-and [evidence journal](items/connector-harness-adapters.ru.md).
-
-
-The owner provisionally closed outstanding Telegram and operational acceptance
-on 2026-10-16. Reopen those checks only when the owner or another user reports a
-problem. This decision does not claim that all previously listed scenarios passed.
-The macOS connector will be checked by the owner later and does not block current work.
-
-Connector activity watcher recovery and explicit service reinstallation guidance
-with saved env selection are implemented in source. Telegram updates now include
-single-owner exact-version confirmation, durable operations, status/history and
-restart-aware notifications. An independent, locally enabled companion executes
-uv managed service updates or a Docker dispatcher image replacement with database
-backup and known-failure recovery. See [companion setup](setup/remote-updates.md).
-The companion now has separate Linux user-service/Windows logon-task installation,
-autostart and cooperative stop controls, available from setup. Local diagnosis,
-audited resolution of retained unknown executor records and immutable Docker-image
-registration are implemented in source; image download/build remains external.
-These features are included in stable 0.2.1, released with the owner's authorization
-on 2026-10-16. Historical development snapshots do not supersede that release.
-Production installation state was not rechecked or changed by the planning interview.
-
-[P4.17 connector-first pairing](items/connector-pairing.ru.md) and
-[P4.15.1 updates out of the box](items/updates-out-of-box.ru.md) are implemented
-in the 0.2.2 source and pass the automated suite. Live native service update,
-Docker replacement, Telegram round trips and owner smoke remain acceptance checks.
-Existing 0.2.1 computers keep their enrollment; the one-time legacy re-pairing
-transition is explicit and is not activated by installing 0.2.2.
-
-- Hermes managed conversations still have cold-resume limitations. Shared Desktop
-  observation does not grant shared write/cancel/approval authority.
-- Actions depend on reported agent capabilities and gateway policy.
-- Telegram update MVP is implemented in source for one target and newer stable
-  major.minor.patch releases. Native updates require a registry uv installation;
-  Docker requires a prepared immutable image allowed by host policy. Live Docker
-  engine/native Windows update evidence is not claimed. macOS, batch, Git/file
-  installs and RC versions are outside this MVP. Version 0.2.0 lacks the feature.
-- Built-in basic OS/agent actions plus user scripts/modules, and connector-owned
-  tasks/schedules, remain deferred. No shutdown/restart actions were added.
-- Current order (updated 2026-10-25): safe/work with cancel/resume is ready in source;
-  rc1 deployment and model-free safe initialization are complete; next is model
-  acceptance and stable release, then native
-  chat listing/stored resume (4a), then research into live shared attachment (4b).
-  4a can ship without 4b. The later choice is minimal [VK](items/vk-bot.ru.md)
-  versus multi-user; [Goose parity](items/goose-alternative.ru.md) is CONDITIONAL.
-  See the [canonical queue](../road-map.md#9-очередь-дальнейшей-разработки).
-  CLI/Desktop/platform coverage remains a target, not verified support.
-- Public client API/mobile and additional adapters remain [planned work](../road-map.md).
+The owner provisionally closed older Telegram/operational acceptance on
+2026-10-16; reopen those scenarios on reported problems. This does not close the
+new managed-agent/onboarding/updater checks above. The
+[roadmap queue](../road-map.md#9-очередь-дальнейшей-разработки) is canonical.
 
 ## Control and data boundaries
 
-Agents execute on their own computers. The dispatcher routes messages, retains
-conversation/job metadata and results, and records approval decisions. Registered
-credentials are redacted. Human decisions are offered only through authorized
-human channels; an explicit per-dialogue automatic mode is separately auditable.
-The owner API is authenticated and loopback by default.
-
-See [architecture](architecture.md) for the design and the linked item journals
-for evidence. Some architecture sections retain earlier target descriptions;
-use the current roadmap and acceptance records for implementation status.
+Agents execute on their own computers. The dispatcher retains dialogue/job data,
+routes messages and records approval decisions. Credentials are redacted. Human
+approvals use authorized human channels; per-dialogue automatic mode is auditable.
+The owner API is authenticated and loopback by default. Native agent permissions
+are not an OS sandbox. See [architecture](architecture.md) and item journals for
+the design and evidence.

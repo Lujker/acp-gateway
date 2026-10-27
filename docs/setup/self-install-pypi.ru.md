@@ -1,5 +1,47 @@
 # Установка через uv/PyPI и независимые настройки
 
+## Текущий путь — 0.2.7 (2026-10-26)
+
+Для новой установки на Ubuntu или ПК с уже установленным uv:
+
+```sh
+uv tool install --python 3.12 "acp-gateway==0.2.7"
+uv tool update-shell
+acpgw version --json
+```
+
+Ожидается версия 0.2.7, manager `uv`, source `registry`. На Windows выполняйте
+команды в PowerShell под пользователем коннектора. Для существующей установки —
+[обновление до 0.2.7](update-0.2.7.ru.md); коннекторы 0.2.6 можно оставить.
+
+1. На Ubuntu-диспетчере откройте `acpgw setup`: настройте `base` (server),
+   listener и Telegram. Owner API остаётся на loopback; публичное подключение
+   коннектора подготовьте через WSS по [native VPS runbook](vps-native-hermes.ru.md).
+2. Явно создайте owner через setup или `acpgw owner bootstrap --telegram-id ID`,
+   проверьте `acpgw owner show`. Выбранный Telegram ID должен также проходить
+   allowlist бота. [Owner bootstrap](connector-pairing.md#dispatcher-owner-bootstrap).
+3. Настройте и запустите службу диспетчера через раздел `service`.
+   Сохраняйте фактические `--config`/`--env-file` при следующих командах.
+4. На Windows-ПК запустите `acpgw connect`: укажите адрес диспетчера и owner ID,
+   сравните запрос и подтвердите его через `/pairing` или CLI диспетчера.
+   Ручной перенос enrollment key/fingerprint обычному pairing не нужен.
+   [Полный порядок](connector-pairing.md#new-connector).
+5. Настройте локальный Hermes по [Windows guide](windows-connector.md).
+   Для установленного Codex/Claude можно разрешить управление профилями при
+   подключении, затем выбрать «Добавить агента» в Telegram:
+   [onboarding и профили](telegram-agent-profiles.md). CLI и login настраиваются
+   локально, без передачи credentials диспетчеру.
+6. Выберите автозапуск, проверьте прежний computer ID и доступность агента.
+   В Telegram выберите маршрут и явно создайте `/new`. Проверка initialize
+   не доказывает доступ к модели; модельный smoke выполняется отдельно.
+
+Ниже сохранён **исторический порядок 0.2.0** с ручным enrollment и временным WS.
+Его версии, перенос ключей и утверждения о будущем pairing не относятся к новой
+установке. Текущие инструкции выше заменяют его; примеры настройки старой
+установки оставлены для справки.
+
+## Историческая инструкция 0.2.0
+
 Для обновления существующей установки до **0.2.1** используйте
 [точный порядок Docker + uv](update-0.2.1.ru.md).
 

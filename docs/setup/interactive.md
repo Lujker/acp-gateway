@@ -1,4 +1,4 @@
-# Independent interactive setup (0.2.0rc4)
+# Independent interactive setup
 
 Run `acpgw setup` in a terminal to open the setup menu. Configuration is divided
 into independent steps; completing one returns to the menu. Opening the menu or
@@ -29,8 +29,10 @@ acpgw setup --section agents
 A server can run without agents. A connector can save its base first and add
 local profiles and the outgoing connection in either order. Starting/installing
 a connector service requires both. The server menu hides outgoing connection
-setup; an explicit connection command cannot silently change its role. Device pairing and user/workspace accounts remain
-separate work; this version uses explicit enrollment keys and automatic routes.
+setup; an explicit connection command cannot silently change its role. Since
+0.2.2, use [connector-first pairing](connector-pairing.md) for ordinary PC
+connection and explicitly bootstrap the dispatcher owner. Multi-user workspace
+isolation remains future work; credential-file enrollment is an advanced path.
 
 Agent configuration does not install local tools, launch services or export
 keys implicitly. Each has its own menu action. Repeated edits preserve existing
@@ -61,10 +63,10 @@ on each connector PC. Legacy explicit server routes remain available through
 `setup --section agents` for old connectors. `agents list` and conversation
 selection on a server read the live runtime catalog.
 
-Upgrade the dispatcher before rc4 connectors: registration hello v2 includes
+Historical rc4 compatibility note: registration hello v2 introduced
 validated kind/cwd/mode metadata; other control frames remain v1. The rc4 server
 still accepts legacy hello v1. The catalog persists in the existing database
-schema 8 and restores offline routes after restart. Keep computer IDs and agent
+schema 8 at that time (current schema is 10) and restores offline routes after restart. Keep computer IDs and agent
 aliases stable to retain conversation addresses. A changed cwd applies to new
 sessions; existing sessions retain their recorded cwd.
 
