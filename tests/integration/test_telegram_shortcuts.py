@@ -56,7 +56,7 @@ async def test_recent_preview_does_not_select_and_explicit_select_targets_exact_
     assert "Предпросмотр не меняет" in preview.text
     assert channel._conversation(OWNER).agent == "work"
     assert core.store.active_revision(current.conversation) == revision
-    data = button(preview, "Выбрать диалог").callback_data
+    data = button(preview, "Сделать активным").callback_data
     await click(channel, 3, preview, data)
     assert channel._conversation(OWNER) == target.conversation
     assert core.active_session(target.conversation).id == target.id
@@ -72,7 +72,7 @@ async def test_recent_select_rejects_a_newer_choice(telegram, change):
     target = add(core, "Target")
     await feed(channel, 1, f"/recent_dialogue {target.id}")
     preview = session.sent[-1]
-    data = button(preview, "Выбрать диалог").callback_data
+    data = button(preview, "Сделать активным").callback_data
     if change == "route":
         channel._set_route(OWNER, "work")
     else:
@@ -93,7 +93,7 @@ async def test_removed_route_retains_local_name_without_a_select_action(telegram
     preview = session.sent[-1]
     assert "маршрут удалён" in preview.text
     assert not any(
-        "Выбрать диалог" in b.text for row in preview.reply_markup.inline_keyboard for b in row
+        "Сделать активным" in b.text for row in preview.reply_markup.inline_keyboard for b in row
     )
     with pytest.raises(GatewayError, match="недоступен"):
         await channel._command(OWNER, f"/select_recent {removed.id}")

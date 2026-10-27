@@ -5,10 +5,9 @@
 Available since 0.2.3 (first previewed in 0.2.3rc1), **not in 0.2.2**.
 Safe/work profiles, cancellation and scoped persisted resume are implemented in
 stable releases since 0.2.3. Scoped checks and independent review are recorded
-in the [evidence journal](../items/connector-harness-adapters.ru.md). Live authenticated
-work/tool/cancel/resume/approval acceptance remains open; the owner has confirmed
-basic Windows→WSL use. Synthetic peers do not establish live model or Desktop
-support. Use connector **0.2.6 or later** for the answer and recovery fixes below.
+in the [evidence journal](../items/connector-harness-adapters.ru.md). The owner confirmed basic Windows→WSL use and provisionally closed remaining
+shipped-function acceptance on 2026-10-27; reopen only on reported problems. Synthetic peers do not establish live model or Desktop
+support. Use dispatcher and connector **0.2.8** for all answer and recovery fixes below.
 
 The adapter launches a dedicated native Claude Code `stream-json` child per
 conversation and uses the existing AgentClient, connector relay and human approval
@@ -25,9 +24,8 @@ described in [managed Codex/Claude inside WSL](windows-wsl-managed.md).
 - Authenticate the CLI locally through its normal workflow before live testing.
   Gateway setup does not install it, sign in, switch accounts or copy credentials
   to the dispatcher. Initialize success alone does not prove login/model access.
-- Use explicit configuration, env and data paths and a disposable project. Live
-  acceptance and installation updates follow the owner-approved
-  [acceptance plan](../plans/p4.13-work-mode.ru.md#6-живая-приёмка--следующий-пункт-не-этот).
+- Use explicit configuration, env and data paths and a disposable project. Historical
+  scenarios are retained in the [plan](../plans/p4.13-work-mode.ru.md#6-живая-приёмка--следующий-пункт-не-этот).
 - On Windows, choose the native executable, not the Desktop UI launcher or a
   PowerShell/npm shell wrapper. An absolute `claude.exe` path can be used if PATH
   does not resolve the native executable. Native Windows tests currently use a
@@ -175,8 +173,16 @@ follow-up explicitly to continue. [Presentation](telegram-presentation.md).
   messages to it and offers **▶ Возобновить диалог**: the native chat is reopened
   with `--resume`, and the interrupted request is never resent. Part of its work
   may already be done; ask the agent to check. A crash or unconfirmed cleanup
-  (e.g. WSL) keeps the old hard fence. Requires dispatcher and connector from the
-  same release; older peers keep the hard fence.
+  (e.g. WSL) keeps the fence, shown in Telegram as *заблокирован*. After checking
+  that the agent no longer runs, the owner releases it with **🔓 Проверил —
+  разблокировать** (with a confirmation step) or offline on the PC with
+  `acpgw connector-sessions fenced|release --agent ALIAS [ID]`. Nothing is resent.
+  Requires dispatcher and connector from the same release; older peers keep the
+  hard fence.
+- **Bindings survive reinstalling the CLI.** In P4.19 source the binding
+  key covers where native chats live (profile, cwd, mode, home/agent home, WSL
+  distribution/user) but not the executable path or WSL PATH/python. Older rows
+  (0.2.8 and earlier) move to the new key on first use.
 - Transport cleanup closes owned processes and pipes, not proof that every
   descendant stopped or an action was undone.
   Uncertain work blocks safe maintenance even after connection loss. Other

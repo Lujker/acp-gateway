@@ -28,12 +28,14 @@ from acp_gateway.agents import (
     AgentClient,
     AgentError,
     SessionBusy,
+    SessionFenced,
     SessionInterrupted,
     SessionNotFound,
 )
 from acp_gateway.agents.client import PermissionRequest
-from acp_gateway.agents.events import MessageChunk, SessionInfoUpdated, TurnFinished
+from acp_gateway.agents.events import MessageChunk, ModelObserved, SessionInfoUpdated, TurnFinished
 from acp_gateway.agents.model_control import identifier
+from acp_gateway.agents.observations import NATIVE_KINDS
 from acp_gateway.channels.base import Channel
 from acp_gateway.config import PolicySettings, RateLimitSettings, RetentionSettings
 from acp_gateway.core.approvals import Approval, ApprovalManager
@@ -55,6 +57,23 @@ from acp_gateway.storage.records import utcnow
 
 DEFAULT_JOB_RETENTION = timedelta(days=7)
 DEFAULT_CANCEL_GRACE = 10.0
+
+
+CHECKPOINT_PROMPT = (
+    "Аккуратно заверши текущую работу: не начинай новых изменений, доведи начатое до "
+    "целостного состояния или явно отметь, что осталось незавершённым. Затем составь "
+    "точку возврата, чтобы продолжить позже, возможно в новом диалоге:\n"
+    "1. Цель и контекст задачи.\n"
+    "2. Что сделано — с путями к изменённым файлам и командам, если были.\n"  # noqa: RUF001
+    "3. Текущее состояние: что работает, что нет, незавершённые или незафиксированные "
+    "изменения.\n"
+    "4. Что осталось сделать — по шагам.\n"
+    "5. Важные решения, допущения и открытые вопросы.\n"
+    "6. С чего начать при продолжении.\n"  # noqa: RUF001
+    "Ответь только этой сводкой."
+)
+CHECKPOINT_LIMIT = 20_000
+CHECKPOINT_NAMESPACE = "dialogue_checkpoint"
 
 
 def _new_job_id() -> str:
@@ -123,11 +142,16 @@ class GatewayCore:
         self._channels: dict[str, Channel] = {}
         self._running: dict[str, _RunningJob] = {}
         self._busy: dict[int, str] = {}  # session row id -> running job id
+        self._checkpoint_jobs: set[str] = set()
+        # Dialogue row id -> (conversation, namespace, notify) for "after the current job".
+        self._pending_checkpoints: dict[int, tuple] = {}
+        self._checkpoint_tasks: set[asyncio.Task] = set()
         self._locks: defaultdict[Conversation, asyncio.Lock] = defaultdict(asyncio.Lock)
         self._log = get_logger(__name__)
         self._closed = False
         self._creating = 0
         self._model_operations = 0
+        self._control_operations = 0
         self._model_confirmations: dict[Conversation, tuple] = {}
         self._maintenance_token: str | None = None
         self.policy = Policy(policy)
@@ -228,6 +252,10 @@ class GatewayCore:
             await asyncio.gather(self._retention_task, return_exceptions=True)
             self._retention_task = None
         self._model_confirmations.clear()
+        self._pending_checkpoints.clear()
+        for task in list(self._checkpoint_tasks):
+            task.cancel()
+        await asyncio.gather(*self._checkpoint_tasks, return_exceptions=True)
         self.approvals.close()
         for channel in reversed(self._channels.values()):
             try:
@@ -263,6 +291,7 @@ class GatewayCore:
             "creating_sessions": self._creating,
             "pending_approvals": self.approvals.pending_count,
             "model_operations": self._model_operations,
+            "control_operations": self._control_operations,
             "unresolved_model_states": self.store.models.unresolved_count(),
         }
 
@@ -274,6 +303,7 @@ class GatewayCore:
             or self._creating
             or self.approvals.pending_count
             or self._model_operations
+            or self._control_operations
             or self.store.models.unresolved_count()
         ):
             raise MaintenanceBlocked(
@@ -282,6 +312,16 @@ class GatewayCore:
             )
         self._maintenance_token = secrets.token_hex(16)
         return self._maintenance_token
+
+    @contextlib.contextmanager
+    def control_operation(self):
+        """Fence a durable remote side-effect admission against dispatcher maintenance."""
+        self._check_admission()
+        self._control_operations += 1
+        try:
+            yield
+        finally:
+            self._control_operations -= 1
 
     def resume_maintenance(self, token: str | None = None, *, force: bool = False) -> None:
         if not force and (
@@ -331,8 +371,18 @@ class GatewayCore:
             raise UnknownSession("This chat does not own that dialogue.")
         return self._recent_view(record)
 
+    def dialogue_history(self, dialogue_id: int, *, channel: str, key: str, job_id=None) -> dict:
+        record = self.owned_dialogue(dialogue_id, channel=channel, key=key)
+        if job_id is not None and (not isinstance(job_id, str) or not job_id or len(job_id) > 128):
+            raise GatewayError("Invalid history cursor.")
+        result = self.store.dialogue_turn(record.id, job_id)
+        if job_id is not None and result["turn"] is None:
+            raise JobNotFound("History entry unavailable; it may have expired. Reopen history.")
+        return {"dialogue": record, **result}
+
     def _session_view(self, record: SessionRecord) -> SessionRecord:
         client = self.agent(record.conversation.agent)
+        self._remember_native_observation(record, client)
         remember = getattr(client, "remember_session_binding", None)
         if remember is not None and record.binding is not None:
             remember(record.acp_session_id, record.binding)
@@ -347,6 +397,43 @@ class GatewayCore:
             "dialogue_display_titles", self._dialogue_title_key(record), record.title
         )
         return replace(record, availability=state, title=title)
+
+    @staticmethod
+    def _observation_identity(record):
+        return [record.conversation.agent, record.acp_session_id, record.created_at.isoformat()]
+
+    def _remember_native_observation(self, record, client):
+        if client.profile.kind not in NATIVE_KINDS:
+            return
+        value = getattr(client, "session_observation", lambda sid: None)(record.acp_session_id)
+        if value is not None:
+            envelope = {"identity": self._observation_identity(record), "value": value}
+            previous = self.store.channel_state("native_model_observation", str(record.id))
+            if previous != envelope:
+                self.store.set_channel_state("native_model_observation", str(record.id), envelope)
+
+    def observed_model(self, record):
+        """Local saved evidence only; never connect or confirm a model setter."""
+        kind = self.agent(record.conversation.agent).profile.kind
+        if kind not in NATIVE_KINDS:
+            return self.store.models.state(record.id)
+        envelope = self.store.channel_state("native_model_observation", str(record.id))
+        if not envelope or envelope.get("identity") != self._observation_identity(record):
+            envelope = None
+        value = envelope["value"] if envelope else {}
+        if not value.get("model") and kind not in {"codex", "claude_code"}:
+            # Plain ACP agents may also implement the model.options extension.
+            return self.store.models.state(record.id)
+        if not envelope:
+            return None
+        return {
+            "observed_provider": value.get("provider"),
+            "observed_model": value.get("model"),
+            "observed_effort": value.get("effort"),
+            "observation_source": value.get("source"),
+            "updated_at": value.get("observed_at"),
+            "state": "observed",
+        }
 
     def active_session(self, conversation: Conversation) -> SessionRecord | None:
         self.agent(conversation.agent)
@@ -523,11 +610,16 @@ class GatewayCore:
         record = self.store.session(dialogue_id)
         if record is None or record.conversation != conversation:
             raise UnknownSession("This conversation does not own that dialogue.")
-        return {
+        result = {
             "dialogue_id": record.id,
             "model_state": self.store.models.state(record.id),
             "default_required": self.store.channel_state("model_default_required", str(record.id)),
         }
+        if self.agent(conversation.agent).profile.kind in NATIVE_KINDS:
+            native = self.observed_model(record)
+            if native and native.get("observation_source") != "model.options":
+                result["native_observation"] = native
+        return result
 
     async def model_options(
         self,
@@ -806,6 +898,7 @@ class GatewayCore:
         acp_session_id: str | None = None,
         create_session: bool = True,
         delivery_namespace: str | None = None,
+        admission=None,
     ) -> Job:
         """Start a turn in the active or explicitly selected owned session.
 
@@ -819,6 +912,8 @@ class GatewayCore:
         self.work_rate_limiter.check(conversation.channel)
         async with self._locks[conversation]:
             self._check_admission()
+            if admission is not None:
+                admission()
             if acp_session_id is not None:
                 session = self.store.find_session(conversation, acp_session_id)
                 if session is None:
@@ -849,6 +944,11 @@ class GatewayCore:
                     "unknown. Continue the dialogue explicitly; the interrupted request "
                     "is not sent again."
                 )
+            if state == "fenced":
+                raise SessionFenced(
+                    "The computer never confirmed that earlier work in this dialogue stopped. "
+                    "Check it, then release the dialogue explicitly; nothing is sent again."
+                )
             if state == "restore-unavailable" or (
                 state == "uncertain"
                 and session.binding
@@ -858,8 +958,23 @@ class GatewayCore:
                     "This Hermes dialogue remains recorded but cannot safely be restored; "
                     "create a new session with /new. The previous prompt will not be replayed."
                 )
+            evidence = self.observed_model(session) or {}
             job = self.store.add_job(
-                _new_job_id(), session.id, delivery_namespace=delivery_namespace
+                _new_job_id(),
+                session.id,
+                delivery_namespace=delivery_namespace,
+                prompt=text,
+                context={
+                    "kind": client.profile.kind,
+                    "computer_id": client.profile.computer_id,
+                    "cwd": session.cwd,
+                    "title": self._session_view(session).title or _prompt_title(text),
+                    "provider": evidence.get("observed_provider"),
+                    "model": evidence.get("observed_model"),
+                    "model_state": durable.get("state") if durable else None,
+                    "effort": evidence.get("observed_effort"),
+                    "model_observation_source": evidence.get("observation_source"),
+                },
             )
             self._model_confirmations.pop(conversation, None)
             self.store.touch_session(session.id)
@@ -900,6 +1015,108 @@ class GatewayCore:
             await resume(record.acp_session_id, record.cwd)
             self.store.touch_session(record.id)
             self._log.info("interrupted dialogue resumed", dialogue_id=record.id)
+        return self._session_view(record)
+
+    # ----------------------------------------------------------- checkpoints
+
+    def checkpoint_of(self, dialogue_id: int) -> dict | None:
+        """The saved return point of a dialogue; kept beyond job retention."""
+        return self.store.channel_state(CHECKPOINT_NAMESPACE, str(dialogue_id))
+
+    def _save_checkpoint(self, job: Job) -> None:
+        if job.status is not JobStatus.COMPLETED or not (job.answer or "").strip():
+            return
+        try:
+            self.store.set_channel_state(
+                CHECKPOINT_NAMESPACE,
+                str(job.session_id),
+                {
+                    "job_id": job.id,
+                    "created_at": (job.finished_at or utcnow()).isoformat(),
+                    "text": redact_text(job.answer)[:CHECKPOINT_LIMIT],
+                },
+            )
+        except Exception:
+            # The answer itself stays in the job; only the durable copy is missing.
+            self._log.exception("could not save the dialogue checkpoint", job_id=job.id)
+
+    async def checkpoint(
+        self,
+        conversation: Conversation,
+        dialogue_id: int,
+        *,
+        mode: str = "now",
+        delivery_namespace: str | None = None,
+        notify=None,
+    ) -> dict:
+        """Ask the agent to wrap up and write a return point for later.
+
+        ``now`` starts it at once (``SessionBusy`` while a job runs); ``after`` waits
+        for the running job; ``interrupt`` cancels it first. Nothing is replayed.
+        """
+        if mode not in {"now", "after", "interrupt"}:
+            raise GatewayError("Unknown checkpoint mode.")
+        record = self.store.session(dialogue_id) if type(dialogue_id) is int else None
+        if record is None or record.conversation != conversation:
+            raise UnknownSession("This conversation does not own that dialogue.")
+        running = self._busy.get(record.id)
+        if running is not None and mode != "now":
+            self._pending_checkpoints[record.id] = (conversation, delivery_namespace, notify)
+            if mode == "interrupt":
+                try:
+                    await self.cancel_job(running)
+                except BaseException:
+                    self._pending_checkpoints.pop(record.id, None)
+                    raise
+            return {"status": "scheduled", "after": running}
+        job = await self.submit(
+            conversation,
+            CHECKPOINT_PROMPT,
+            acp_session_id=record.acp_session_id,
+            create_session=False,
+            delivery_namespace=delivery_namespace,
+        )
+        # No await since submit created the task, so the job cannot have finished yet.
+        self._checkpoint_jobs.add(job.id)
+        return {"status": "started", "job": job}
+
+    def cancel_pending_checkpoint(self, dialogue_id: int) -> bool:
+        return self._pending_checkpoints.pop(dialogue_id, None) is not None
+
+    def pending_checkpoint(self, dialogue_id: int) -> bool:
+        return dialogue_id in self._pending_checkpoints
+
+    async def _start_pending_checkpoint(self, dialogue_id, conversation, namespace, notify):
+        try:
+            await self.checkpoint(
+                conversation, dialogue_id, mode="now", delivery_namespace=namespace
+            )
+        except Exception as exc:
+            self._log.warning("scheduled checkpoint did not start", dialogue_id=dialogue_id)
+            if notify is not None:
+                with contextlib.suppress(Exception):
+                    notify(dialogue_id, exc)
+
+    async def release_fenced(self, conversation: Conversation, dialogue_id: int) -> SessionRecord:
+        """Owner checked that earlier work stopped; reopen the native dialogue.
+
+        The computer applies it under its exclusive lock; no prompt is replayed.
+        """
+        self._check_admission()
+        client = self.agent(conversation.agent)
+        async with self._locks[conversation]:
+            self._check_admission()
+            record = self.store.session(dialogue_id) if type(dialogue_id) is int else None
+            if record is None or record.conversation != conversation:
+                raise UnknownSession("This chat does not own that dialogue.")
+            if record.id in self._busy:
+                raise SessionBusy("The dialogue is running a job.")
+            release = getattr(client, "release_fenced", None)
+            if release is None:
+                raise SessionNotFound("This agent cannot release fenced dialogues.")
+            await release(record.acp_session_id, record.cwd)
+            self.store.touch_session(record.id)
+            self._log.info("fenced dialogue released by owner", dialogue_id=record.id)
         return self._session_view(record)
 
     async def ask(self, conversation: Conversation, text: str, wait: float | None = None) -> Job:
@@ -995,6 +1212,16 @@ class GatewayCore:
                 client.prompt(job.acp_session_id, text, cwd=cwd)
             ) as events:
                 async for event in events:
+                    if isinstance(event, ModelObserved):
+                        if (
+                            event.session_id != job.acp_session_id
+                            or client.profile.kind not in NATIVE_KINDS
+                        ):
+                            raise GatewayError("Native observation identity mismatch")
+                        record = self.store.session(job.session_id)
+                        self._remember_native_observation(record, client)
+                        self.store.observe_job_model(job.id, event.observation)
+                        continue  # Internal evidence is not user-visible progress.
                     if isinstance(event, MessageChunk):
                         remaining = self.policy.settings.max_response_length - run.answer_chars
                         if len(event.text) > remaining:
@@ -1055,8 +1282,19 @@ class GatewayCore:
             run.final = final
             self._running.pop(job.id, None)
             self._busy.pop(job.session_id, None)
+            if job.id in self._checkpoint_jobs:
+                self._checkpoint_jobs.discard(job.id)
+                self._save_checkpoint(final)
             run.done.set()
             self.bus.publish(JobFinished(job.conversation, final))
+            pending = self._pending_checkpoints.pop(job.session_id, None)
+            if pending is not None and not self._closed:
+                task = asyncio.get_running_loop().create_task(
+                    self._start_pending_checkpoint(job.session_id, *pending),
+                    name=f"checkpoint-{job.session_id}",
+                )
+                self._checkpoint_tasks.add(task)
+                task.add_done_callback(self._checkpoint_tasks.discard)
             self._log.info(
                 "job finished",
                 job_id=job.id,

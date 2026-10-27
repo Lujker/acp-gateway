@@ -11,6 +11,7 @@ from test_telegram_delivery import pause_sender, saved
 from acp_gateway.channels.telegram_format import plain_html
 from acp_gateway.core import GatewayError
 from acp_gateway.storage import Conversation, JobStatus
+from fakes.telegram import answer_body
 
 
 def finished(core, handle="result"):
@@ -21,7 +22,7 @@ def finished(core, handle="result"):
     return core.job(job.id)
 
 
-@pytest.mark.parametrize("action", ["Продолжить диалог", "Новый диалог"])
+@pytest.mark.parametrize("action", ["Сделать активным", "Новый диалог"])
 async def test_result_action_is_private_once_only_and_does_not_replay(telegram, action):
     core, channel, session, server = telegram
     job = finished(core)
@@ -34,7 +35,7 @@ async def test_result_action_is_private_once_only_and_does_not_replay(telegram, 
     assert core.active_session(job.conversation).id == newer.id and not server.log
     await click(channel, 3, result, data)
     selected = core.active_session(job.conversation)
-    if action == "Продолжить диалог":
+    if action == "Сделать активным":
         assert selected.id == job.session_id and not server.log
     else:
         assert selected.id not in {job.session_id, newer.id}
@@ -46,10 +47,10 @@ async def test_result_action_is_private_once_only_and_does_not_replay(telegram, 
     assert session.calls[-1].show_alert
     assert core.store.active_revision(job.conversation) == revision
     assert len(core.job_history("telegram", str(OWNER))["jobs"]) == 1
-    assert result.text == "Saved answer"
+    assert answer_body(result.text) == "Saved answer"
 
 
-@pytest.mark.parametrize("action", ["Продолжить диалог", "Новый диалог"])
+@pytest.mark.parametrize("action", ["Сделать активным", "Новый диалог"])
 @pytest.mark.parametrize("change", ["route", "selection"])
 async def test_old_result_controls_cannot_override_newer_selection(telegram, action, change):
     core, channel, session, server = telegram
@@ -76,13 +77,16 @@ async def test_automatic_long_result_has_dialogue_actions_only_on_last_fragment(
         await channel._deliver_result(core.store.deliveries.due(channel.namespace))
     fragments = [m for m in session.sent if "📄 Ответ ·" in m.text]
     assert len(fragments) == 2
-    assert "".join(plain_html(m.text).split("\n\n", 1)[1] for m in fragments) == "A" * 2000 + "B"
+    assert (
+        "".join(plain_html(answer_body(m.text)).split("\n\n", 1)[1] for m in fragments)
+        == "A" * 2000 + "B"
+    )
     assert not any(
         "Новый диалог" in item.text
         for row in fragments[0].reply_markup.inline_keyboard
         for item in row
     )
-    assert button(fragments[1], "Продолжить диалог") and button(fragments[1], "Новый диалог")
+    assert button(fragments[1], "Сделать активным") and button(fragments[1], "Новый диалог")
     assert core.store.deliveries.get(channel.namespace, job.id)["state"] == "delivered"
     assert not server.log
 
@@ -115,7 +119,9 @@ async def test_unrestorable_result_offers_new_but_cannot_select_the_old_dialogue
     result = session.sent[-1]
     assert button(result, "Новый диалог")
     assert not any(
-        "Продолжить" in item.text for row in result.reply_markup.inline_keyboard for item in row
+        "Сделать активным" in item.text
+        for row in result.reply_markup.inline_keyboard
+        for item in row
     )
     with pytest.raises(GatewayError, match="нельзя восстановить"):
         await channel._command(OWNER, f"/open_dialogue {job.id}")
@@ -171,7 +177,7 @@ async def test_new_from_result_keeps_newer_dialogue_when_selection_changes_durin
     assert len(core.job_history("telegram", str(OWNER))["jobs"]) == 1
 
 
-@pytest.mark.parametrize("label", ["Продолжить диалог", "Новый диалог"])
+@pytest.mark.parametrize("label", ["Сделать активным", "Новый диалог"])
 async def test_result_action_rechecks_selection_after_callback_ack(telegram, label):
     from aiogram.methods import AnswerCallbackQuery
 

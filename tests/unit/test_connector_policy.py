@@ -69,6 +69,24 @@ def test_session_creation_drops_executable_mcp_and_additional_roots(policy, meth
 
 
 @pytest.mark.parametrize(
+    ("flags", "expected"),
+    [
+        ({"releaseFence": True}, None),  # release alone is never an owner resume
+        ({"resumeInterrupted": True}, {"resumeInterrupted": True}),
+        (
+            {"resumeInterrupted": True, "releaseFence": True, "other": 1},
+            {"resumeInterrupted": True, "releaseFence": True},
+        ),
+        ({"resumeInterrupted": True, "releaseFence": "yes"}, {"resumeInterrupted": True}),
+    ],
+)
+def test_load_forwards_only_explicit_owner_resume_flags(policy, flags, expected):
+    params = {"cwd": CWD, "sessionId": "s1", "_meta": {"acp-gateway": flags}}
+    clean = policy.prepare(request("session/load", params))["params"]
+    assert clean.get("_meta") == ({"acp-gateway": expected} if expected else None)
+
+
+@pytest.mark.parametrize(
     "cwd",
     [
         "/etc",

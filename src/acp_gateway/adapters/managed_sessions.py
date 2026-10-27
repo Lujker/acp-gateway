@@ -4,7 +4,9 @@ Only IDs created by this profile can be loaded. An OS lock excludes other gatewa
 processes; a committed busy marker survives a crash. No prompts or credentials are
 stored here, and releasing a lease never clears an unknown turn by itself: only a
 confirmed process stop turns it into ``interrupted``, which the owner may resume
-explicitly. The interrupted prompt is never replayed.
+explicitly. The interrupted prompt is never replayed. When even the stop was
+never confirmed (crash, unconfirmed WSL cleanup), the binding stays fenced until
+the owner explicitly releases it after checking that the work has stopped.
 """
 
 from __future__ import annotations
@@ -25,27 +27,84 @@ class InterruptedTurn(LocalPolicyError):
     """The last turn's outcome is unknown; only an explicit resume may continue."""
 
 
+class FencedBinding(LocalPolicyError):
+    """Earlier cleanup or a turn outcome was never confirmed; the owner may release it."""
+
+
+# Persisted states a confirmed stop would have cleared, mapped to what it would set.
+FENCED = {"attached": "idle", "empty-attached": "empty-idle", "busy": "interrupted"}
+
+
 class ManagedSessions:
     def __init__(self, directory, profile):
         self.directory, self.profile = directory, profile
         self._locks = {}
         settings = getattr(profile, profile.kind)
+        wsl = settings.wsl
+        # Where native chats live and under which permissions, not how the CLI is
+        # launched: reinstalling the CLI or changing PATH must not orphan dialogues.
         identity = {
             "kind": profile.kind,
             "profile": profile.alias,
             "cwd": profile.default_cwd,
             "mode": settings.mode,
-            "executable": settings.executable,
-            "wsl": settings.wsl.model_dump() if settings.wsl else None,
-            "home": None if settings.wsl else str(Path.home()),
+            "wsl": (
+                {
+                    "distribution": wsl.distribution,
+                    "user": wsl.user,
+                    "home": wsl.home,
+                    "agent_home": wsl.agent_home,
+                }
+                if wsl
+                else None
+            ),
+            "home": None if wsl else str(Path.home()),
             "agent_home": None
-            if settings.wsl
+            if wsl
             else os.environ.get("CODEX_HOME" if profile.kind == "codex" else "CLAUDE_CONFIG_DIR"),
+            "version": 2,
         }
-        self.scope = hashlib.sha256(json.dumps(identity, sort_keys=True).encode()).hexdigest()
+        self.scope = self._hash(identity)
+        # Bindings written before 0.2.9 also hashed the executable and WSL PATH/python.
+        legacy = {key: identity[key] for key in identity if key != "version"}
+        legacy |= {"executable": settings.executable, "wsl": wsl.model_dump() if wsl else None}
+        self.legacy_scope = self._hash(legacy)
+
+    @staticmethod
+    def _hash(identity):
+        return hashlib.sha256(json.dumps(identity, sort_keys=True).encode()).hexdigest()
+
+    def _migrate(self, db, sid=None):
+        """Move legacy rows of this exact profile to the stable scope (idempotent)."""
+        if sid is None:
+            db.execute(
+                "UPDATE OR IGNORE bindings SET scope=? WHERE scope=?",
+                (self.scope, self.legacy_scope),
+            )
+        else:
+            db.execute(
+                "UPDATE OR IGNORE bindings SET scope=? WHERE scope=? AND sid=?",
+                (self.scope, self.legacy_scope, sid),
+            )
 
     def fork(self):
         return type(self)(self.directory, self.profile)
+
+    def contains(self, sid, cwd):
+        """Check provenance without attaching a native process or clearing a busy fence."""
+        if not isinstance(sid, str) or not sid or len(sid) > 128 or not sid.isprintable():
+            return False
+        path = self.directory / "bindings.sqlite3"
+        if not path.is_file():
+            return False
+        with closing(
+            sqlite3.connect(path.absolute().as_uri() + "?mode=ro", uri=True, timeout=2)
+        ) as db:
+            row = db.execute(
+                "SELECT cwd FROM bindings WHERE scope IN (?,?) AND sid=?",
+                (self.scope, self.legacy_scope, sid),
+            ).fetchone()
+        return row == (cwd,)
 
     def _db(self):
         self.directory.mkdir(parents=True, exist_ok=True, mode=0o700)
@@ -90,13 +149,24 @@ class ManagedSessions:
             self._locks.pop(sid).release()
             raise
 
-    def load(self, sid, cwd, *, resume_interrupted=False):
+    def load(self, sid, cwd, *, resume_interrupted=False, release_fence=False):
         self._acquire(sid)
         try:
             with closing(self._db()) as db, db:
+                self._migrate(db, sid)
                 record = db.execute(
                     "SELECT cwd,state FROM bindings WHERE scope=? AND sid=?", (self.scope, sid)
                 ).fetchone()
+                if record is not None and record[0] == cwd and record[1] in FENCED:
+                    # Our OS lock is held, so no process of this installation owns it.
+                    if not release_fence:
+                        raise FencedBinding(
+                            "native binding fenced: earlier outcome unknown; release explicitly"
+                        )
+                    # The owner confirmed the earlier work stopped. An unknown turn is
+                    # continued like an interrupted one: its prompt is never replayed.
+                    record = (cwd, FENCED[record[1]])
+                    resume_interrupted = True
                 if record == (cwd, "interrupted") and not resume_interrupted:
                     raise InterruptedTurn("native turn was interrupted; resume explicitly")
                 allowed = {(cwd, "idle"), (cwd, "empty-idle")}
@@ -120,6 +190,40 @@ class ManagedSessions:
         except BaseException:
             self._locks.pop(sid).release()
             raise
+
+    def fenced(self):
+        """Fenced bindings of this exact profile scope: (sid, cwd, state)."""
+        path = self.directory / "bindings.sqlite3"
+        if not path.is_file():
+            return []
+        with closing(
+            sqlite3.connect(path.absolute().as_uri() + "?mode=ro", uri=True, timeout=2)
+        ) as db:
+            rows = db.execute(
+                "SELECT sid, cwd, state FROM bindings WHERE scope IN (?,?) AND state IN (?,?,?)"
+                " ORDER BY sid",
+                (self.scope, self.legacy_scope, *FENCED),
+            ).fetchall()
+        return [row for row in rows if not self._held(row[0])]
+
+    def _held(self, sid):
+        """True while another process of this installation owns the binding's lock."""
+        name = hashlib.sha256(sid.encode()).hexdigest() + ".lock"
+        lock = FileLock(self.directory / name, thread_local=False)
+        try:
+            lock.acquire(timeout=0)
+        except Timeout:
+            return True
+        lock.release()
+        return False
+
+    def release(self, sid):
+        """Owner-confirmed offline release: the binding becomes idle, nothing replayed."""
+        rows = {row[0]: row for row in self.fenced()}
+        if sid not in rows:
+            raise LocalPolicyError("no fenced binding with that ID in this profile")
+        self.load(sid, rows[sid][1], release_fence=True)
+        self.close()
 
     def _state(self, sid, before, after, *, alternative=None):
         if sid not in self._locks:

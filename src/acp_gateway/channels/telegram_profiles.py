@@ -62,13 +62,16 @@ class ProfileCards:
             self._profile_drafts = {}
         return self._profile_drafts
 
-    async def _profiles(self, chat, text):
+    def _known_telegram_command(self, command):
         # Import after TelegramChannel is initialized to avoid the mixin import cycle.
         from acp_gateway.channels.telegram import COMMANDS
 
-        command, _, argument = text.partition(" ")
-        command = command.split("@", 1)[0]
-        known_command = command in {"/" + name for name, *_ in COMMANDS} | {
+        return command in {"/" + name for name, *_ in COMMANDS} | {
+            "/shell",
+            "/shells",
+            "/shell_cancel",
+            "/shell_select",
+            "/shell_send",
             "/cancel",
             "/rename",
             "/rename_cancel",
@@ -83,19 +86,42 @@ class ProfileCards:
             "/pair_approve",
             "/pair_deny",
             "/rename_hint",
+            "/history",
+            "/dialogue_status",
+            "/folder",
+            "/cwd_hint",
+            "/cwd_cancel",
             "/new_from_job",
             "/open_dialogue",
             "/favorite",
             "/recent_dialogue",
             "/select_favorite",
             "/select_recent",
+            "/resume_dialogue",
+            "/release_dialogue",
+            "/send_held",
+            "/checkpoint",
+            "/checkpoint_show",
+            "/checkpoint_resume",
+            "/checkpoint_new",
         }
+
+    async def _profiles(self, chat, text):
+        command, _, argument = text.partition(" ")
+        command = command.split("@", 1)[0]
+        known_command = self._known_telegram_command(command)
         forms = self._profile_forms()
         current = forms.get(chat)
         if current and current["expires"] < time.time():
             forms.pop(chat)
             if not known_command and (not command.startswith("/") or current.get("input") == "cwd"):
-                raise GatewayError("Ввод профиля устарел. Откройте /profiles КОМПЬЮТЕР.")
+                await self._panel(
+                    chat,
+                    "Ввод профиля устарел; это сообщение не отправлено агенту. "
+                    "Откройте /profiles КОМПЬЮТЕР, чтобы продолжить настройку.",
+                    [*self._hold_text(chat, text), *self._back_rows()],
+                )
+                return True
             current = None
         if current and current.get("input"):
             if command in {"/cancel", "/menu", "/profiles"}:

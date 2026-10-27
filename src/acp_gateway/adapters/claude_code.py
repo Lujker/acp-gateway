@@ -15,7 +15,7 @@ from uuid import UUID, uuid4
 
 from acp import PROTOCOL_VERSION
 
-from acp_gateway.adapters.managed_sessions import InterruptedTurn
+from acp_gateway.adapters.managed_sessions import FencedBinding, InterruptedTurn
 from acp_gateway.agents.errors import AgentUnavailable
 from acp_gateway.connectors.policy import LocalAgentPolicy, LocalPolicyError
 
@@ -181,6 +181,8 @@ class ClaudeCodeAcpTransport:
             "lock": asyncio.Lock(),
             "control_ids": set(),
             "controls": {},
+            "model_init_seen": False,
+            "model_observation": None,
         }
         self._children[sid] = child
         child["stderr"] = asyncio.create_task(self._drain_stderr(process))
@@ -287,6 +289,7 @@ class ClaudeCodeAcpTransport:
                                 "cancel": True,
                                 "coldResume": self.sessions is not None,
                                 "resumeInterrupted": 1 if self.sessions is not None else None,
+                                "releaseFence": 1 if self.sessions is not None else None,
                                 "conversationMode": "dedicated",
                                 "profileMode": self.settings.mode,
                                 "executionEnvironment": "wsl" if self.settings.wsl else "native",
@@ -308,6 +311,10 @@ class ClaudeCodeAcpTransport:
                         self.sessions.create(child["sid"], params["cwd"], empty=True)
                     self._sessions[child["sid"]] = child
                 result = {"sessionId": child["sid"]}
+                if child["model_observation"] is not None:
+                    result["_meta"] = {
+                        "acp-gateway": {"modelObservation": child["model_observation"]}
+                    }
             elif method == "session/load":
                 sid = params["sessionId"]
                 # Claude's --resume accepts a native UUID, never a path or option.
@@ -326,6 +333,7 @@ class ClaudeCodeAcpTransport:
                                 sid,
                                 params["cwd"],
                                 resume_interrupted=flags.get("resumeInterrupted") is True,
+                                release_fence=flags.get("releaseFence") is True,
                             )
                         except InterruptedTurn:
                             self._emit(
@@ -335,6 +343,18 @@ class ClaudeCodeAcpTransport:
                                         "code": -32002,
                                         "message": "Previous turn was interrupted; its outcome "
                                         "is unknown. Resume explicitly; it is not replayed.",
+                                    },
+                                }
+                            )
+                            return
+                        except FencedBinding:
+                            self._emit(
+                                {
+                                    "id": rid,
+                                    "error": {
+                                        "code": -32003,
+                                        "message": "Native binding fenced: an earlier outcome is "
+                                        "unconfirmed. Release it explicitly after checking.",
                                     },
                                 }
                             )
@@ -370,6 +390,12 @@ class ClaudeCodeAcpTransport:
                             else await self._spawn(params["cwd"], session_id=sid)
                         )
                 result = {}
+                if self._sessions[sid]["model_observation"] is not None:
+                    result["_meta"] = {
+                        "acp-gateway": {
+                            "modelObservation": self._sessions[sid]["model_observation"]
+                        }
+                    }
             elif method == "session/list":
                 result = {
                     "sessions": [
@@ -486,6 +512,7 @@ class ClaudeCodeAcpTransport:
             raise ValueError
         child = self._sessions[sid]
         turn = self._new_turn(asyncio.get_running_loop().create_future())
+        turn["model_observation"] = child["model_observation"]
         self._turns[sid] = turn
         try:
             if self.sessions is not None:
@@ -505,10 +532,15 @@ class ClaudeCodeAcpTransport:
             reason = await asyncio.wait_for(turn["done"], self.settings.turn_timeout)
             if self.sessions is not None:
                 self.sessions.finish(sid)
+            flags = (
+                {"modelObservation": turn["model_observation"]}
+                if turn["model_observation"] is not None
+                else {}
+            )
             if turn["failed"] and reason != "cancelled":
                 # A known end: the CLI is idle and the dialogue continues normally.
-                return {"stopReason": reason, "_meta": {"acp-gateway": {"turnFailed": True}}}
-            return {"stopReason": reason}
+                flags["turnFailed"] = True
+            return {"stopReason": reason, **({"_meta": {"acp-gateway": flags}} if flags else {})}
         except BaseException:
             self.uncertain = max(1, self.uncertain)
             raise
@@ -743,6 +775,20 @@ class ClaudeCodeAcpTransport:
                     continue
                 if frame.get("type") == "control_request":
                     await self._approval(child, turn, frame)
+                    continue
+                if frame.get("type") == "system" and frame.get("subtype") == "init":
+                    if (
+                        self._children.get(sid) is child
+                        and frame.get("session_id") == sid
+                        and frame.get("parent_tool_use_id") is None
+                        and not child["model_init_seen"]
+                    ):
+                        from acp_gateway.agents.observations import claude_observation
+
+                        child["model_init_seen"] = True
+                        child["model_observation"] = claude_observation(frame)
+                        if turn is not None and not turn["done"].done():
+                            turn["model_observation"] = child["model_observation"]
                     continue
                 if (
                     turn is None

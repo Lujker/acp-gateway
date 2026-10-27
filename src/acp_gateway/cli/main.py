@@ -187,13 +187,22 @@ def _build_parser() -> argparse.ArgumentParser:
     commands.add_parser("menu", help="interactive configuration and management console")
     commands.add_parser("status", help="show gateway, agents and channels")
     local_sessions = commands.add_parser(
-        "connector-sessions", help="inspect or retire local Hermes attachments without VPS access"
+        "connector-sessions",
+        help="inspect local Hermes attachments or fenced Codex/Claude dialogues without VPS access",
     )
     local_sub = local_sessions.add_subparsers(dest="session_command", required=True)
-    for action in ("list", "journal", "retire"):
-        cmd = local_sub.add_parser(action)
+    for action in ("list", "journal", "retire", "fenced", "release"):
+        cmd = local_sub.add_parser(
+            action,
+            help={
+                "fenced": "list Codex/Claude dialogues blocked by an unconfirmed earlier stop",
+                "release": "unblock one after checking that its agent no longer runs",
+            }.get(action),
+        )
         cmd.add_argument("--agent", required=True, help="local connector agent alias")
-        if action != "list":
+        if action == "release":
+            cmd.add_argument("handle", help="native dialogue ID from connector-sessions fenced")
+        elif action not in {"list", "fenced"}:
             cmd.add_argument("handle", help="opaque local handle from connector-sessions list")
     maintenance_mode = commands.add_parser(
         "maintenance", help="reserve an idle dispatcher before planned maintenance"
@@ -471,6 +480,17 @@ def _cmd_paths() -> int:
 
 def main(argv: Sequence[str] | None = None) -> int:
     argv = list(sys.argv[1:] if argv is None else argv)
+    if argv == ["__shell-worker"] or (len(argv) == 2 and argv[0] == "__shell-worker"):
+        from acp_gateway.connectors._shell_worker import main as shell_worker
+        from acp_gateway.connectors._windows_shell_job import enter_windows_job
+
+        return shell_worker(
+            enter_job=enter_windows_job, job_name=argv[1] if len(argv) == 2 else None
+        )
+    if argv == ["__shell-supervisor"]:
+        from acp_gateway.connectors.shell_runner import supervisor_entry
+
+        return supervisor_entry()
     if not argv and sys.stdin.isatty() and sys.stdout.isatty():
         argv = ["menu"]
     args = _build_parser().parse_args(argv)
@@ -701,6 +721,10 @@ def _run_configured(args) -> int:
             from acp_gateway.cli.pairing import run
 
             return run(cfg, args)
+        if args.command == "connector-sessions" and args.session_command in {"fenced", "release"}:
+            from acp_gateway.cli.connector_maintenance import fenced_sessions
+
+            return fenced_sessions(cfg, args)
         if args.command == "connector-sessions":
             from acp_gateway.cli.connector_maintenance import sessions
 

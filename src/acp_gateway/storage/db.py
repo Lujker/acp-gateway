@@ -163,6 +163,12 @@ class Store:
             (namespace, key, json.dumps(value)),
         )
 
+    def set_channel_states(self, namespace: str, values: dict) -> None:
+        """Commit related durable UI/control records together, before a remote side effect."""
+        with self._transaction():
+            for key, value in values.items():
+                self.set_channel_state(namespace, key, value)
+
     @property
     def schema_version(self) -> int:
         return self._conn.execute("PRAGMA user_version").fetchone()[0]
@@ -317,19 +323,90 @@ class Store:
     # -------------------------------------------------------------------- jobs
 
     def add_job(
-        self, job_id: str, session_id: int, *, delivery_namespace: str | None = None
+        self,
+        job_id: str,
+        session_id: int,
+        *,
+        delivery_namespace: str | None = None,
+        prompt: str | None = None,
+        context: dict | None = None,
     ) -> Job:
         with self._transaction():
             self._conn.execute(
                 "INSERT INTO jobs (id, session_id, status, created_at) VALUES (?, ?, ?, ?)",
                 (job_id, session_id, JobStatus.RUNNING.value, _ts(utcnow())),
             )
+            if prompt is not None:
+                self._conn.execute(
+                    "INSERT INTO job_prompts (job_id, prompt) VALUES (?, ?)",
+                    (job_id, redact_text(prompt)),
+                )
+            if context is not None:
+                self._conn.execute(
+                    "INSERT INTO job_context (job_id, context) VALUES (?, ?)",
+                    (job_id, json.dumps(redact_value(context))),
+                )
             if delivery_namespace is not None:
                 self._conn.execute(
                     "INSERT INTO outbound_deliveries (job_id, namespace) VALUES (?, ?)",
                     (job_id, delivery_namespace),
                 )
         return self._require(self.job(job_id))
+
+    def job_context(self, job_id: str) -> dict | None:
+        row = self._conn.execute(
+            "SELECT context FROM job_context WHERE job_id = ?", (job_id,)
+        ).fetchone()
+        return json.loads(row[0]) if row else None
+
+    def observe_job_model(self, job_id: str, observation: dict | None) -> None:
+        """Pin one native observation for this job; its source defines the phase."""
+        from acp_gateway.agents.observations import observation as project
+
+        with self._transaction():
+            job = self.job(job_id)
+            context = self.job_context(job_id)
+            if job is None or job.status.finished or context is None:
+                raise ValueError("native model snapshot requires an unfinished owned job")
+            if context.get("native_model_pinned"):
+                raise ValueError("native model snapshot is already pinned")
+            value = observation or {}
+            clean = project(value) or {}
+            timestamp = value.get("observed_at")
+            if not isinstance(timestamp, str) or len(timestamp) > 40:
+                timestamp = None
+            context.update(
+                provider=clean.get("provider"),
+                model=clean.get("model"),
+                effort=clean.get("effort"),
+                model_observation_source=clean.get("source"),
+                model_observed_at=timestamp,
+                native_model_pinned=True,
+            )
+            self._conn.execute(
+                "UPDATE job_context SET context = ? WHERE job_id = ?",
+                (json.dumps(context), job_id),
+            )
+
+    def dialogue_turn(self, session_id: int, job_id: str | None = None) -> dict:
+        row = self._conn.execute(
+            "SELECT j.id, j.status, j.answer, j.error, j.created_at, p.prompt FROM jobs j "
+            "LEFT JOIN job_prompts p ON p.job_id = j.id WHERE j.session_id = ? "
+            "AND (? IS NULL OR j.id = ?) ORDER BY j.created_at DESC, j.id DESC LIMIT 1",
+            (session_id, job_id, job_id),
+        ).fetchone()
+        if row is None:
+            return {"turn": None, "older": None, "newer": None}
+        neighbors = {}
+        for name, comparison, order in (("older", "<", "DESC"), ("newer", ">", "ASC")):
+            neighbor = self._conn.execute(
+                "SELECT id FROM jobs WHERE session_id = ? "  # noqa: S608
+                f"AND (created_at, id) {comparison} (?, ?) ORDER BY created_at {order}, id {order} "
+                "LIMIT 1",
+                (session_id, row["created_at"], row["id"]),
+            ).fetchone()
+            neighbors[name] = neighbor["id"] if neighbor else None
+        return {"turn": dict(row), **neighbors}
 
     def finish_job(
         self,

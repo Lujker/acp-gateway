@@ -16,6 +16,7 @@ from uuid import uuid4
 
 from acp import PROTOCOL_VERSION
 
+from acp_gateway.adapters.managed_sessions import FencedBinding, InterruptedTurn
 from acp_gateway.agents.errors import AgentUnavailable
 from acp_gateway.config import CodexSettings
 from acp_gateway.connectors.policy import LocalAgentPolicy, LocalPolicyError
@@ -65,11 +66,13 @@ class CodexAcpTransport:
         self._pending: dict[int, asyncio.Future] = {}
         self._requests: dict[str | int, asyncio.Task] = {}
         self._sessions: dict[str, str] = {}
+        self._observations: dict[str, dict] = {}
         self._turns: dict[str, _Turn] = {}
         self._permissions: dict[str, tuple[str, str | int, str]] = {}
         self._counter = 0
         self._initialized = False
         self.uncertain = 0
+        self.cleanup_unconfirmed = False
         self.admission = None
         self._write_lock = asyncio.Lock()
         self._reader = asyncio.create_task(self._read())
@@ -252,6 +255,8 @@ class CodexAcpTransport:
                             "acp-gateway": {
                                 "cancel": True,
                                 "coldResume": self.sessions is not None,
+                                "resumeInterrupted": 1 if self.sessions is not None else None,
+                                "releaseFence": 1 if self.sessions is not None else None,
                                 "conversationMode": "dedicated",
                                 "profileMode": self.settings.mode,
                                 "executionEnvironment": "wsl" if self.settings.wsl else "native",
@@ -270,12 +275,53 @@ class CodexAcpTransport:
                     if sid in self._sessions:
                         if self._sessions[sid] != params["cwd"] or sid in self._turns:
                             raise ValueError
-                        self._emit({"id": rid, "result": {}})
+                        self._emit(
+                            {
+                                "id": rid,
+                                "result": {
+                                    "_meta": {
+                                        "acp-gateway": {
+                                            "modelObservation": self._observations.get(sid)
+                                        }
+                                    }
+                                },
+                            }
+                        )
                         return
+                    flags = (params.get("_meta") or {}).get("acp-gateway") or {}
                     try:
                         if self.sessions is None:
                             raise LocalPolicyError("resume is unavailable")
-                        self.sessions.load(sid, params["cwd"])
+                        self.sessions.load(
+                            sid,
+                            params["cwd"],
+                            resume_interrupted=flags.get("resumeInterrupted") is True,
+                            release_fence=flags.get("releaseFence") is True,
+                        )
+                    except InterruptedTurn:
+                        self._emit(
+                            {
+                                "id": rid,
+                                "error": {
+                                    "code": -32002,
+                                    "message": "Previous turn was interrupted; its outcome "
+                                    "is unknown. Resume explicitly; it is not replayed.",
+                                },
+                            }
+                        )
+                        return
+                    except FencedBinding:
+                        self._emit(
+                            {
+                                "id": rid,
+                                "error": {
+                                    "code": -32003,
+                                    "message": "Native binding fenced: an earlier outcome is "
+                                    "unconfirmed. Release it explicitly after checking.",
+                                },
+                            }
+                        )
+                        return
                     except LocalPolicyError:
                         self._emit(
                             {
@@ -309,6 +355,10 @@ class CodexAcpTransport:
                     self.sessions.create(sid, params["cwd"])
                 self._sessions[sid] = params["cwd"]
                 result = {} if loading else {"sessionId": sid}
+                from acp_gateway.agents.observations import codex_observation
+
+                self._observations[sid] = codex_observation(response, loading=loading)
+                result["_meta"] = {"acp-gateway": {"modelObservation": self._observations[sid]}}
             elif method == "session/list":
                 result = {
                     "sessions": [
@@ -714,13 +764,16 @@ class CodexAcpTransport:
         await asyncio.shield(self._closing)
 
     async def _shutdown(self):
-        confirmed = False
+        stopped = False
         try:
             await self._shutdown_process()
-            confirmed = self.uncertain == 0
+            stopped = not self.cleanup_unconfirmed
         finally:
             if self.sessions is not None:
-                self.sessions.close(confirmed=confirmed)
+                # The app-server is proven stopped: idle threads are free again and a
+                # turn with an unknown outcome becomes explicitly resumable (never
+                # replayed). Without that proof every binding stays fenced.
+                self.sessions.close(confirmed=stopped, interrupted=stopped)
 
     async def _shutdown_process(self):
         self._permissions.clear()
@@ -733,6 +786,7 @@ class CodexAcpTransport:
 
             if await close_wsl(self.process) is False:
                 self.uncertain = max(self.uncertain, 1)
+                self.cleanup_unconfirmed = True
             return
         self.process.stdin.close()
         # These are our pipe ends, not descendant processes. EOF may never arrive

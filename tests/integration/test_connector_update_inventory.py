@@ -37,6 +37,9 @@ async def connected(
     profiles=False,
     discovery=False,
     profiles_handler=None,
+    shell_operations=False,
+    shell_handler=None,
+    agents=None,
 ):
     store = Store.open_in(tmp_path / "data")
     key = tmp_path / "pc.key"
@@ -49,21 +52,22 @@ async def connected(
             response = authenticate(connection, request)
             connection.update_inventory = False
             connection.update_operations = False
+            connection.shell_operations = False
             return response
 
         dispatcher.authenticate = old_auth
     async with dispatcher.listen("127.0.0.1", 0) as server:
         url = f"ws://127.0.0.1:{server.sockets[0].getsockname()[1]}/connect"
+        manifests = agents or [AgentManifest(alias="hermes", display_name="H")]
         connection, welcome = await connect_control(
             url,
             credential=key.read_text().strip(),
-            hello=Hello(
-                computer_id="home", agents=[AgentManifest(alias="hermes", display_name="H")]
-            ),
+            hello=Hello(computer_id="home", agents=manifests),
             update_inventory=offered,
             update_operations=operations,
             agent_profiles=profiles,
             agent_discovery=discovery,
+            shell_operations=shell_operations,
         )
 
         async def factory(alias):
@@ -72,7 +76,7 @@ async def connected(
         peer = RelayPeer(
             connection,
             welcome.connection_id,
-            ["hermes"],
+            [a.alias for a in manifests],
             local_factory=factory,
             update_inventory=welcome.update_inventory == 1,
             installation_report=local_report,
@@ -81,6 +85,8 @@ async def connected(
             agent_profiles=welcome.agent_profiles == 1,
             agent_discovery=welcome.agent_discovery == 1,
             profiles_handler=profiles_handler,
+            shell_operations=welcome.shell_operations == 1,
+            shell_handler=shell_handler,
         )
         task = asyncio.create_task(peer.run())
         await peer.ready.wait()

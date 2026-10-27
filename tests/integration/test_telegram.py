@@ -19,6 +19,7 @@ from acp_gateway.core import GatewayCore, GatewayError
 from acp_gateway.storage import Conversation, JobStatus, Store
 from fakes.fake_goose import FakeGooseServer
 from fakes.telegram import FakeTelegramSession as FakeSession
+from fakes.telegram import answer_body
 
 OWNER = 12345
 OTHER = 54321
@@ -111,7 +112,7 @@ async def test_commands_durable_cursor_sessions_and_final_answer(telegram):
     conv = Conversation("telegram", str(OWNER), "work")
     assert core.active_session(conv)
     await feed(channel, 3, "say pong")
-    await eventually(lambda: any(m.text == "pong" for m in session.sent))
+    await eventually(lambda: any(answer_body(m.text) == "pong" for m in session.sent))
     prompt_count = core.store._conn.execute("SELECT COUNT(*) FROM jobs").fetchone()[0]
     # Duplicate Telegram update cannot submit twice.
     await feed(channel, 3, "say pong")
@@ -200,7 +201,7 @@ async def test_restart_preserves_chat_session_and_suppresses_replayed_command(te
     await feed(channel, 1, "/start")
     await feed(channel, 2, "/new")
     await feed(channel, 3, "say pong")
-    await eventually(lambda: any(m.text == "pong" for m in session.sent))
+    await eventually(lambda: any(answer_body(m.text) == "pong" for m in session.sent))
     profile = core.agent("work").profile
     await core.close()
     reopened = GatewayCore(
@@ -219,7 +220,7 @@ async def test_restart_preserves_chat_session_and_suppresses_replayed_command(te
         await feed(fresh_channel, 3, "say pong")
         assert not fresh_session.sent
         await feed(fresh_channel, 4, "say pong")
-        await eventually(lambda: any(m.text == "pong" for m in fresh_session.sent))
+        await eventually(lambda: any(answer_body(m.text) == "pong" for m in fresh_session.sent))
         conv = Conversation("telegram", str(OWNER), "work")
         assert len(reopened.sessions(conv)) == 1
         assert reopened.store._conn.execute("SELECT COUNT(*) FROM jobs").fetchone()[0] == 2
@@ -267,7 +268,7 @@ async def test_chat_approval_stays_private_to_its_owner(telegram):
     assert {chat for chat, _ in channel._buttons} == {OTHER}
     assert not any(approval_message(m) and m.chat.id == OWNER for m in session.sent)
     await feed(channel, 5, "/approvals", user=OWNER)
-    assert plain_html(session.sent[-1].text) == "Ожидающих подтверждений нет."
+    assert plain_html(session.sent[-1].text).split("\n\n", 1)[0] == "Ожидающих подтверждений нет."
     button_message = next(m for m in session.sent if approval_message(m) and m.chat.id == OTHER)
     assert "Источник: этот чат" in button_message.text
     await click(
@@ -349,7 +350,7 @@ async def test_slow_result_delivery_does_not_block_approval_clicks(telegram):
     original = session.make_request
 
     async def slow(bot, method, timeout=None):
-        if isinstance(method, SendMessage) and method.text == "slow saved answer":
+        if isinstance(method, SendMessage) and answer_body(method.text) == "slow saved answer":
             blocked.set()
             await release.wait()
         return await original(bot, method, timeout)
@@ -471,7 +472,14 @@ async def test_status_distinguishes_pc_link_from_lazy_acp(
     from types import SimpleNamespace
 
     session = FakeSession()
-    profile = SimpleNamespace(backend="connector", computer_id="home", alias="hermes")
+    profile = SimpleNamespace(
+        backend="connector",
+        computer_id="home",
+        alias="hermes",
+        kind="hermes",
+        display_name="Hermes",
+        default_cwd="/work",
+    )
     client = SimpleNamespace(profile=profile, connected=ready)
     relay = SimpleNamespace(
         route_status=lambda alias: {
@@ -499,6 +507,7 @@ async def test_status_distinguishes_pc_link_from_lazy_acp(
         agents={"home/hermes": client},
         channels={"cli": SimpleNamespace(connected=False), "mcp": SimpleNamespace(connected=True)},
         running_jobs=lambda: [],
+        active_session=lambda conv: None,
         agent=lambda alias: client,
         store=SimpleNamespace(channel_state=lambda *args: None, active_revision=lambda conv: 0),
     )
@@ -536,13 +545,14 @@ async def test_dialogue_cards_titles_selection_pagination_and_private_scope(tele
     text = "\n".join(m.text for m in session.sent)
     assert "Диалоги · work" in text and "Страница 1/2" in text
     assert f"▶ #{records[-1].id} — Research &lt;draft&gt; Next line" in text
-    assert "Последняя активность:" in text and "UTC" in text and "Папка: C:" in plain_html(text)
+    assert "Папка, состояние и активность — в карточке диалога." in text
+    assert "Папка: C:" in plain_html(text)
     assert "PRIVATE OTHER CHAT" not in text and "/private" not in text
-    assert text.count("Папка:") == 10
+    assert text.count("Папка:") == 1  # The destination footer; list rows stay compact.
     session.sent.clear()
     await channel._command(OWNER, "/sessions 2")
     text = "\n".join(m.text for m in session.sent)
-    assert "Страница 2/2" in text and text.count("Папка:") == 2
+    assert "Страница 2/2" in text and text.count("Папка:") == 1
     assert "Без названия" in text and "Выбрать: /switch ID" in text
     with pytest.raises(GatewayError, match="Выберите страницу"):
         await channel._command(OWNER, "/sessions 3")

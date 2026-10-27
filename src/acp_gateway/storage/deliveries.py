@@ -58,6 +58,17 @@ class DeliveryStore:
         )
         return True
 
+    def pin_presentation(self, namespace: str, job_id: str, footer: str) -> str:
+        self._conn.execute(
+            "UPDATE outbound_deliveries SET presentation = COALESCE(presentation, ?) "
+            "WHERE namespace = ? AND job_id = ? AND state = 'sending'",
+            (footer, namespace, job_id),
+        )
+        row = self.get(namespace, job_id)
+        if row is None or row["state"] != "sending" or row["presentation"] is None:
+            raise ValueError("delivery is not claimed")
+        return row["presentation"]
+
     def acknowledge(self, namespace: str, job_id: str, *, last: bool) -> None:
         self._conn.execute(
             "UPDATE outbound_deliveries SET next_chunk = next_chunk + 1, state = ?, retry_at = 0 "

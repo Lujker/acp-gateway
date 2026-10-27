@@ -17,6 +17,7 @@ import contextlib
 from collections import defaultdict
 from collections.abc import AsyncIterator, Awaitable, Callable, Coroutine, Sequence
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, TypeVar
 from urllib.parse import urlsplit
@@ -43,13 +44,20 @@ from acp_gateway.agents.errors import (
     ModeNotAvailable,
     PromptFailed,
     SessionBusy,
+    SessionFenced,
     SessionInterrupted,
     SessionNotFound,
     TLSFingerprintMismatch,
     TransportDisconnected,
     TurnFailed,
 )
-from acp_gateway.agents.events import AgentEvent, MessageChunk, TurnFinished, normalize
+from acp_gateway.agents.events import (
+    AgentEvent,
+    MessageChunk,
+    ModelObserved,
+    TurnFinished,
+    normalize,
+)
 from acp_gateway.agents.model_control import (
     MODEL_OPTIONS,
     MODEL_RECOVER,
@@ -58,6 +66,7 @@ from acp_gateway.agents.model_control import (
     model_params,
     model_result,
 )
+from acp_gateway.agents.observations import NATIVE_KINDS, config_observation, observation
 from acp_gateway.agents.tls import TlsPin, pin_certificate
 from acp_gateway.agents.transport import (
     AgentTransport,
@@ -74,6 +83,7 @@ DEFAULT_RECONNECT_DELAYS: tuple[float, ...] = (1, 2, 5, 10, 30)
 DEFAULT_CANCEL_TIMEOUT = 5.0
 # Connector error for a managed dialogue whose last turn was interrupted.
 INTERRUPTED_TURN = -32002
+FENCED_BINDING = -32003
 
 
 @dataclass(frozen=True)
@@ -219,8 +229,11 @@ class AgentClient:
         self._uncertain: set[str] = set()  # cancellation not confirmed on this connection
         # Managed dialogues whose last turn was interrupted; continue only explicitly.
         self._interrupted: set[str] = set()
+        # Managed dialogues whose earlier stop was never confirmed; owner releases only.
+        self._fenced: set[str] = set()
         self._bindings: dict[str, dict] = {}
         self._session_cwds: dict[str, str] = {}
+        self._observations: dict[str, dict] = {}
         self._loading: set[str] = set()  # sessions whose history replay is suppressed
         self._turns: dict[str, TurnBuffer] = {}
         self._permission_tasks: defaultdict[str, set[asyncio.Task[str | None]]] = defaultdict(set)
@@ -468,11 +481,39 @@ class AgentClient:
             raise AgentError("invalid agent session binding; no automatic retry") from None
         if binding is not None:
             self._bindings[session_id] = binding
+        self._remember_observation(session_id, response)
         await self._apply_mode(session_id, response.modes)
         self._attached.add(session_id)
         self._session_cwds[session_id] = cwd
         self._log.info("session created", session_id=session_id)
         return session_id
+
+    def _remember_observation(self, session_id, response, *, turn=False):
+        kind = self.profile.kind
+        if kind not in NATIVE_KINDS:
+            return
+        if kind in {"codex", "claude_code"}:
+            metadata = getattr(response, "field_meta", None)
+            flags = metadata.get("acp-gateway") if isinstance(metadata, dict) else None
+            clean = observation(flags.get("modelObservation")) if isinstance(flags, dict) else None
+            prefix = "codex." if kind == "codex" else "claude."
+            if clean and not clean["source"].startswith(prefix):
+                clean = None
+        else:
+            clean = config_observation(getattr(response, "config_options", None))
+        if clean is None and kind == "claude_code" and not turn:
+            # Claude reports its model only in system/init after the first input, so
+            # a bare re-attach is not evidence of a change: keep the last-known value.
+            return
+        # Otherwise a successful attach without metadata must clear an older snapshot.
+        self._observations[session_id] = {
+            **(clean or {"provider": None, "model": None, "effort": None, "source": None}),
+            "observed_at": datetime.now(UTC).isoformat(),
+        }
+
+    def session_observation(self, session_id):
+        value = self._observations.get(session_id)
+        return dict(value) if value is not None else None
 
     def session_binding(self, session_id: str) -> dict | None:
         binding = self._bindings.get(session_id)
@@ -493,6 +534,8 @@ class AgentClient:
         connected = self._transport is not None and not self._transport.closed.is_set()
         if session_id in self._interrupted and session_id not in self._turns:
             return "interrupted"
+        if session_id in self._fenced and session_id not in self._turns:
+            return "fenced"
         if (
             session_id in self._model_uncertain
             or session_id in self._uncertain
@@ -525,6 +568,27 @@ class AgentClient:
         flags = meta.get("acp-gateway") if isinstance(meta, dict) else None
         return isinstance(flags, dict) and flags.get("resumeInterrupted") == 1
 
+    @property
+    def supports_fence_release(self) -> bool:
+        caps = self.agent_capabilities
+        meta = getattr(caps, "field_meta", None)
+        flags = meta.get("acp-gateway") if isinstance(meta, dict) else None
+        return isinstance(flags, dict) and flags.get("releaseFence") == 1
+
+    async def release_fenced(self, session_id: str, cwd: str | None = None) -> None:
+        """Owner checked that earlier work stopped; reopen the dialogue, replay nothing."""
+        if session_id in self._turns or session_id in self._loading:
+            raise SessionBusy("Dialogue already has an active operation")
+        await self.ensure_connected()
+        if not self.supports_fence_release:
+            raise SessionNotFound(
+                f"{self.profile.display_name} on this computer cannot release fenced "
+                "dialogues; update the connector or create a new dialogue"
+            )
+        await self.load_session(session_id, cwd, release_fence=True)
+        # The computer accepted the owner's release under its own exclusive lock.
+        self._uncertain.discard(session_id)
+
     async def resume_interrupted(self, session_id: str, cwd: str | None = None) -> None:
         """Explicitly continue a dialogue after an interrupted turn; nothing is replayed."""
         if session_id in self._turns or session_id in self._loading:
@@ -538,7 +602,12 @@ class AgentClient:
         await self.load_session(session_id, cwd, resume_interrupted=True)
 
     async def load_session(
-        self, session_id: str, cwd: str | None = None, *, resume_interrupted: bool = False
+        self,
+        session_id: str,
+        cwd: str | None = None,
+        *,
+        resume_interrupted: bool = False,
+        release_fence: bool = False,
     ) -> None:
         """Attach an existing session to this connection; its history replay is dropped."""
         if (
@@ -567,6 +636,8 @@ class AgentClient:
             if (metadata.get("acp-gateway") or {}).get("connectorLiveResume") is not True:
                 raise SessionNotFound("Connector cannot restore this live Hermes dialogue")
         extra = {"acp-gateway": {"resumeInterrupted": True}} if resume_interrupted else {}
+        if release_fence:
+            extra = {"acp-gateway": {"resumeInterrupted": True, "releaseFence": True}}
         self._loading.add(session_id)
         try:
             response = await self._call(
@@ -592,16 +663,25 @@ class AgentClient:
             # The connector does not offer an explicit resume for this dialogue
             # (still fenced or unknown): stop offering one here.
             self._interrupted.discard(session_id)
+            if isinstance(cause, RequestError) and cause.code == FENCED_BINDING:
+                self._fenced.add(session_id)
+                raise SessionFenced(
+                    f"{self.profile.display_name} on the computer never confirmed that the "
+                    "earlier work in this dialogue stopped. Check it, then release the "
+                    "dialogue explicitly; nothing is sent again."
+                ) from cause
             raise
         finally:
             self._loading.discard(session_id)
         self._interrupted.discard(session_id)
+        self._fenced.discard(session_id)
         if binding and binding.get("restore") == "connector-live":
             metadata = getattr(response, "field_meta", None) or {}
             actual = (metadata.get("acp-gateway") or {}).get("sessionBinding")
             if actual != binding:
                 raise SessionNotFound("Connector Hermes dialogue identity did not match")
         await self._apply_mode(session_id, response.modes if response else None)
+        self._remember_observation(session_id, response)
         self._attached.add(session_id)
         self._session_cwds[session_id] = cwd
         self._log.info("session loaded", session_id=session_id)
@@ -791,6 +871,18 @@ class AgentClient:
         if session_id in self._turns:
             raise SessionBusy(f"session {session_id} is busy")
 
+        if self.profile.kind == "codex" or (
+            # Plain ACP: without a report keep the evidence saved at job creation.
+            self.profile.kind in NATIVE_KINDS - {"claude_code"} and session_id in self._observations
+        ):
+            yield ModelObserved(session_id, self.session_observation(session_id))
+            if (
+                session_id in self._turns
+                or session_id in self._uncertain
+                or session_id in self._model_operations
+                or session_id in self._model_uncertain
+            ):
+                raise SessionBusy("Session changed while preparing the turn")
         queue = TurnBuffer()
         self._turns[session_id] = queue
         transport = self._transport
@@ -817,6 +909,9 @@ class AgentClient:
             finished = True
             self._log.info("turn finished", session_id=session_id, stop_reason=response.stop_reason)
             flags = (getattr(response, "field_meta", None) or {}).get("acp-gateway") or {}
+            if self.profile.kind == "claude_code":
+                self._remember_observation(session_id, response, turn=True)
+                yield ModelObserved(session_id, self.session_observation(session_id))
             if flags.get("turnFailed") is True:
                 raise TurnFailed(
                     f"{self.profile.display_name} ended the turn with an error. "
@@ -908,6 +1003,18 @@ class AgentClient:
             key = (session_id, getattr(update, "tool_call_id", ""))
             if task := self._permission_tools.get(key):
                 task.cancel()
+        if (
+            getattr(update, "session_update", None) == "config_option_update"
+            and self.profile.kind in NATIVE_KINDS - {"codex", "claude_code"}
+            and (session_id in self._attached or session_id in self._loading)
+        ):
+            # Current state, not history: the agent's model may change mid-dialogue.
+            clean = config_observation(getattr(update, "config_options", None))
+            if clean is not None:
+                self._observations[session_id] = {
+                    **clean,
+                    "observed_at": datetime.now(UTC).isoformat(),
+                }
         if session_id in self._loading:
             return
         queue = self._turns.get(session_id)

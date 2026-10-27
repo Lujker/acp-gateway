@@ -62,6 +62,7 @@ def can_reserve(status, *, restart_uncertain=False):
 class ConnectorMaintenance:
     def __init__(self, profiles, managers):
         self.profiles, self.managers = profiles, managers
+        self.services = []
         self.token = None
 
     def check_admission(self):
@@ -77,6 +78,11 @@ class ConnectorMaintenance:
             elif profile.alias in self.managers:
                 for key, value in self.managers[profile.alias].maintenance_status().items():
                     counts[key] += value
+        for service in self.services:
+            for key, value in service.maintenance_status().items():
+                if key not in counts or type(value) is not int or value < 0:
+                    raise ValueError("Invalid local activity provider")
+                counts[key] += value
         return {
             **counts,
             "unsupported_agents": unsupported,

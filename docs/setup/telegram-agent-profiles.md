@@ -2,7 +2,7 @@
 
 Available since **0.2.3**. Both dispatcher and connector must run 0.2.3 or later.
 Connector-owned discovery (P4.18) is included in **0.2.6**. Use dispatcher
-0.2.7 and connectors 0.2.6 or later for the current fixes. A 0.2.3 connector
+0.2.8 and connectors 0.2.8 for all current recovery fixes. A 0.2.3 connector
 keeps template-based profile management; discovery requires a newer connector.
 
 An owner can add, edit and remove **Codex and Claude Code profiles** on a connected
@@ -88,7 +88,7 @@ repeat discovery; the bot does not install tools or log into accounts.
 After saving a discovered profile, the connector runs initialize only: no new
 conversation or model prompt. Failed initialize leaves the profile saved and the
 bot asks for local inspection. Successful initialize does not prove model access.
-The remaining real-machine acceptance matrix is recorded in
+The historical real-machine matrix (provisionally closed by the owner on 2026-10-27) is recorded in
 [P4.18](../items/agent-onboarding.ru.md#остаток-приёмки).
 
 ## Dialogues and recovery

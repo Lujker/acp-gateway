@@ -70,6 +70,7 @@ class Welcome(_Frame):
     agent_profiles: Literal[1] | None = None
     agent_discovery: Literal[1] | None = None
     stream_resume: Literal[1] | None = None
+    shell_operations: Literal[1] | None = None
 
 
 class ProfileSpec(_Model):
@@ -124,6 +125,100 @@ class ProfilesResponse(_Frame):
     epoch: UUID
     request: UUID
     result: ProfilesResult
+
+
+class ShellRequest(_Frame):
+    type: Literal["agent_shell"] = "agent_shell"
+    epoch: UUID
+    request: UUID
+    operation: UUID
+    actor: Annotated[str, Field(pattern=r"^telegram:[0-9]{1,20}$")]
+    expires: Annotated[float, Field(allow_inf_nan=False)]
+    action: Literal["start", "status", "cancel"]
+    alias: AgentAlias | None = None
+    session_id: Annotated[str, Field(min_length=1, max_length=128)] | None = None
+    cwd: Annotated[str, Field(min_length=1, max_length=4096)] | None = None
+    command: Annotated[str, Field(min_length=1, max_length=4096)] | None = None
+    timeout: Annotated[float, Field(gt=0, le=600, allow_inf_nan=False)] = 120.0
+    offset: Annotated[int, Field(ge=0, le=65_536)] = 0
+
+    @model_validator(mode="after")
+    def action_fields(self):
+        fields = (self.alias, self.session_id, self.cwd, self.command)
+        if self.action == "start":
+            if any(value is None for value in fields) or self.offset != 0:
+                raise ValueError("shell start requires exact target and command")
+        elif any(value is not None for value in fields):
+            raise ValueError("shell inspection cannot carry an execution payload")
+        return self
+
+
+class ShellResult(_Model):
+    operation: UUID
+    state: Literal[
+        "refused",
+        "reserved",
+        "running",
+        "completed",
+        "failed",
+        "cancelled",
+        "timed_out",
+        "unknown",
+        "expired",
+    ]
+    reason: Literal[
+        "",
+        "disabled",
+        "stale",
+        "invalid",
+        "safe_profile",
+        "profile_unavailable",
+        "unsupported_platform",
+        "session_unavailable",
+        "cwd_not_allowed",
+        "maintenance",
+        "busy",
+        "journal_full",
+        "not_found",
+        "spawn_failed",
+        "execution_failed",
+        "cleanup_unverified",
+        "interrupted",
+        "output_limit",
+    ] = ""
+    interpreter: Literal["", "sh", "bash (WSL)", "Windows PowerShell"] = ""
+    output: Annotated[str, Field(max_length=4000)] = ""
+    offset: Annotated[int, Field(ge=0, le=65_536)] = 0
+    total: Annotated[int, Field(ge=0, le=65_536)] = 0
+    exit_code: Annotated[int, Field(ge=-(2**31), lt=2**32)] | None = None
+    output_omitted: bool = False
+    cleanup_verified: bool = False
+
+    @model_validator(mode="after")
+    def coherent_result(self):
+        if self.offset + len(self.output) > self.total:
+            raise ValueError("shell output window exceeds its length")
+        if self.state in {"refused", "reserved", "running", "expired"} and (
+            self.output or self.total or self.exit_code is not None or self.cleanup_verified
+        ):
+            raise ValueError("shell result is not terminal")
+        if (
+            self.state in {"completed", "failed", "cancelled", "timed_out"}
+            and not self.cleanup_verified
+        ):
+            raise ValueError("shell cleanup must be verified")
+        if self.state == "completed" and self.exit_code != 0:
+            raise ValueError("shell success requires exit code zero")
+        if self.state == "unknown" and not self.cleanup_verified and self.output:
+            raise ValueError("unverified shell result cannot publish output")
+        return self
+
+
+class ShellResponse(_Frame):
+    type: Literal["agent_shell_result"] = "agent_shell_result"
+    epoch: UUID
+    request: UUID
+    result: ShellResult
 
 
 class InstallationReport(_Model):
@@ -286,6 +381,8 @@ ControlFrame = (
     | UpdateResponse
     | ProfilesRequest
     | ProfilesResponse
+    | ShellRequest
+    | ShellResponse
 )
 _ADAPTER = TypeAdapter(Annotated[ControlFrame, Field(discriminator="type")])
 

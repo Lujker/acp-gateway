@@ -12,6 +12,7 @@ from markdown_it import MarkdownIt
 from acp_gateway.log import MASK, redact_text
 
 FORMAT_VERSION = "telegram-markdown-v2"
+SOURCE_FORMAT_VERSION = "telegram-markdown-v3-source"
 LEGACY_FORMAT_VERSION = "telegram-markdown-v1"
 _MASK_MARKER = "\ue000ACP_MASK\ue001"
 LIMIT = 2000  # At most 4000 UTF-16 units, below Telegram's entity-parsed limit.
@@ -172,13 +173,13 @@ def _table(tokens, index, out):
     return index
 
 
-def _render_answer(text, *, already_redacted=False, boundaries=False):
+def _render_answer(text, *, already_redacted=False, boundaries=False, limit=None):
     """Redact before parsing; raw HTML is always literal, never trusted markup."""
     redacted = redact_text(text)
     text = (
         redacted.replace(MASK, _MASK_MARKER) if already_redacted or redacted != text else redacted
     )
-    out = _Chunks(limit=1900 if boundaries else LIMIT, boundaries=boundaries)
+    out = _Chunks(limit=limit or (1900 if boundaries else LIMIT), boundaries=boundaries)
     lists, quote_depth = [], 0
     tokens = _PARSER.parse(text)
     index = 0
@@ -234,12 +235,22 @@ def answer_chunks(text, *, already_redacted=False):
     return _render_answer(text, already_redacted=already_redacted)
 
 
-def result_chunks(text):
+def result_chunks(text, *, footer=None):
     """Readable v2 boundaries and part numbers, with space reserved for the title."""
-    chunks = _render_answer(text, boundaries=True)
+    suffix = ""
+    limit = 1900
+    if footer:
+        clean = redact_text(footer)
+        suffix = "\n\n────────────────────\n" + system_chunks(clean)[0]
+        limit -= len(plain_html(suffix))
+        if limit < 100:
+            raise ValueError("result footer exceeds presentation budget")
+    chunks = _render_answer(text, boundaries=True, limit=limit)
     if len(chunks) == 1:
-        return chunks
-    return [f"<b>📄 Ответ · {i}/{len(chunks)}</b>\n\n{body}" for i, body in enumerate(chunks, 1)]
+        return [chunks[0] + suffix]
+    return [
+        f"<b>📄 Ответ · {i}/{len(chunks)}</b>\n\n{body}{suffix}" for i, body in enumerate(chunks, 1)
+    ]
 
 
 _FIELDS = {

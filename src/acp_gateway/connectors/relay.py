@@ -34,6 +34,9 @@ from acp_gateway.connectors.protocol import (
     ProtocolError,
     Resume,
     Resumed,
+    ShellRequest,
+    ShellResponse,
+    ShellResult,
     UpdateInfoRequest,
     UpdateInfoResponse,
     UpdateRequest,
@@ -340,6 +343,8 @@ class RelayPeer:
         agent_profiles=False,
         agent_discovery=False,
         profiles_handler=None,
+        shell_operations=False,
+        shell_handler=None,
         stream_resume=False,
         parking: StreamParking | None = None,
         on_park: Callable[[list[_Link]], None] | None = None,
@@ -355,6 +360,10 @@ class RelayPeer:
         self.agent_profiles = agent_profiles
         self.agent_discovery = agent_discovery
         self.profiles_handler = profiles_handler
+        self.shell_operations = shell_operations
+        self.shell_handler = shell_handler
+        self.shell_requests = {}
+        self.shell_workers = set()
         # Resume is opt-in per connection; old peers keep close-on-drop streams.
         self.stream_resume = stream_resume
         self.parking = parking  # computer side: streams this connection may reclaim
@@ -445,6 +454,11 @@ class RelayPeer:
         for pending in self.update_requests.values():
             if not pending.done():
                 pending.set_exception(ConnectionError("computer disconnected"))
+        for _, pending in self.shell_requests.values():
+            if not pending.done():
+                pending.set_exception(
+                    ConnectionError("computer disconnected; inspect shell status")
+                )
         parked = []
         for stream_id in list(self.streams):
             link = self.streams[stream_id]
@@ -528,6 +542,37 @@ class RelayPeer:
     async def _read(self):
         async for payload in self.connection:
             frame = decode_frame(payload)
+            if isinstance(frame, (ShellRequest, ShellResponse)):
+                if not self.shell_operations or frame.epoch != self.epoch:
+                    raise ProtocolError("unnegotiated shell operations or invalid epoch")
+                if isinstance(frame, ShellResponse):
+                    if self.local_factory is not None:
+                        raise ProtocolError("unexpected shell response")
+                    pending = self.shell_requests.get(frame.request)
+                    if pending is not None and not pending[1].done():
+                        if pending[0] != frame.result.operation:
+                            raise ProtocolError("shell operation response mismatch")
+                        pending[1].set_result(frame.result)
+                else:
+                    if self.local_factory is None:
+                        raise ProtocolError("invalid shell request direction")
+                    if len(self.shell_workers) >= 4:
+                        await self.send(
+                            ShellResponse(
+                                epoch=self.epoch,
+                                request=frame.request,
+                                result=ShellResult(
+                                    operation=frame.operation, state="refused", reason="busy"
+                                ),
+                            )
+                        )
+                        continue
+                    task = asyncio.create_task(self._operate_shell(frame))
+                    self.tasks.add(task)
+                    self.shell_workers.add(task)
+                    task.add_done_callback(self.tasks.discard)
+                    task.add_done_callback(self.shell_workers.discard)
+                continue
             if isinstance(frame, (ProfilesRequest, ProfilesResponse)):
                 if not self.agent_profiles or frame.epoch != self.epoch:
                     raise ProtocolError("unnegotiated profiles or invalid epoch")
@@ -758,6 +803,44 @@ class RelayPeer:
         ) and not self.agent_discovery:
             raise AgentUnavailable("agent discovery unavailable; upgrade connector locally")
         return await self._update_rpc(frame.model_copy(update={"epoch": self.epoch}), timeout)
+
+    async def shell(self, frame, *, timeout=10):
+        if self.local_factory is not None or not self.shell_operations:
+            raise AgentUnavailable("direct shell unavailable; upgrade connector locally")
+        if frame.action == "start" and frame.alias not in self.aliases:
+            raise AgentUnavailable("shell agent is not advertised by this computer")
+        if len(self.shell_requests) >= 4 or frame.request in self.shell_requests:
+            raise AgentUnavailable("shell control requests are busy")
+        pending = asyncio.get_running_loop().create_future()
+        self.shell_requests[frame.request] = (frame.operation, pending)
+        try:
+            async with asyncio.timeout(timeout):
+                await self.send(frame.model_copy(update={"epoch": self.epoch}))
+                return await pending
+        finally:
+            self.shell_requests.pop(frame.request, None)
+            if not pending.done():
+                pending.cancel()
+            elif not pending.cancelled():
+                pending.exception()
+
+    async def _operate_shell(self, request):
+        result = ShellResult(operation=request.operation, state="refused", reason="disabled")
+        try:
+            if self.shell_handler is not None:
+                result = await self.shell_handler(request)
+                if not isinstance(result, ShellResult) or result.operation != request.operation:
+                    raise ValueError("invalid local shell result")
+        except Exception:
+            # A lost result does not prove that execution never started.
+            result = ShellResult(
+                operation=request.operation, state="unknown", reason="execution_failed"
+            )
+            get_logger(__name__).warning("shell outcome unavailable; inspect operation")
+        try:
+            await self.send(ShellResponse(epoch=self.epoch, request=request.request, result=result))
+        except (OSError, ValueError, ConnectionError, BufferError):
+            get_logger(__name__).warning("shell response unavailable; no execution replay")
 
     async def _operate_profiles(self, request):
         result = ProfilesResult(status="disabled")

@@ -13,6 +13,24 @@ def profile(tmp_path, **settings):
     )
 
 
+def test_provenance_lookup_does_not_attach_or_clear_an_unknown_turn(tmp_path):
+    p = profile(tmp_path, mode="work")
+    first = ManagedSessions(tmp_path / "bindings", p)
+    first.create("native-id", str(tmp_path))
+    first.begin("native-id")
+    observer = ManagedSessions(tmp_path / "bindings", p)
+    assert observer.contains("native-id", str(tmp_path))
+    assert not observer.contains("native-id", str(tmp_path / "other"))
+    assert not observer.contains("foreign", str(tmp_path))
+    assert not observer._locks
+    changed = ManagedSessions(tmp_path / "bindings", profile(tmp_path, mode="safe"))
+    assert not changed.contains("native-id", str(tmp_path))
+    first.close(confirmed=False)
+    with pytest.raises(LocalPolicyError, match="unknown"):
+        observer.load("native-id", str(tmp_path))
+    observer.close()
+
+
 def test_idle_binding_survives_restart_with_exact_scope(tmp_path):
     p = profile(tmp_path)
     first = ManagedSessions(tmp_path / "bindings", p)
@@ -205,3 +223,129 @@ def test_default_close_keeps_unknown_turn_fenced(tmp_path):
     with pytest.raises(LocalPolicyError, match="unknown"):
         after.load("native-id", str(tmp_path), resume_interrupted=True)
     after.close()
+
+
+@pytest.mark.parametrize("begin", [False, True])
+def test_owner_release_reopens_fenced_binding_without_replay(tmp_path, begin):
+    from acp_gateway.adapters.managed_sessions import FencedBinding
+
+    p = profile(tmp_path)
+    first = ManagedSessions(tmp_path / "bindings", p)
+    first.create("native-id", str(tmp_path))
+    if begin:
+        first.begin("native-id")
+    first.close(confirmed=False)  # e.g. unconfirmed WSL cleanup or a connector crash
+    second = ManagedSessions(tmp_path / "bindings", p)
+    with pytest.raises(FencedBinding):
+        second.load("native-id", str(tmp_path))
+    assert not second._locks
+    # Release requires the exact cwd as well.
+    with pytest.raises(LocalPolicyError):
+        second.load("native-id", str(tmp_path / "other"), release_fence=True)
+    assert second.load("native-id", str(tmp_path), release_fence=True) is True
+    second.close()
+    # The release is durable: an ordinary load works afterwards (no fence left).
+    third = ManagedSessions(tmp_path / "bindings", p)
+    assert third.load("native-id", str(tmp_path)) is True
+    third.close()
+
+
+def test_owner_release_cannot_take_a_binding_owned_by_a_live_process(tmp_path):
+    p = profile(tmp_path)
+    live = ManagedSessions(tmp_path / "bindings", p)
+    live.create("native-id", str(tmp_path))
+    live.begin("native-id")  # still running in this installation
+    other = ManagedSessions(tmp_path / "bindings", p)
+    with pytest.raises(LocalPolicyError, match="already attached"):
+        other.load("native-id", str(tmp_path), release_fence=True)
+    live.finish("native-id")
+    live.close()
+
+
+def test_offline_cli_lists_and_releases_only_unowned_fenced_bindings(tmp_path, capsys):
+    from types import SimpleNamespace
+
+    from acp_gateway.cli.connector_maintenance import fenced_sessions
+
+    p = profile(tmp_path)
+    data = tmp_path / "data"
+    store = data / "pins" / "managed-sessions"
+    crashed = ManagedSessions(store, p)
+    crashed.create("lost-turn", str(tmp_path))
+    crashed.begin("lost-turn")
+    crashed.close(confirmed=False)
+    live = ManagedSessions(store, p)
+    live.create("live", str(tmp_path))  # attached by a running connector: not offered
+    config = SimpleNamespace(settings=SimpleNamespace(agents=[p], resolved_data_dir=lambda: data))
+
+    def cli(command, handle=None):
+        args = SimpleNamespace(session_command=command, agent="code", handle=handle)
+        return fenced_sessions(config, args), capsys.readouterr().out
+
+    code, out = cli("fenced")
+    assert code == 0 and "lost-turn\tbusy" in out and "live" not in out
+    assert cli("release", "live")[0] == 1
+    code, out = cli("release", "lost-turn")
+    assert code == 0 and "Nothing was sent again" in out
+    assert "No fenced dialogues" in cli("fenced")[1]
+    again = ManagedSessions(store, p)
+    assert again.load("lost-turn", str(tmp_path)) is True
+    again.close()
+    live.close()
+
+
+def test_reinstalled_cli_or_changed_wsl_path_keeps_dialogues(tmp_path):
+    def wsl_profile(executable="/bin/codex", **wsl):
+        return AgentProfile(
+            alias="code",
+            kind="codex",
+            backend="codex",
+            default_cwd="/project",
+            codex={
+                "executable": executable,
+                "wsl": {"distribution": "Ubuntu", "user": "alice", "path": ["/bin"], **wsl},
+            },
+        )
+
+    first = ManagedSessions(tmp_path / "bindings", wsl_profile())
+    first.create("native-id", "/project")
+    first.close()
+    moved = wsl_profile(
+        "/home/alice/.nvm/versions/node/v24/bin/codex",
+        path=["/home/alice/.nvm/versions/node/v24/bin", "/bin"],
+        python="/usr/local/bin/python3",
+    )
+    after = ManagedSessions(tmp_path / "bindings", moved)
+    assert after.load("native-id", "/project") is True
+    after.close()
+
+
+def test_bindings_written_by_older_versions_migrate_to_the_stable_scope(tmp_path):
+    import sqlite3
+
+    p = profile(tmp_path, mode="work")
+    current = ManagedSessions(tmp_path / "bindings", p)
+    current.create("old-idle", str(tmp_path))
+    current.create("old-lost", str(tmp_path))
+    current.begin("old-lost")
+    current.close(confirmed=False)
+    db = tmp_path / "bindings" / "bindings.sqlite3"
+    with sqlite3.connect(db) as conn:  # rows as written by 0.2.8 (legacy hash)
+        conn.execute("UPDATE bindings SET scope=?", (current.legacy_scope,))
+        conn.execute("UPDATE bindings SET state='idle' WHERE sid='old-idle'")
+    observer = ManagedSessions(tmp_path / "bindings", p)
+    assert observer.contains("old-idle", str(tmp_path))
+    assert [row[0] for row in observer.fenced()] == ["old-lost"]
+    assert observer.load("old-idle", str(tmp_path)) is True
+    observer.close()
+    with sqlite3.connect(db) as conn:
+        scopes = dict(conn.execute("SELECT sid, scope FROM bindings"))
+    assert scopes["old-idle"] == observer.scope  # migrated on first use
+    # A legacy fence stays a fence after migration.
+    from acp_gateway.adapters.managed_sessions import FencedBinding
+
+    with pytest.raises(FencedBinding):
+        ManagedSessions(tmp_path / "bindings", p).load("old-lost", str(tmp_path))
+    # Another profile's legacy rows are never adopted.
+    other = ManagedSessions(tmp_path / "bindings", profile(tmp_path, mode="safe"))
+    assert not other.contains("old-lost", str(tmp_path)) and not other.fenced()

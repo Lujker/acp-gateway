@@ -21,7 +21,7 @@ from acp_gateway.connectors.protocol import AgentManifest, Data, Hello, encode_f
 from acp_gateway.connectors.relay import RelayPeer
 from acp_gateway.daemon import configured_app
 from fakes.fake_goose import FakeGooseServer
-from fakes.telegram import FakeTelegramSession
+from fakes.telegram import FakeTelegramSession, answer_body
 
 
 async def eventually(predicate):
@@ -426,6 +426,8 @@ async def test_telegram_selects_computers_and_decides_relay_approvals(nodes):
                 ),
             ),
         )
-        await eventually(lambda answer=answer: any(m.text == answer for m in session.sent))
+        await eventually(
+            lambda answer=answer: any(answer_body(m.text) == answer for m in session.sent)
+        )
         await eventually(lambda: not channel._buttons)
     assert len(nodes.mocks["home"].sessions) == len(nodes.mocks["work"].sessions) == 1

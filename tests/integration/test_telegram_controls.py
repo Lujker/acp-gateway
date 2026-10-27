@@ -8,6 +8,7 @@ from test_telegram import telegram as telegram
 
 from acp_gateway.channels.telegram_format import plain_html
 from acp_gateway.storage import Conversation, JobStatus
+from fakes.telegram import answer_body
 
 
 def button(message, label):
@@ -61,7 +62,7 @@ async def test_dialogue_buttons_and_navigation_do_not_make_prompts(telegram):
     )
     assert core.active_session(conv).id != old.id
     preview = session.sent[-1]
-    await click(channel, 4, preview, button(preview, "Выбрать диалог").callback_data)
+    await click(channel, 4, preview, button(preview, "Сделать активным").callback_data)
     assert core.active_session(conv).id == old.id
     channel._recent.clear()
     await click(channel, 5, session.sent[-1], button(session.sent[-1], "← Диалоги").callback_data)
@@ -93,9 +94,13 @@ async def test_owned_job_result_button_is_independent_of_current_route(telegram,
     )
     await feed(channel, 1, "/agent other")
     await click(channel, 2, answer, button(answer, "Результат").callback_data)
-    await eventually(lambda: len([m for m in session.sent if m.text == answer.text]) == 2)
+    await eventually(
+        lambda: (
+            len([m for m in session.sent if answer_body(m.text) == answer_body(answer.text)]) == 2
+        )
+    )
     await click(channel, 3, answer, button(answer, "Результат").callback_data, user=OTHER)
-    assert len([m for m in session.sent if m.text == answer.text]) == 2
+    assert len([m for m in session.sent if answer_body(m.text) == answer_body(answer.text)]) == 2
 
 
 async def test_job_cancel_button_targets_exact_owned_job_and_is_one_shot(
@@ -329,7 +334,7 @@ async def test_execution_mode_buttons_authorize_only_selected_dialogue_and_resto
     assert core.execution_mode(conv)["mode"] == "auto"
     await feed(channel, 10, "/mode")
     panel = session.sent[-1]
-    await click(channel, 11, panel, button(panel, "Как Hermes").callback_data)
+    await click(channel, 11, panel, button(panel, "С подтверждениями").callback_data)
     assert core.execution_mode(conv)["mode"] == "ask"
     await feed(channel, 12, "run exactly: echo hi .")
     job = core.running_jobs()[0]
@@ -493,7 +498,7 @@ async def test_dialogue_selection_button_rejects_changed_active_dialogue(telegra
     second = core.store.add_session(conv, "second", "/work")
     await channel._command(OWNER, f"/dialogue {first.id}")
     preview = session.sent[-1]
-    data = button(preview, "Выбрать диалог").callback_data
+    data = button(preview, "Сделать активным").callback_data
     core.store.set_active(conv, first.id)
     core.store.set_active(conv, second.id)
     await click(channel, 1, preview, data)

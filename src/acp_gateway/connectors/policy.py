@@ -131,6 +131,9 @@ class LocalAgentPolicy:
                 if isinstance(flags, dict) and flags.get("resumeInterrupted") is True:
                     # Explicit owner choice to continue after an unknown turn; no replay.
                     clean["_meta"] = {"acp-gateway": {"resumeInterrupted": True}}
+                    if flags.get("releaseFence") is True:
+                        # The owner checked that earlier work stopped; still no replay.
+                        clean["_meta"]["acp-gateway"]["releaseFence"] = True
             if method == "session/list" and params.get("cursor") is not None:
                 clean["cursor"] = _text(params["cursor"])
         elif method in MODEL_METHODS | {MODEL_RECOVER}:

@@ -79,3 +79,34 @@ def sessions(config, args):
     check_response(response)
     show_json(response.json())
     return 0
+
+
+def fenced_sessions(config, args):
+    """Offline, owner-confirmed view/release of fenced native dialogues on this PC."""
+    from acp_gateway.adapters.managed_sessions import ManagedSessions
+    from acp_gateway.connectors.policy import LocalPolicyError
+
+    profile = next((p for p in config.settings.agents if p.alias == args.agent), None)
+    if profile is None or profile.backend not in {"codex", "claude_code"}:
+        print("error: --agent must name a local managed Codex or Claude Code profile")
+        return 2
+    sessions = ManagedSessions(
+        config.settings.resolved_data_dir() / "pins" / "managed-sessions", profile
+    )
+    if args.session_command == "fenced":
+        rows = sessions.fenced()
+        for sid, cwd, state in rows:
+            print(f"{sid}\t{state}\t{cwd}")
+        if not rows:
+            print("No fenced dialogues for this profile.")
+        return 0
+    try:
+        sessions.release(args.handle)
+    except LocalPolicyError as exc:
+        print(f"error: {exc}")
+        return 1
+    print(
+        "Released. Nothing was sent again; the next message continues the native dialogue. "
+        "Only do this after checking that the agent no longer works on it."
+    )
+    return 0

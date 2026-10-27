@@ -18,6 +18,7 @@ from acp_gateway.config import AgentProfile
 from acp_gateway.core import GatewayCore
 from acp_gateway.log import register_secret
 from acp_gateway.storage import Conversation, Store
+from fakes.telegram import answer_body
 
 
 def record(core, handle="context", key=OWNER):
@@ -231,7 +232,7 @@ async def test_blocked_context_edit_does_not_block_result_and_late_edit_is_seria
         await eventually(lambda: bool(channel._buttons))
         approval = next(m for m in session.sent if approval_message(m))
         await click(channel, 3, approval, approval.reply_markup.inline_keyboard[0][0].callback_data)
-        await eventually(lambda: any(m.text == "hi" for m in session.sent))
+        await eventually(lambda: any(answer_body(m.text) == "hi" for m in session.sent))
         release.set()
         channel._context_wake.set()
         await eventually(lambda: f"Диалог: #{newest.id}" in plain_html(card(session, mid).text))

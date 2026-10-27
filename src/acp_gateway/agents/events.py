@@ -23,6 +23,13 @@ class MessageChunk(AgentEvent):
 
 
 @dataclass(frozen=True)
+class ModelObserved(AgentEvent):
+    """Internal native evidence tied to a turn; its source defines the phase."""
+
+    observation: dict[str, Any] | None
+
+
+@dataclass(frozen=True)
 class UserMessageChunk(AgentEvent):
     """A piece of a user message; goose sends these when replaying history."""
 

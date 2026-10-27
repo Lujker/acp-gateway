@@ -36,6 +36,7 @@ async def test_profile_form_input_and_confirmation_do_not_start_model(telegram):
     token = state["token"]
     await channel._command(OWNER, f"/profile_action {token} edit codex")
     await channel._command(OWNER, f"/profile_action {token} cwd")
+    assert "Следующий текст → рабочая папка профиля на ПК home" in session.sent[-1].text
     await channel._command(OWNER, "/home/user/new-project")
     assert state["draft"]["cwd"] == "/home/user/new-project"
     await channel._command(OWNER, f"/profile_action {token} save")

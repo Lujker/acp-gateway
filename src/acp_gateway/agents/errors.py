@@ -34,6 +34,13 @@ class SessionInterrupted(SessionNotFound):
     """
 
 
+class SessionFenced(SessionNotFound):
+    """The computer never confirmed that earlier work stopped; the binding is fenced.
+
+    The owner may release it explicitly after checking; nothing is replayed.
+    """
+
+
 class SessionBusy(AgentError):
     """The session already has a running turn."""
 

@@ -17,8 +17,8 @@ Historical documents are not current installation instructions.
 | Use Docker for a dispatcher and Linux/WSL connectors | [VPS runbook](setup/vps-acceptance.md), [Russian](setup/vps-acceptance.ru.md) |
 | Run the dispatcher in Docker behind the host's reverse proxy, or move a native dispatcher into Docker | [Docker dispatcher (Russian)](setup/vps-docker.ru.md) |
 | Configure autostart | [Services](setup/service.md) |
-| Upgrade to 0.2.7 (dispatcher; 0.2.6 connectors may stay) | [Upgrade instructions (Russian)](setup/update-0.2.7.ru.md) |
-| Current release 0.2.7 | [Release notes](releases/0.2.7.md), [publication and deployment](releases/0.2.7-publication.md) |
+| Upgrade dispatcher and connectors to 0.2.8 | [Upgrade instructions (Russian)](setup/update-0.2.8.ru.md) |
+| Current release 0.2.8 | [Release notes](releases/0.2.8.md), [publication and deployment](releases/0.2.8-publication.md) |
 | Connector fixes in 0.2.6 | [Release notes](releases/0.2.6.md), [publication](releases/0.2.6-publication.md) |
 | Historical upgrade to 0.2.3 / 0.2.2 | [0.2.3](setup/update-0.2.3.ru.md), [0.2.2](setup/update-0.2.2.ru.md) |
 | Updates out of the box (since 0.2.2) | [Normal setup and first start](setup/updates-out-of-box.md) |
@@ -61,17 +61,17 @@ Historical documents are not current installation instructions.
 
 - [Roadmap](../road-map.md): the single status board; the final section is the current queue.
 - [Codex/Claude resumption checkpoint (Russian)](plans/p4.13-resumption.ru.md):
-  shipped implementation, test evidence, remaining live acceptance and native chat list/attach.
+  shipped implementation, historical evidence and future native chat list/attach.
 - [Work mode for remote development P4.13.1 (Russian)](plans/p4.13-work-mode.ru.md):
-  implemented safe/work profiles, native auto mode, cancel/resume and remaining acceptance.
+  implemented safe/work profiles, native auto mode and cancel/resume; acceptance provisionally closed.
 - [Decision journal](../road-notes.md): dated findings and owner decisions.
 - [Future AI-agent practicum and business brief (Russian)](items/business-practicum.ru.md):
   approved educational concept, pilot gates and open economics; not a launched
   service, a sales commitment or a change to the implementation queue.
 - [Connector-first pairing P4.17 (Russian)](items/connector-pairing.ru.md) and its
-  [technical plan (Russian)](plans/p4.17-connector-pairing.ru.md): implemented in 0.2.2; remaining live acceptance is recorded separately.
-- [Updates out of the box P4.15.1 (Russian)](items/updates-out-of-box.ru.md): delivered in 0.2.2; ACL follow-up shipped, Telegram updater acceptance remains open.
-- [Agent onboarding P4.18 (Russian)](items/agent-onboarding.ru.md): shipped discovery and remaining platform checks.
+  [technical plan (Russian)](plans/p4.17-connector-pairing.ru.md): implemented in 0.2.2; acceptance provisionally closed on 2026-10-27.
+- [Updates out of the box P4.15.1 (Russian)](items/updates-out-of-box.ru.md): delivered in 0.2.2; shipped updater acceptance provisionally closed, remaining features tracked in P4.19.
+- [Agent onboarding P4.18 (Russian)](items/agent-onboarding.ru.md): shipped discovery; acceptance provisionally closed.
 - [Operational improvements P4.19 (Russian)](items/ops-improvements.ru.md): completed ACL/CI fixes and open work.
 - [VK channel](items/vk-bot.ru.md) and [Goose alternative](items/goose-alternative.ru.md):
   future requirements, not current runtime support.

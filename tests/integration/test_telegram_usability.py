@@ -14,6 +14,7 @@ from acp_gateway.agents.client import PermissionOption, PermissionRequest
 from acp_gateway.channels.telegram_format import plain_html
 from acp_gateway.core import GatewayCore, GatewayError
 from acp_gateway.storage import Conversation, Store
+from fakes.telegram import answer_body
 
 
 async def requested(telegram, raw):
@@ -138,7 +139,7 @@ async def test_progress_shows_approval_wait_route_duration_and_actual_finish(tel
     final = next(m for m in session.sent if m.message_id == progress.message_id)
     assert "Завершена" in final.text and "/result" in final.text
     assert "Ожидает подтверждения" not in final.text
-    assert any(m.text == "hi" for m in session.sent)
+    assert any(answer_body(m.text) == "hi" for m in session.sent)
     assert any(isinstance(c, EditMessageText) for c in session.calls)
     assert not any(isinstance(c, AnswerCallbackQuery) and c.show_alert for c in session.calls)
 
@@ -173,7 +174,7 @@ async def test_job_dialogue_selection_targets_exact_owned_route_and_is_once_only
     core.store.add_session(conv, "current-dialogue", "/work")
     await feed(channel, 1, f"/job {job.id}")
     card = session.sent[-1]
-    data = button(card, "Выбрать диалог").callback_data
+    data = button(card, "Сделать активным").callback_data
     await click(channel, 2, card, data)
     assert core.active_session(conv).id == old.id
     assert "Агент / ПК: work" in plain_html(session.sent[-1].text)

@@ -44,11 +44,19 @@ class Panels:
             for label, command in row:
                 verb = command.split(" ", 1)[0]
                 bound = verb in {
+                    "/checkpoint",
+                    "/checkpoint_resume",
+                    "/checkpoint_new",
+                    "/send_held",
+                    "/shell_send",
+                    "/shell_select",
                     "/new",
                     "/resume_dialogue",
+                    "/release_dialogue",
                     "/sessions",
                     "/dialogue",
                     "/rename_hint",
+                    "/cwd_hint",
                     "/switch",
                     "/open_dialogue",
                     "/new_from_job",
@@ -59,6 +67,10 @@ class Panels:
                     "/mode",
                 }
                 selected = verb in {
+                    "/send_held",
+                    "/shell_send",
+                    "/shell_select",
+                    "/cwd_hint",
                     "/rename_hint",
                     "/new",
                     "/switch",
@@ -71,7 +83,16 @@ class Panels:
                     "/mode",
                 }
                 once = verb in {
+                    "/checkpoint",
+                    "/checkpoint_resume",
+                    "/checkpoint_new",
+                    "/send_held",
+                    "/shell_send",
+                    "/shell_select",
+                    "/shell_cancel",
+                    "/cwd_hint",
                     "/resume_dialogue",
+                    "/release_dialogue",
                     "/update_confirm",
                     "/update_cancel",
                     "/new",
@@ -135,13 +156,17 @@ class Panels:
         return action
 
     def begin_edit(self, message):
-        key = (message.chat.id, message.message_id)
+        editor = self.editor(message.chat.id, message.message_id)
+        editor.revision += 1
+        return message, editor, editor.revision
+
+    def editor(self, chat, message_id):
+        key = (chat, message_id)
         editor = self.editors.setdefault(key, _Editor())
         self.editors.move_to_end(key)
-        editor.revision += 1
         while len(self.editors) > 256:
             self.editors.popitem(last=False)
-        return message, editor, editor.revision
+        return editor
 
     def current_edit(self, context):
         message, editor, revision = context

@@ -109,16 +109,52 @@ for line in sys.stdin:
         assert frame["message"]["role"] == "user"
         history.append(frame["message"]["content"])
         history_file.write_text(json.dumps(history))
+        if SCENARIO.startswith("observation"):
+            emit(
+                {
+                    "type": "system",
+                    "subtype": "init",
+                    "session_id": "foreign",
+                    "model": "foreign-model",
+                }
+            )
+            emit(
+                {
+                    "type": "system",
+                    "subtype": "init",
+                    "session_id": SID,
+                    "parent_tool_use_id": "subagent",
+                    "model": "subagent-model",
+                }
+            )
+            if SCENARIO not in {"observation-foreign-only", "observation-late"}:
+                model = (
+                    ["invalid"]
+                    if SCENARIO == "observation-invalid"
+                    else frame["message"]["content"]
+                    if SCENARIO == "observation-secret"
+                    else "native-" + SID
+                )
+                emit(
+                    {
+                        "type": "system",
+                        "subtype": "init",
+                        "session_id": SID,
+                        "model": model,
+                        "provider": "do-not-infer",
+                        "effort": "high",
+                    }
+                )
         if SCENARIO == "hang" or SCENARIO.startswith("interrupt"):
             continue
-        if SCENARIO in {"error-result", "error-subtype", "foreign-result"}:
+        if SCENARIO in {"error-result", "error-subtype", "foreign-result", "observation-error"}:
             emit(
                 {
                     "type": "result",
                     "subtype": "error_during_execution"
                     if SCENARIO == "error-subtype"
                     else "success",
-                    "is_error": SCENARIO == "error-result",
+                    "is_error": SCENARIO in {"error-result", "observation-error"},
                     "session_id": "foreign" if SCENARIO == "foreign-result" else SID,
                     "result": "native-secret",
                 }
@@ -390,3 +426,12 @@ for line in sys.stdin:
                 "result": "|".join(history),
             }
         )
+        if SCENARIO.startswith("observation"):
+            emit(
+                {
+                    "type": "system",
+                    "subtype": "init",
+                    "session_id": SID,
+                    "model": "late-duplicate-model",
+                }
+            )

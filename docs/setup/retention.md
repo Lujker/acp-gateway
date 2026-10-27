@@ -21,6 +21,11 @@ ACPGW_RETENTION__APPROVAL_AUDIT_DAYS=90. Restart the dispatcher after
 changing configuration. Removing the override and setting null disables
 future audit expiry; already deleted decisions cannot be recovered.
 
+P4.19 source development (schema 11) also stores redacted new prompts in
+`job_prompts`, committed with their jobs. They expire with the corresponding
+job by foreign-key cascade; history is not a permanent archive. Jobs created
+before this change have no saved prompt. Native agent history is separate.
+
 A sweep runs at startup and every configured interval while serving.
 Each sweep deletes at most batch_size jobs and batch_size settled audit
 rows whose finish/decision timestamp is strictly older than its cutoff.

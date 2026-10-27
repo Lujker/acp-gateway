@@ -127,6 +127,39 @@ def run(config, args):
             loop = asyncio.get_running_loop()
             task = asyncio.current_task()
             stopping = False
+            shell = None
+
+            def shell_service():
+                nonlocal shell
+                if shell is None:
+                    from acp_gateway.connectors.shell_service import LocalShell
+
+                    def owned(alias, sid, cwd):
+                        client = clients.get(alias)
+                        return bool(
+                            client
+                            and client.profile.backend in {"codex", "claude_code"}
+                            and client.managed_sessions().contains(sid, cwd)
+                        )
+
+                    shell = LocalShell(
+                        directory / "shell-operations.db",
+                        profiles=lambda: config.settings.agents,
+                        authorize=owned,
+                        admission=maintenance.check_admission,
+                    )
+                    maintenance.services.append(shell)
+                return shell
+
+            async def shell_request(request):
+                return await shell_service().request(request)
+
+            # Recover pending shell fences before publishing activity, even when
+            # its original profile was removed. New profiles can enable it lazily.
+            if (directory / "shell-operations.db").exists() or any(
+                p.backend in {"codex", "claude_code"} for p in config.settings.agents
+            ):
+                shell_service()
 
             def terminate():
                 nonlocal stopping
@@ -153,6 +186,7 @@ def run(config, args):
                     profiles_handler=(
                         profiles.request if config.settings.connector.remote_profiles else None
                     ),
+                    shell_handler=shell_request,
                 )
             except asyncio.CancelledError:
                 if not stopping:
@@ -170,8 +204,12 @@ def run(config, args):
                     await watcher
                 if handles_sigterm:
                     loop.remove_signal_handler(signal.SIGTERM)
-                for manager in managers.values():
-                    await manager.close()
+                try:
+                    if shell is not None:
+                        await shell.close()
+                finally:
+                    for manager in managers.values():
+                        await manager.close()
 
         directory = config.settings.resolved_data_dir()
         directory.mkdir(mode=0o700, parents=True, exist_ok=True)

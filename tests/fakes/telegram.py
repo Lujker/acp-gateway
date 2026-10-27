@@ -9,6 +9,11 @@ from aiogram.methods import EditMessageText, GetUpdates, SendMessage
 from aiogram.types import Chat, Message, User
 
 
+def answer_body(text):
+    """Assert answer content separately from the independently tested source footer."""
+    return text.rsplit("\n\n────────────────────\n", 1)[0]
+
+
 class FakeTelegramSession(BaseSession):
     def __init__(self):
         super().__init__()

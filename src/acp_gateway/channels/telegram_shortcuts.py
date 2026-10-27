@@ -94,10 +94,18 @@ class Shortcuts:
                 f"Последняя активность: {stamp(record.last_used_at.isoformat())}",
                 "Предпросмотр не меняет получателя сообщений.",
             ]
-            rows = [[("▶ Выбрать диалог", f"/select_recent {record.id}")]] if selectable else []
+            rows = [[("▶ Сделать активным", f"/select_recent {record.id}")]] if selectable else []
             if not self._recent_can_select(record):
                 lines.append("Диалог нельзя восстановить. Создайте новый через список агентов.")
             rows += [[("← Недавние", "/recent"), ("История задач", "/jobs")], *self._back_rows()]
+            rows.insert(
+                0,
+                [
+                    ("История", f"/history {record.id}"),
+                    ("Статус", f"/dialogue_status {record.id}"),
+                    ("Папка", f"/folder {record.id}"),
+                ],
+            )
             await self._panel(chat, "\n".join(lines), rows)
         elif command == "/favorites":
             if argument and (

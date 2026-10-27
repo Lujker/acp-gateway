@@ -33,6 +33,7 @@ from acp_gateway.connectors.protocol import (
     Ping,
     ProfilesRequest,
     ProtocolError,
+    ShellRequest,
     Welcome,
     decode_frame,
     encode_frame,
@@ -108,6 +109,7 @@ class ControlDispatcher:
             row["active_streams"] = len(registration.relay.streams) if row["connected"] else 0
             row["update_inventory"] = bool(row["connected"] and registration.relay.update_inventory)
             row["agent_discovery"] = bool(row["connected"] and registration.relay.agent_discovery)
+            row["shell_operations"] = bool(row["connected"] and registration.relay.shell_operations)
             row["advertised_agents"] = (
                 [a.alias for a in registration.agents] if row["connected"] else []
             )
@@ -186,6 +188,14 @@ class ControlDispatcher:
                 await self.on_registration(registration)
         return result
 
+    async def shell(self, computer_id: str, request: ShellRequest):
+        registration = await self._authorized_registration(computer_id)
+        result = await registration.relay.shell(request)
+        current = await self._authorized_registration(computer_id)
+        if current is not registration:
+            raise AgentUnavailable("computer connection changed; inspect shell operation")
+        return result
+
     async def _authorized_registration(self, computer_id):
         registration = self.active.get(computer_id)
         if registration is None or registration.relay is None:
@@ -246,6 +256,7 @@ class ControlDispatcher:
                 update_inventory and request.headers.get("X-ACP-Update-Operations") == "1"
             )
             stream_resume = request.headers.get("X-ACP-Stream-Resume") == "1"
+            shell_operations = request.headers.get("X-ACP-Shell-Operations") == "1"
         except MultipleValuesError:
             return connection.respond(401, "Unauthorized\n")
         if not authorization.startswith("Bearer "):
@@ -264,6 +275,7 @@ class ControlDispatcher:
         connection.agent_discovery = agent_discovery
         connection.update_operations = update_operations
         connection.stream_resume = stream_resume
+        connection.shell_operations = shell_operations
         return None
 
     async def _watch_grant(self, registration):
@@ -307,6 +319,7 @@ class ControlDispatcher:
                 update_operations=connection.update_operations,
                 agent_profiles=getattr(connection, "agent_profiles", False),
                 agent_discovery=getattr(connection, "agent_discovery", False),
+                shell_operations=getattr(connection, "shell_operations", False),
                 stream_resume=stream_resume,
                 on_park=lambda links, r=registration: self._park(r, links),
             )
@@ -336,6 +349,7 @@ class ControlDispatcher:
                         agent_profiles=1 if registration.relay.agent_profiles else None,
                         agent_discovery=1 if registration.relay.agent_discovery else None,
                         stream_resume=1 if registration.relay.stream_resume else None,
+                        shell_operations=1 if registration.relay.shell_operations else None,
                     )
                 )
             )
@@ -476,6 +490,7 @@ async def connect_control(
     agent_profiles=False,
     agent_discovery=False,
     stream_resume=False,
+    shell_operations=False,
 ):
     parts = validate_url(url)
     if fingerprint is not None and parts.scheme != "wss":
@@ -505,6 +520,7 @@ async def connect_control(
                 **({"X-ACP-Agent-Profiles": "1"} if agent_profiles else {}),
                 **({"X-ACP-Agent-Discovery": "1"} if agent_discovery else {}),
                 **({"X-ACP-Stream-Resume": "1"} if stream_resume else {}),
+                **({"X-ACP-Shell-Operations": "1"} if shell_operations else {}),
             },
             ssl=tls,
             proxy=None,
@@ -556,6 +572,8 @@ async def connect_control(
             raise ProtocolError("unsolicited discovery negotiation")
         if welcome.stream_resume is not None and not stream_resume:
             raise ProtocolError("unsolicited stream resume negotiation")
+        if welcome.shell_operations is not None and not shell_operations:
+            raise ProtocolError("unsolicited shell negotiation")
         return connection, welcome
     except BaseException as exc:
         close_code = connection.close_code
@@ -582,6 +600,7 @@ async def run_connector(
     installation_report=None,
     update_handler=None,
     profiles_handler=None,
+    shell_handler=None,
 ):
     delays = (1, 2, 5, 10, 30)
     attempt = 0
@@ -599,6 +618,7 @@ async def run_connector(
                     installation_report=installation_report,
                     update_handler=update_handler,
                     profiles_handler=profiles_handler,
+                    shell_handler=shell_handler,
                     parking=parking,
                 )
             except ConnectorUnavailable as exc:
@@ -628,6 +648,7 @@ async def _run_connection(
     installation_report=None,
     update_handler=None,
     profiles_handler=None,
+    shell_handler=None,
     parking: StreamParking | None = None,
 ):
     connection, welcome = await connect_control(
@@ -640,6 +661,7 @@ async def _run_connection(
         agent_profiles=profiles_handler is not None,
         agent_discovery=profiles_handler is not None,
         stream_resume=parking is not None,
+        shell_operations=shell_handler is not None,
     )
     stream_resume = parking is not None and welcome.stream_resume == 1
     if parking is not None:
@@ -669,6 +691,8 @@ async def _run_connection(
             agent_profiles=welcome.agent_profiles == 1,
             agent_discovery=welcome.agent_discovery == 1,
             profiles_handler=profiles_handler,
+            shell_operations=welcome.shell_operations == 1,
+            shell_handler=shell_handler,
             stream_resume=stream_resume,
             parking=parking if stream_resume else None,
             on_park=parking.park if stream_resume else None,

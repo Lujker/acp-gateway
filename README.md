@@ -40,16 +40,17 @@ Hermes Desktop and Goose integrations are described in the documentation.
 Install [uv](https://docs.astral.sh/uv/getting-started/installation/), then:
 
 ```sh
-uv tool install --python 3.12 "acp-gateway==0.2.7"
+uv tool install --python 3.12 "acp-gateway==0.2.8"
 uv tool update-shell
 acpgw setup
 ```
 
-The current release is **0.2.7**: automatic dialogue names, on top of 0.2.6's
-Claude Code answer/recovery fixes and connector-owned agent discovery for Telegram
-onboarding. Managed Codex and Claude Code remain experimental. See
-[project status](docs/project-status.md), [release notes](docs/releases/0.2.7.md)
-and the [upgrade instructions](docs/setup/update-0.2.7.ru.md).
+The current release is **0.2.8**: stream recovery after a dropped computer
+connection, Claude Code dialogue recovery after failed/interrupted turns, and
+large native output fixes. Update both dispatcher and connectors. Managed Codex
+and Claude Code remain experimental. See [project status](docs/project-status.md),
+[release notes](docs/releases/0.2.8.md) and the
+[upgrade instructions](docs/setup/update-0.2.8.ru.md).
 
 Follow the [Ubuntu dispatcher + Windows/Hermes guide (Russian)](docs/setup/self-install-pypi.ru.md)
 for enrollment, connection, Telegram and autostart. For an existing installation,

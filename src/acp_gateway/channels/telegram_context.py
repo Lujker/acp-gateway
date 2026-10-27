@@ -6,13 +6,187 @@ import contextlib
 import time
 
 from aiogram.exceptions import TelegramBadRequest, TelegramRetryAfter
+from aiogram.types import LinkPreviewOptions
 
-from acp_gateway.channels.telegram_dashboard import label
+from acp_gateway.channels.telegram_dashboard import agent_kind, label, model_line
 from acp_gateway.channels.telegram_format import system_chunks
 from acp_gateway.core import GatewayError
 
 
 class ContextCard:
+    def _navigation_selection(self, chat):
+        draft = getattr(self, "_profile_drafts", {}).get(chat)
+        rename = self._rename_input(chat)
+        cwd = self._cwd_input(chat)
+        form = (
+            ("profile", draft.get("token"), draft["input"], draft["expires"])
+            if draft and draft.get("input")
+            else ("cwd", cwd["token"], cwd["expires"])
+            if cwd
+            else ("rename", rename["token"], rename["expires"])
+            if rename
+            else None
+        )
+        return self._ui_context(chat), form
+
+    def _remember_navigation(self, chat, message_id, body, text, markup, selection):
+        key = (chat, message_id)
+        self._navigation_cards[key] = {
+            "body": body,
+            "text": text,
+            "markup": markup,
+            "retry_at": 0,
+            "context": selection,
+        }
+        self._navigation_cards.move_to_end(key)
+        while len(self._navigation_cards) > 32:
+            self._navigation_cards.popitem(last=False)
+
+    async def _refresh_navigation(self, chat):
+        """Refresh bounded, advisory snapshots without renewing callback authority."""
+        for key, record in list(self._navigation_cards.items()):
+            if key[0] != chat or time.monotonic() < record["retry_at"]:
+                continue
+            editor = self._panels.editor(*key)
+            revision = editor.revision
+            async with editor.lock:
+                if self._navigation_cards.get(key) is not record or editor.revision != revision:
+                    continue
+                body = record["body"]
+                if record["context"] != self._navigation_selection(chat):
+                    body += (
+                        "\n\nСодержимое панели — до смены выбора или формы ввода. "
+                        "Откройте /menu для обновления действий."
+                    )
+                text = body + "\n\n" + self._destination_text(chat)
+                chunks = system_chunks(text)
+                if text == record["text"]:
+                    continue
+                if len(chunks) != 1:
+                    # Do not replace a bounded panel with truncated content or another send.
+                    self._navigation_cards.pop(key, None)
+                    continue
+                try:
+                    await self.bot.edit_message_text(
+                        chat_id=chat,
+                        message_id=key[1],
+                        text=chunks[0],
+                        parse_mode="HTML",
+                        reply_markup=record["markup"],
+                        link_preview_options=LinkPreviewOptions(is_disabled=True),
+                        request_timeout=10,
+                    )
+                except TelegramRetryAfter as exc:
+                    record["retry_at"] = time.monotonic() + max(1, exc.retry_after)
+                    continue
+                except TelegramBadRequest as exc:
+                    if "message is not modified" not in exc.message.lower():
+                        self._navigation_cards.pop(key, None)
+                        continue
+                except asyncio.CancelledError:
+                    raise
+                except Exception:
+                    # An ambiguous edit is never replayed; the footer remains a snapshot.
+                    self._navigation_cards.pop(key, None)
+                    continue
+                record["text"] = text
+
+    def _model_observation_lines(self, client, active):
+        kind = agent_kind(client.profile.kind, client.profile.display_name)
+        model = self.core.observed_model(active) if active else None
+        if not model or not model.get("observed_model"):
+            if active and client.profile.kind == "hermes":
+                # Hermes reports its model only on request; panels never call the agent.
+                return [f"{kind} · модель ещё не запрашивалась · /model"]
+            if active and client.profile.kind == "claude_code":
+                return [f"{kind} · модель станет известна после первого ответа"]
+            return [f"{kind} · модель неизвестна"]
+        lines = [
+            model_line(
+                kind,
+                model.get("observed_provider"),
+                model["observed_model"],
+                model.get("observed_effort"),
+            )
+            + " (последнее наблюдение)"
+        ]
+        if model["state"] in {"intent", "pending", "unknown"}:
+            lines.append("Смена модели ещё не подтверждена.")
+        return lines
+
+    def _destination_text(self, chat):
+        """A local snapshot only: navigation must never initialize an agent."""
+        lines = ["────────────────────", "Выбор на момент обновления панели:"]
+        draft = getattr(self, "_profile_drafts", {}).get(chat)
+        if draft and draft.get("input"):
+            field = {"cwd": "рабочая папка", "alias": "alias", "title": "название"}[draft["input"]]
+            lines.append(
+                "✎ Ввод профиля истёк; следующий текст не отправится агенту."
+                if time.time() > draft["expires"]
+                else f"✎ Следующий текст → {field} профиля на ПК {label(draft['computer'], 60)}"
+            )
+            lines.append("/cancel — закрыть ввод")
+            return "\n".join(lines)
+        cwd = self._cwd_input(chat)
+        if cwd:
+            lines.append(
+                "✎ Ввод папки истёк; следующий текст не отправится агенту."
+                if time.time() > cwd["expires"]
+                else "✎ Следующий текст → папка нового диалога"
+            )
+            lines.append("/cancel — закрыть ввод")
+            return "\n".join(lines)
+        pending = self._rename_input(chat)
+        if pending:
+            lines.append(
+                "✎ Ввод названия истёк; следующий текст не отправится агенту."
+                if time.time() > pending["expires"]
+                else f"✎ Следующий текст → название диалога #{pending['id']}"
+            )
+            lines.append("/cancel — закрыть ввод")
+            return "\n".join(lines)
+        try:
+            conv = self._conversation(chat)
+        except GatewayError:
+            lines.append("✉ Маршрут недоступен; выберите агента в /menu.")
+            return "\n".join(lines)
+        client = self.core.agent(conv.agent)
+        active = self.core.active_session(conv)
+        if active:
+            lines.append(
+                f"✉ Следующий текст → «{label(active.title or 'Без названия', 80)}» #{active.id}"
+            )
+            if active.availability in {"restore-unavailable", "interrupted", "uncertain"}:
+                lines.append("Продолжение требует восстановления или проверки состояния.")
+        else:
+            lines.append("✉ Диалог не выбран; текст не отправится агенту.")
+        lines.extend(self._model_observation_lines(client, active))
+        profile = client.profile
+        if profile.backend == "connector":
+            computers = self.connector_dispatcher.status() if self.connector_dispatcher else []
+            computer = next(
+                (item for item in computers if item["computer_id"] == profile.computer_id), None
+            )
+            host = (
+                computer.get("display_name") or profile.computer_id
+                if computer
+                else profile.computer_id
+            )
+            lines.append(f"ПК: {label(host, 60)} · агент: {label(conv.agent, 80)}")
+            if not computer or not computer["connected"] or not computer["enabled"]:
+                lines.append("ПК недоступен.")
+            elif profile.alias not in computer.get("advertised_agents", []):
+                lines.append("Агент не объявлен коннектором.")
+        else:
+            lines.append(f"Агент: {label(conv.agent, 80)} · прямое подключение")
+        lines.append(
+            f"Папка: {label(active.cwd, 250)}"
+            if active
+            else f"Папка новых диалогов: {label(profile.default_cwd, 250)}"
+        )
+        lines.append("/context — актуальный выбор")
+        return "\n".join(lines)
+
     def _agent_profile_text(self, client):
         profile = client.profile
         settings = getattr(profile, profile.kind, None)
@@ -38,7 +212,7 @@ class ContextCard:
         return name + (" · WSL" if environment == "wsl" else "")
 
     def _context_text(self, chat, *, hint=True):
-        lines = ["Текущий контекст · сюда пойдут обычные сообщения"]
+        lines = ["Текущий контекст · адресат и режим ввода"]
         alias = self.core.store.channel_state(self.namespace, f"agent:{chat}")
         try:
             conv = self._conversation(chat)
@@ -105,13 +279,10 @@ class ContextCard:
                 f"Папка новых диалогов: {label(profile.default_cwd, 500)}",
                 "Диалог: не выбран — создайте или выберите в /menu.",
             ]
-        pending = self._rename_input(chat)
-        if pending:
-            lines.append(
-                "Время ввода названия истекло; /cancel — закрыть ввод."
-                if time.time() > pending["expires"]
-                else "Ввод названия: следующий текст переименует диалог; /cancel — отменить."
-            )
+        if self._navigation_selection(chat)[1] is not None:
+            lines += ["", *self._destination_text(chat).splitlines()[2:]]
+        else:
+            lines.extend(self._model_observation_lines(client, active))
         if hint:
             lines += ["", "ℹ️ Снимок обновляется автоматически. Если устарел, откройте /context."]
         return "\n".join(lines)
@@ -219,6 +390,12 @@ class ContextCard:
             for chat in list(self._chats):
                 if chat not in self.settings.allowed_user_ids:
                     continue
+                try:
+                    await self._refresh_navigation(chat)
+                except asyncio.CancelledError:
+                    raise
+                except Exception:
+                    self._log.warning("Telegram navigation snapshot update unavailable")
                 try:
                     await self._show_context(chat)
                 except asyncio.CancelledError:

@@ -70,6 +70,49 @@ def calls(tmp_path):
     return [json.loads(line) for line in (tmp_path / "codex-peer.log").read_text().splitlines()]
 
 
+async def test_parallel_threads_on_one_transport_keep_answers_separate(peer):
+    client = peer("parallel", turn_timeout=10)
+    try:
+        first, second = await client.new_session(), await client.new_session()
+        replies = await asyncio.wait_for(
+            asyncio.gather(
+                client.ask(first, "First dialogue"), client.ask(second, "Second dialogue")
+            ),
+            5,
+        )
+        assert [reply.text for reply in replies] == ["First dialogue", "Second dialogue"]
+        assert (
+            client.session_availability(first) == client.session_availability(second) == "attached"
+        )
+    finally:
+        await client.close()
+
+
+async def test_parallel_cancel_targets_only_one_thread_and_keeps_other_running(peer, tmp_path):
+    client = peer("parallel-hold", turn_timeout=10)
+    tasks = []
+    try:
+        first, second = await client.new_session(), await client.new_session()
+        tasks = [asyncio.create_task(client.ask(sid, "hello")) for sid in (first, second)]
+        async with asyncio.timeout(5):
+            while sum(f.get("method") == "turn/start" for f in calls(tmp_path)) < 2:
+                await asyncio.sleep(0.01)
+        await client.cancel(first)
+        assert (await asyncio.wait_for(tasks[0], 2)).stop_reason == "cancelled"
+        assert not tasks[1].done()
+        await client.cancel(second)
+        assert (await asyncio.wait_for(tasks[1], 2)).stop_reason == "cancelled"
+        interrupted = [
+            f["params"]["threadId"] for f in calls(tmp_path) if f.get("method") == "turn/interrupt"
+        ]
+        assert interrupted == [first, second]
+    finally:
+        for task in tasks:
+            task.cancel()
+        await asyncio.gather(*tasks, return_exceptions=True)
+        await client.close()
+
+
 async def test_message_phases_and_public_summaries_are_separate(peer):
     client = peer("phases")
     try:
@@ -91,7 +134,7 @@ async def test_unclassified_message_buffer_is_bounded_and_never_becomes_an_answe
         sid = await client.new_session()
         with pytest.raises(AgentError):
             await client.ask(sid, "hello")
-        assert client.session_availability(sid) == "uncertain"
+        assert client.session_availability(sid) == "interrupted"
     finally:
         await client.close()
 
@@ -237,8 +280,9 @@ async def test_codex_never_attaches_arbitrary_ids_or_offers_cold_resume(peer, tm
         await client.close()
 
 
-async def test_codex_connector_manifest_policy_and_real_relay_roundtrip(peer, tmp_path):
-    local = peer("approval")
+@pytest.mark.parametrize("scenario", ["approval", "observation"])
+async def test_codex_connector_manifest_policy_and_real_relay_roundtrip(peer, tmp_path, scenario):
+    local = peer(scenario)
     config = AppConfig(Settings(agents=[local.profile]), SecretStore(), None, None)
     launch = ConnectorLaunch("ws://127.0.0.1/connect", "home", tmp_path / "key")
     policies = local_policies(config)
@@ -278,10 +322,16 @@ async def test_codex_connector_manifest_policy_and_real_relay_roundtrip(peer, tm
             try:
                 await relay.ready.wait()
                 sid = await remote.new_session()
+                if scenario == "observation":
+                    assert remote.session_observation(sid)["model"] == "native-model"
+                    assert remote.session_observation(sid)["effort"] == "high"
                 assert (await remote.ask(sid, "hello")).text == "Hello world"
                 assert remote.supports_cancel
                 await remote.close()
                 await remote.load_session(sid)
+                if scenario == "observation":
+                    assert remote.session_observation(sid)["model"] == "resumed-model"
+                    assert remote.session_observation(sid)["effort"] is None
                 assert remote.session_availability(sid) == "attached"
                 assert sum(f.get("method") == "turn/start" for f in calls(tmp_path)) == 1
             finally:
@@ -365,7 +415,8 @@ async def test_native_failure_fences_turn_and_reaps_only_owned_child(peer, tmp_p
         with pytest.raises(AgentError) as exc:
             await asyncio.wait_for(client.ask(sid, "hello"), 2)
         assert "credential-secret" not in str(exc.value)
-        assert client.session_availability(sid) == "uncertain"
+        # The owned app-server is proven stopped: explicit resume only, never replay.
+        assert client.session_availability(sid) == "interrupted"
         before = calls(tmp_path)
         with pytest.raises(SessionNotFound):
             await client.ask(sid, "hello")
@@ -445,7 +496,7 @@ async def test_abandoned_prompt_reaps_child_without_claiming_safe_turn_cancel(pe
             await asyncio.wait_for(task, 0.5)
         assert transport.process.returncode is not None
         assert client.supports_cancel
-        assert client.session_availability(sid) == "uncertain"
+        assert client.session_availability(sid) == "interrupted"
     finally:
         await client.close()
 
@@ -688,3 +739,54 @@ async def test_shutdown_closes_owned_pipes_without_waiting_for_descendant(peer, 
             await transport.close()
         await asyncio.wait_for(process.wait(), 3)
         await manager.close()
+
+
+async def test_interrupted_turn_frees_idle_threads_and_resumes_only_explicitly(peer, tmp_path):
+    from acp_gateway.agents.errors import SessionInterrupted
+
+    client = peer("parallel-hold", turn_timeout=0.15)
+    try:
+        lost, idle = await client.new_session(), await client.new_session()
+        with pytest.raises(AgentError):
+            await asyncio.wait_for(client.ask(lost, "lost"), 3)
+        assert client.session_availability(lost) == "interrupted"
+        before = calls(tmp_path)
+        with pytest.raises(SessionInterrupted):
+            await client.ask(lost, "ignored")
+        assert calls(tmp_path) == before
+        # Another dialogue of the same app-server is not collateral damage.
+        await client.load_session(idle)
+        assert client.session_availability(idle) == "attached"
+        await client.resume_interrupted(lost)
+        assert client.session_availability(lost) == "attached"
+        starts = [f for f in calls(tmp_path) if f.get("method") == "turn/start"]
+        assert len(starts) == 1  # the interrupted prompt was never replayed
+    finally:
+        await client.close()
+
+
+async def test_fenced_binding_is_explained_and_released_only_by_owner(peer, tmp_path):
+    import sqlite3
+
+    from acp_gateway.agents.errors import SessionFenced
+
+    client = peer("happy")
+    try:
+        sid = await client.new_session()
+        await client.close()  # confirmed stop: the binding is idle
+        db = client._pin_file.parent / "managed-sessions" / "bindings.sqlite3"
+        with sqlite3.connect(db) as conn:  # as if a crash left the turn fence behind
+            conn.execute("UPDATE bindings SET state='busy' WHERE sid=?", (sid,))
+        before = calls(tmp_path)
+        with pytest.raises(SessionFenced):
+            await client.ask(sid, "hello")
+        assert client.session_availability(sid) == "fenced"
+        assert not [f for f in calls(tmp_path)[len(before) :] if f.get("method") == "turn/start"]
+        await client.release_fenced(sid)
+        assert client.session_availability(sid) == "attached"
+        reply = await client.ask(sid, "hello")
+        assert reply.text == "Hello world"
+        starts = [f for f in calls(tmp_path) if f.get("method") == "turn/start"]
+        assert len(starts) == 1
+    finally:
+        await client.close()

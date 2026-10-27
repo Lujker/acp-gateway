@@ -10,6 +10,22 @@ def label(value, limit=80):
     return " ".join(redact_text(str(value)).split())[:limit]
 
 
+AGENT_KINDS = {"codex": "Codex", "claude_code": "Claude Code", "hermes": "Hermes", "goose": "Goose"}
+
+
+def agent_kind(kind, fallback=None):
+    """Product name of the agent; a generic ACP agent keeps its configured name."""
+    return AGENT_KINDS.get(kind) or label(fallback or kind or "Агент", 60)
+
+
+def model_line(kind, provider, model, effort=None):
+    """``Codex · gpt-5 · medium``: unknown provider/effort are omitted, never guessed."""
+    parts = [kind, label(provider, 50) if provider else None, label(model, 80)]
+    if effort:
+        parts.append(label(effort, 20))
+    return " · ".join(part for part in parts if part)
+
+
 def stamp(value):
     return str(value).replace("T", " ").replace("+00:00", " UTC") if value else "—"
 
@@ -210,7 +226,7 @@ class Dashboard:
             rows.append(
                 [
                     (
-                        f"💬 Выбрать диалог {label(job.conversation.agent, 30)} "
+                        f"💬 Сделать активным {label(job.conversation.agent, 30)} "
                         f"· #{job.session_id}",
                         f"/open_dialogue {job.id}",
                     )

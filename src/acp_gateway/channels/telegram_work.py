@@ -68,6 +68,17 @@ class WorkCards:
                 f"Последнее наблюдение: {label(evidence.get('observed_provider'))}/"
                 f"{label(evidence['observed_model'])} — сохранённые сведения."
             )
+        native = result.get("native_observation") or {}
+        if native.get("observed_model"):
+            effort = f" {label(native['observed_effort'])}" if native.get("observed_effort") else ""
+            provider = native.get("observed_provider")
+            lines.append(
+                "Последнее native-наблюдение: "
+                + (f"{label(provider)}/" if provider else "")
+                + f"{label(native['observed_model'])}{effort}"
+                + ("" if provider else " (провайдер не сообщён)")
+                + " — сохранённые сведения."
+            )
         if status in {"intent", "unknown"}:
             lines.append("/model state показывает сохранённый исход без подключения к агенту.")
         if result.get("reconciliation") in {"unknown", "pending", "unavailable"}:

@@ -11,6 +11,7 @@ from acp_gateway.channels.telegram_progress import LIVE_WORK, WORK_HISTORY, WORK
 from acp_gateway.core.bus import JobFinished, JobProgress
 from acp_gateway.log import register_secret
 from acp_gateway.storage import Conversation, JobStatus
+from fakes.telegram import answer_body
 
 
 def job(core, name="presentation"):
@@ -26,8 +27,8 @@ async def test_menu_has_sections_and_no_duplicate_route_or_dialogue(telegram):
     visible = plain_html(card)
     assert "<b>🏠 Управление ACP Gateway</b>" in card
     assert visible.count("Агент: work") == 1
-    assert visible.count(f"Диалог: #{record.id}") == 1
-    assert "\n\n📁" in visible
+    assert visible.count(f"«Без названия» #{record.id}") == 1
+    assert "Следующий текст →" in visible and "Папка: /work" in visible
     assert not server.log
 
 
@@ -84,7 +85,9 @@ async def test_work_history_failure_does_not_block_answer(telegram, monkeypatch)
         current.id, JobStatus.COMPLETED, answer="Final despite progress failure"
     )
     core.bus.publish(JobFinished(final.conversation, final))
-    await eventually(lambda: any(m.text == "Final despite progress failure" for m in session.sent))
+    await eventually(
+        lambda: any(answer_body(m.text) == "Final despite progress failure" for m in session.sent)
+    )
 
 
 async def test_split_bearer_credential_never_leaks_live_or_persisted(telegram):

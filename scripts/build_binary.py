@@ -53,6 +53,16 @@ def main() -> None:
         str(ROOT / "src/acp_gateway/connectors/_discovery_probe.py")
         + os.pathsep
         + "acp_gateway/connectors",
+        "--add-data",
+        str(ROOT / "src/acp_gateway/connectors/_shell_worker.py")
+        + os.pathsep
+        + "acp_gateway/connectors",
+        "--add-data",
+        str(ROOT / "src/acp_gateway/connectors/_windows_shell_job.py")
+        + os.pathsep
+        + "acp_gateway/connectors",
+        "--add-data",
+        str(ROOT / "src/acp_gateway/adapters/_wsl_runner.py") + os.pathsep + "acp_gateway/adapters",
         "--collect-submodules",
         "acp_gateway",
         "--collect-submodules",

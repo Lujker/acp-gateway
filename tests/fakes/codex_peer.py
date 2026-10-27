@@ -8,6 +8,7 @@ from pathlib import Path
 
 SCENARIO = "happy"
 LOG = Path(__file__).with_suffix(".log")
+parallel_turns = {}
 
 
 def send(frame):
@@ -50,6 +51,44 @@ for line in sys.stdin:
     with LOG.open("a") as log:
         log.write(json.dumps(frame) + "\n")
     method, rid, params = frame.get("method"), frame.get("id"), frame.get("params", {})
+    if SCENARIO in {"parallel", "parallel-hold", "observation-parallel"} and method in {
+        "thread/start",
+        "turn/start",
+        "turn/interrupt",
+    }:
+        if method == "thread/start":
+            result = {"thread": {"id": f"thread-{rid}"}}
+            if SCENARIO == "observation-parallel":
+                result.update(
+                    model=f"model-{rid}", modelProvider="custom", reasoningEffort="medium"
+                )
+            send({"id": rid, "result": result})
+        elif method == "turn/start":
+            sid, tid = params["threadId"], f"turn-{rid}"
+            text = params["input"][0]["text"]
+            parallel_turns[sid] = (tid, text)
+            send({"id": rid, "result": {"turn": {"id": tid}}})
+            if len(parallel_turns) == 2 and SCENARIO == "parallel":
+                for thread, (turn, answer) in reversed(list(parallel_turns.items())):
+                    delta(answer, thread, turn)
+                    note(
+                        "turn/completed",
+                        {
+                            "threadId": thread,
+                            "turn": {
+                                "id": turn,
+                                "status": "completed",
+                                "items": [{"type": "agentMessage", "id": "answer", "text": answer}],
+                            },
+                        },
+                    )
+        else:
+            sid = params["threadId"]
+            tid, _ = parallel_turns.pop(sid)
+            assert params["turnId"] == tid
+            send({"id": rid, "result": {}})
+            complete(sid, tid, status="interrupted")
+        continue
     if method == "initialize":
         send({"id": rid, "result": {"userAgent": "fake-codex/0.163.0"}})
     elif method == "thread/start":
@@ -59,11 +98,26 @@ for line in sys.stdin:
         assert params["approvalsReviewer"] == ("auto_review" if SCENARIO == "work" else "user")
         assert params["sandbox"] in {"read-only", "workspace-write"}
         assert params["cwd"] == str(Path.cwd())
-        send({"id": rid, "result": {"thread": {"id": "owned-thread"}}})
+        result = {"thread": {"id": "owned-thread"}}
+        if SCENARIO.startswith("observation"):
+            result.update(
+                model="native-model", modelProvider="custom-provider", reasoningEffort="high"
+            )
+            if SCENARIO == "observation-invalid":
+                result.update(
+                    model=["invalid"], modelProvider={"invalid": True}, reasoningEffort=[]
+                )
+        send({"id": rid, "result": result})
     elif method == "thread/resume":
-        assert params["threadId"] == "owned-thread"
+        parallel = SCENARIO.startswith("parallel")
+        assert parallel or params["threadId"] == "owned-thread"
         assert params["cwd"] == str(Path.cwd())
-        send({"id": rid, "result": {"thread": {"id": "owned-thread"}}})
+        result = {"thread": {"id": params["threadId"] if parallel else "owned-thread"}}
+        if SCENARIO.startswith("observation") and SCENARIO != "observation-missing-resume":
+            result.update(
+                model="resumed-model", modelProvider="custom-provider", reasoningEffort=None
+            )
+        send({"id": rid, "result": result})
     elif method == "turn/interrupt":
         assert params == {"threadId": "owned-thread", "turnId": "owned-turn"}
         send({"id": rid, "result": {}})

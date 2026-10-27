@@ -159,6 +159,67 @@ to the original page, including after selection. Text commands `/dialogue ID [PA
 and `/switch ID [PAGE]` offer the same actions; the default return page is 1.
 Invalid pages and dialogues outside this chat/agent are rejected before selection.
 
+In the P4.19.2 source implementation, navigation panels include a destination
+footer with the selected dialogue, agent, observed provider/model when available,
+computer and cwd. Name/profile input replaces that footer with the purpose of
+the next text. Unknown models are labelled unknown; configured defaults are not
+presented as observed values. The footer is a snapshot at its last update.
+Up to 32 recent single-message navigation panels are refreshed in place by the
+context loop. A changed selection/form marks the old panel body as stale without
+renewing its controls. Restart, eviction or edit failure may leave an older
+snapshot; use `/context` for the current selection.
+
+The compact `/sessions` list keeps long working paths in dialogue details so
+the list and pagination controls fit together. It covers dialogues known to the
+gateway for the selected agent, not every native chat on the computer. `/recent`
+still shows the ten most recent dialogues across routes. These source changes
+are not evidence of a released or deployed version.
+
+P4.19 source development also adds **История**, **Статус** and **Папка** in
+dialogue cards and recent-dialogue previews. History reads the dispatcher's
+saved turns without selecting a dialogue or calling a model. Older/newer
+buttons use exact job IDs; long prompts/answers have text-fragment buttons.
+Old jobs explicitly say when the original prompt was not saved. This view
+does not import the native agent's full chat history.
+
+New prompts are redacted before storage and committed atomically with their
+jobs in SQLite schema 11. They follow the job's retention period (seven days
+by default), including cascade deletion. Original prompt text is still sent
+to the agent. Status counts active gateway jobs for that exact dialogue; it
+does not count resident agent processes.
+
+The folder card keeps the existing dialogue's cwd unchanged. Direct remote
+ACP routes can request a new dialogue in another absolute path, subject to
+the agent accepting it. This five-minute input form survives channel restart,
+checks the selected route, and never retries an ambiguous creation automatically.
+Managed/connector routes retain their configured local cwd policy and require
+another profile for another folder; the card links to PC profiles when available.
+
+P4.19 source development (schema 12) signs result fragments with the original
+dialogue, route/computer/cwd and saved model observation where available. A turn's
+source snapshot is captured when the job is admitted. The selected destination
+is labelled as a snapshot at send time. Automatic delivery pins its presentation
+before sending, so route/title/model changes cannot rewrite an acknowledged
+prefix. Started v2/v1/plain deliveries retain their original formatting. Source
+snapshots and delivery presentation expire with their jobs. These source changes
+have not been deployed. Managed Codex now projects model/provider/effort observed
+in native thread start/resume responses. Panels and `/context` show the last
+saved observation; `/model state` reads it without connecting. A result keeps
+the model/effort snapshot from before its prompt, including after a later resume.
+Absent or invalid fields remain unknown; configuration and catalog defaults are
+not used as evidence. Managed Claude projects its model from the first matching
+`system/init` event; provider and effort remain unknown. Its result footer labels
+this as native init evidence, since it may arrive after input was sent. Events
+from another session or subagents, and duplicate init frames, do not replace it.
+An init received after a turn finishes cannot change that turn's saved answer.
+Re-attaching a Claude dialogue without a new init keeps the last observed model.
+Goose and other ACP agents report their model through standard session config
+options (`configOptions`: category `model`/`thought_level`, plus Goose's
+`provider` select). Panels show them as `Goose · provider · model · effort` and
+follow `config_option_update`; the job snapshot is taken before the prompt.
+Unknown provider/effort are omitted rather than guessed. Hermes reports its model
+only on request, so panels suggest `/model` until it has been observed.
+
 
 ## Inline controls and formatted answers (rc6)
 
@@ -208,7 +269,8 @@ queue and do not replay a model prompt. Formatting does not change stored answer
 
 `/menu` → **Выполнение**, or `/mode`, controls the selected dialogue:
 
-- **Как Hermes** (default): Hermes decides which actions need approval; the
+- **Как Hermes** (default; shown as **С подтверждениями** for agents other
+  than Hermes): the agent decides which actions need approval; the
   dispatcher sends those requests to a human. Smart mode can still ask about
   untrusted MCP servers and tools without a read-only annotation.
 - **Без подтверждений**: explicitly authorize every subsequent permission
@@ -276,6 +338,28 @@ resubmitting. Diagnostics remain redacted. These controls are shipped.
 See [implementation evidence and remaining UX](../items/telegram-recovery.ru.md).
 
 
+### Return points, blocked dialogues and rejected text (P4.19 source)
+
+- **📝 Завершить и сохранить** (dialogue card, running job card) asks the agent
+  to wrap up without starting new changes and write a return point: goal, what
+  was done, current state, what remains, decisions, where to resume. While a job
+  runs, choose **⏳ После текущей задачи** (sent when it ends; cancellable) or
+  **⏹ Прервать и сохранить** (stops the job first; finished actions are not
+  rolled back). The answer is delivered as usual and kept as the dialogue's
+  **📌 Точка возврата** beyond job retention (redacted, up to 20,000 characters).
+  From it, **Продолжить в этом диалоге** or **в новом диалоге** (same agent and
+  folder) sends the saved summary with a resume instruction. A scheduled request
+  lives in dispatcher memory and is lost on restart.
+- **Заблокирован** dialogues (Codex/Claude Code whose earlier stop the computer
+  never confirmed) show **🔓 Проверил — разблокировать** with a confirmation.
+  Confirm only after checking on the PC that the agent no longer works on that
+  chat. Nothing is resent. If it was released offline with
+  `acpgw connector-sessions release`, press the button once to refresh.
+- Text refused because the dialogue is busy, or typed into an expired rename,
+  folder or profile form, gets a one-shot **✉ Отправить агенту** button for 10
+  minutes. It is valid only while the same agent and dialogue stay selected.
+  The text is held in memory only.
+
 ### Context card
 
 Use `/menu` → **Текущий контекст**, or `/context`, to enable a separate message
@@ -298,9 +382,30 @@ stale. Use `/context` to request recovery explicitly. After an unknown send, thi
 can create a new card while an earlier copy may already exist. Explicit 429 edit
 rejections back off; unknown delivery of results retains its separate fences.
 The owner provisionally closed the older Telegram acceptance on 2026-10-16;
-reopen it on reported problems. New managed-agent/onboarding checks remain
-separate; see [current status](../project-status.md).
+reopen it on reported problems. The owner also provisionally closed remaining shipped managed-agent/onboarding
+and recovery acceptance on 2026-10-27; see [current status](../project-status.md).
 
+
+<a id="switching-and-background-processes"></a>
+### Switching and background processes
+
+Selecting another agent or dialogue only changes the destination of subsequent
+messages. It does not cancel a job already running in the previous dialogue or
+close that dialogue's native process. Returning to a dialogue selects its stored
+identity; selection itself does not create another process.
+
+Managed Claude keeps a dedicated child per open dialogue. Managed Codex uses an
+app-server process per transport, which may serve several dialogues. After an
+answer, these processes can wait in the background; there is no idle timeout.
+With Windows→WSL profiles, the processes run inside the configured distribution.
+`running_sessions: 0` means no active turns, not zero resident agent processes.
+A waiting process alone is not evidence of a hung turn.
+
+Use `/jobs` to inspect work and `/stop` to request cancellation of supported jobs
+in this Telegram chat. Cancellation ends a turn; it does not promise process
+termination. Stopping the connector service invokes cleanup of its owned agent
+processes; the gateway does not shut down the entire WSL distribution. Automatic
+idle cleanup and a process list are future [P4.19 work](../items/ops-improvements.ru.md).
 
 ### Dialogue actions on results
 
@@ -352,6 +457,40 @@ without real adapter capabilities.
 Use the [Docker preview instructions](telegram-preview-docker.ru.md) to try the
 unpublished branch on an existing VPS. Publication and live acceptance remain
 separate from source verification.
+
+### Direct shell (P4.19 source development)
+
+Select a dialogue backed by a connected computer and send `!command` to run
+directly through its connector, without a model request. The local profile must
+be managed Codex or Claude Code in **work** mode, and the connector must confirm
+the dialogue and configured working directory. Safe profiles, direct ACP routes
+and older connectors refuse the command. It is never sent to the model as fallback.
+An active folder/profile/name input form consumes text before shell interpretation.
+
+The source card shows the original computer/dialogue/cwd, interpreter, status,
+exit code, cleanup evidence and paginated bounded output. Status, cancellation
+and output navigation edit that card. Opening Menu leaves the source card in
+place. `/shells [PAGE]` lists this private chat's operations; `/shell UUID [PAGE]`
+explicitly opens a saved card. Switching dialogue does not move a shell operation.
+**Передать агенту** is a separate action requiring the original active dialogue.
+The transfer is recorded once, with the resulting job ID. A lost or ambiguous
+response never triggers another shell start or another model transfer.
+
+Operation and card references survive dispatcher restart in its local SQLite
+`channel_state`, scoped to the bot and owning private chat. Commands and complete
+output are redacted before storage. The connector has its own durable shell
+journal and keeps UUID tombstones to prevent replay after result expiry.
+The dispatcher currently keeps at most 1000 operations and prunes confirmed
+terminal records older than seven days when admitting another command; unknown
+operations are retained. These limits are separate from job retention settings.
+Background status checks edit known cards; ambiguous sends do not create
+automatic replacements. Use `/shells` to explicitly recover a card.
+
+Linux execution is covered by local process and WebSocket tests. Native Windows
+PowerShell execution is implemented with a worker Job Object gate and verified
+cleanup; its native integration tests have not run in this Linux environment.
+The prepared WSL path has not been validated on Windows. Frozen binary and live
+Telegram acceptance remain pending.
 
 ## Updates (source development after 0.2.0)
 

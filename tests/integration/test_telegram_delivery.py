@@ -15,6 +15,7 @@ from test_telegram_controls import button
 
 from acp_gateway.channels.telegram_format import LEGACY_FORMAT_VERSION, answer_chunks, plain_html
 from acp_gateway.storage import Conversation, JobStatus
+from fakes.telegram import answer_body
 
 
 async def pause_sender(channel):
@@ -41,7 +42,7 @@ async def test_acknowledged_prefix_is_not_sent_again(telegram):
     core.store.deliveries.recover(channel.namespace)
     await channel._deliver_result(core.store.deliveries.due(channel.namespace))
     await channel._deliver_result(core.store.deliveries.due(channel.namespace))
-    replies = [plain_html(m.text) for m in session.sent if "📄 Ответ ·" in m.text]
+    replies = [plain_html(answer_body(m.text)) for m in session.sent if "📄 Ответ ·" in m.text]
     assert len(replies) == 3
     assert all(reply.startswith(f"📄 Ответ · {i}/3\n\n") for i, reply in enumerate(replies, 1))
     assert "".join(reply.split("\n\n", 1)[1] for reply in replies) == "A" * 2000 + "B" * 2000 + "C"
@@ -101,7 +102,9 @@ async def test_send_failures_never_blindly_replay(telegram, failure, state):
     }
     assert expected[state] in session.sent[-1].text
     await feed(channel, 3, f"/result {job.id}")
-    await eventually(lambda: any(m.text == "private saved answer" for m in session.sent))
+    await eventually(
+        lambda: any(answer_body(m.text) == "private saved answer" for m in session.sent)
+    )
 
 
 async def test_lost_local_ack_does_not_repeat_remote_send(telegram, monkeypatch):
@@ -118,7 +121,7 @@ async def test_lost_local_ack_does_not_repeat_remote_send(telegram, monkeypatch)
     core.store.deliveries.recover(channel.namespace)
     assert core.store.deliveries.get(channel.namespace, job.id)["state"] == "unknown"
     assert core.store.deliveries.due(channel.namespace) is None
-    assert sum(m.text == "already sent" for m in session.sent) == 1
+    assert sum(answer_body(m.text) == "already sent" for m in session.sent) == 1
 
 
 async def test_removed_recipient_is_not_sent_saved_content(telegram):
@@ -136,14 +139,20 @@ async def test_working_message_is_edited_to_final_status(telegram):
     await feed(channel, 1, "/start")
     await feed(channel, 2, "/new")
     await feed(channel, 3, "say pong")
-    await eventually(lambda: any(isinstance(c, EditMessageText) for c in session.calls))
-    edit = next(c for c in session.calls if isinstance(c, EditMessageText))
     sends = [c for c in session.calls if isinstance(c, SendMessage)]
     working_id = next(i + 1 for i, c in enumerate(sends) if "Задача:" in plain_html(c.text))
+    await eventually(
+        lambda: any(
+            isinstance(c, EditMessageText) and c.message_id == working_id for c in session.calls
+        )
+    )
+    edit = next(
+        c for c in session.calls if isinstance(c, EditMessageText) and c.message_id == working_id
+    )
     assert edit.message_id == working_id and edit.chat_id == OWNER
     assert next(m for m in session.sent if m.message_id == working_id).text == edit.text
     assert "Завершена" in edit.text and "/result" in edit.text
-    assert any(m.text == "pong" for m in session.sent)
+    assert any(answer_body(m.text) == "pong" for m in session.sent)
     assert not channel._statuses
 
 
@@ -155,7 +164,7 @@ async def test_blocked_status_edit_does_not_block_delivery_or_cancel(telegram):
     original = session.make_request
 
     async def slow(bot, method, timeout=None):
-        if isinstance(method, EditMessageText):
+        if isinstance(method, EditMessageText) and "Задача:" in plain_html(method.text):
             blocked.set()
             await release.wait()
         return await original(bot, method, timeout)
@@ -166,7 +175,7 @@ async def test_blocked_status_edit_does_not_block_delivery_or_cancel(telegram):
     await feed(channel, 3, "say pong")
     try:
         await asyncio.wait_for(blocked.wait(), 3)
-        assert any(m.text == "pong" for m in session.sent)
+        assert any(answer_body(m.text) == "pong" for m in session.sent)
         await feed(channel, 4, "/stop")
         assert any(
             plain_html(m.text).startswith("Stop requested for jobs:")
@@ -209,7 +218,7 @@ async def test_restart_delivers_pending_but_fences_vanished_sender(telegram, tmp
             assert not fresh_session.sent
         else:
             await eventually(lambda: bool(fresh_session.sent))
-            assert fresh_session.sent[0].text == "survived restart"
+            assert answer_body(fresh_session.sent[0].text) == "survived restart"
             assert reopened.store.deliveries.get(channel.namespace, "saved")["state"] == "delivered"
     finally:
         await reopened.close()
@@ -224,7 +233,7 @@ async def test_changed_rendering_fences_remaining_chunks(telegram):
     core.store._conn.execute("UPDATE jobs SET answer = ? WHERE id = 'saved'", ("changed",))
     await channel._deliver_result(core.store.deliveries.due(channel.namespace))
     assert core.store.deliveries.get(channel.namespace, "saved")["state"] == "unknown"
-    assert not any(m.text == "changed" for m in session.sent)
+    assert not any(answer_body(m.text) == "changed" for m in session.sent)
 
 
 async def test_status_failure_does_not_hide_saved_final_answer(telegram):
@@ -241,7 +250,7 @@ async def test_status_failure_does_not_hide_saved_final_answer(telegram):
     await feed(channel, 1, "/start")
     await feed(channel, 2, "/new")
     await feed(channel, 3, "say pong")
-    await eventually(lambda: any(m.text == "pong" for m in session.sent))
+    await eventually(lambda: any(answer_body(m.text) == "pong" for m in session.sent))
     await eventually(lambda: not channel._statuses)
 
 
@@ -262,8 +271,17 @@ async def test_partial_status_redacts_before_truncation_and_escapes_html(telegra
         "UPDATE jobs SET answer = ? WHERE id = ?", ("<hello>" + secret + "x" * 3000, job.id)
     )
     channel._statuses[job.id] = (OWNER, working.message_id, "Working: partial-job", 0)
-    await eventually(lambda: any(isinstance(c, EditMessageText) for c in session.calls))
-    edit = next(c for c in session.calls if isinstance(c, EditMessageText))
+    await eventually(
+        lambda: any(
+            isinstance(c, EditMessageText) and c.message_id == working.message_id
+            for c in session.calls
+        )
+    )
+    edit = next(
+        c
+        for c in session.calls
+        if isinstance(c, EditMessageText) and c.message_id == working.message_id
+    )
     assert "&lt;hello&gt;" in edit.text and secret not in edit.text
     assert "\\n" not in edit.text and "\n" in edit.text
     assert len(edit.text) < 2000
@@ -279,7 +297,7 @@ async def test_status_429_defers_edit_without_duplicate_message(telegram):
     edits = []
 
     async def reject_once(bot, method, timeout=None):
-        if isinstance(method, EditMessageText):
+        if isinstance(method, EditMessageText) and "Задача:" in plain_html(method.text):
             edits.append(method)
             if len(edits) == 1:
                 raise TelegramRetryAfter(method=method, message="slow edit", retry_after=1)
@@ -356,11 +374,13 @@ async def test_unknown_delivery_button_gets_saved_result_without_replay_or_forei
     action = button(card, "Получить сохранённый результат").callback_data
     await click(channel, 2, card, action, user=OTHER)
     await click(channel, 3, card.model_copy(update={"message_id": 999}), action)
-    assert not any(m.text == "private recovered answer" for m in session.sent)
+    assert not any(answer_body(m.text) == "private recovered answer" for m in session.sent)
     await feed(channel, 4, f"/delivery {job.id}", user=OTHER)
-    assert not any(m.text == "private recovered answer" for m in session.sent)
+    assert not any(answer_body(m.text) == "private recovered answer" for m in session.sent)
     await click(channel, 5, card, action)
-    await eventually(lambda: any(m.text == "private recovered answer" for m in session.sent))
+    await eventually(
+        lambda: any(answer_body(m.text) == "private recovered answer" for m in session.sent)
+    )
     assert core.store.deliveries.get(channel.namespace, job.id) == before
     assert core.store.deliveries.due(channel.namespace) is None
     assert not server.log

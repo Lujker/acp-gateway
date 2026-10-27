@@ -4,7 +4,7 @@
 
 Use a source checkout for development. For deployment, use the
 [uv/PyPI installation guide](setup/self-install-pypi.ru.md).
-The source version is `0.2.3rc1`. Changes on a working branch are separate from
+The source version is `0.2.8`. Changes on a working branch are separate from
 published artifacts; see the [current Telegram journal](items/telegram-recovery.ru.md).
 Development does not rebuild or publish an installed version.
 
