@@ -1,11 +1,15 @@
 """A rejected text is sent only by an explicit, one-shot button bound to the same route."""
 
+import asyncio
+
+import pytest
 from test_telegram import OWNER, click, feed
 from test_telegram import telegram as telegram
 from test_telegram_controls import button
 from test_telegram_rename import begin
 
 from acp_gateway.agents import SessionBusy
+from acp_gateway.core.errors import SelectionChanged
 from acp_gateway.storage import Conversation
 
 
@@ -73,3 +77,77 @@ async def test_text_after_expired_rename_can_be_sent_explicitly(telegram):
     assert "не отправлено агенту" in panel.text and jobs(core) == 0
     await click(channel, 4, panel, button(panel, "Отправить агенту").callback_data)
     assert jobs(core) == 1
+
+
+@pytest.mark.parametrize("change", [None, "selection", "route", "away_and_back", "expiry"])
+async def test_held_text_rechecks_destination_under_conversation_lock(
+    telegram, monkeypatch, change
+):
+    core, channel, session, _ = telegram
+    conv = Conversation("telegram", str(OWNER), "work")
+    original_dialogue = core.store.add_session(conv, "native-1", "/work")
+    real = core.submit_selected
+
+    async def busy(*args, **kwargs):
+        raise SessionBusy("busy")
+
+    monkeypatch.setattr(core, "submit_selected", busy)
+    await feed(channel, 1, "say pong")
+    panel = session.sent[-1]
+    held = channel._held_texts[OWNER]
+    entered = asyncio.Event()
+
+    async def waiting(*args, **kwargs):
+        entered.set()
+        return await real(*args, **kwargs)
+
+    monkeypatch.setattr(core, "submit_selected", waiting)
+    lock = core._locks[conv]
+    await lock.acquire()
+    task = asyncio.create_task(
+        click(channel, 2, panel, button(panel, "Отправить агенту").callback_data)
+    )
+    try:
+        await asyncio.wait_for(entered.wait(), 5)
+        if change in {"selection", "away_and_back"}:
+            core.store.add_session(conv, "native-2", "/work")
+            if change == "away_and_back":
+                core.store.set_active(conv, original_dialogue.id)
+        elif change == "route":
+            channel._set_route(OWNER, "work")
+        elif change == "expiry":
+            held["expires"] = 0
+        lock.release()
+        await asyncio.wait_for(task, 5)
+        assert jobs(core) == (1 if change is None else 0)
+        assert OWNER not in channel._held_texts
+        if change is None:
+            assert (
+                core.job_history("telegram", str(OWNER))["jobs"][0].session_id
+                == original_dialogue.id
+            )
+    finally:
+        if lock.locked():
+            lock.release()
+        if not task.done():
+            task.cancel()
+        await asyncio.gather(task, return_exceptions=True)
+
+
+async def test_direct_held_command_cannot_bypass_saved_destination(telegram, monkeypatch):
+    core, channel, _, _ = telegram
+    conv = Conversation("telegram", str(OWNER), "work")
+    core.store.add_session(conv, "native-1", "/work")
+    real = core.submit_selected
+
+    async def busy(*args, **kwargs):
+        raise SessionBusy("busy")
+
+    monkeypatch.setattr(core, "submit_selected", busy)
+    await feed(channel, 1, "say pong")
+    token = channel._held_texts[OWNER]["token"]
+    monkeypatch.setattr(core, "submit_selected", real)
+    core.store.add_session(conv, "native-2", "/work")
+    with pytest.raises(SelectionChanged):
+        await channel._command(OWNER, "/send_held " + token)
+    assert jobs(core) == 0

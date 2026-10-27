@@ -358,6 +358,9 @@ See [implementation evidence and remaining UX](../items/telegram-recovery.ru.md)
 - Text refused because the dialogue is busy, or typed into an expired rename,
   folder or profile form, gets a one-shot **✉ Отправить агенту** button for 10
   minutes. It is valid only while the same agent and dialogue stay selected.
+  The destination and expiry are checked again before the task is created,
+  including after waiting for another operation. Changing selection, even away
+  and back, rejects the send; text is never redirected to the new dialogue.
   The text is held in memory only.
 
 ### Context card

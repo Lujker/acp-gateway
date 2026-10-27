@@ -878,16 +878,26 @@ class GatewayCore:
     # -------------------------------------------------------------------- jobs
 
     async def submit_selected(
-        self, conversation: Conversation, text: str, *, delivery_namespace: str | None = None
+        self,
+        conversation: Conversation,
+        text: str,
+        *,
+        delivery_namespace: str | None = None,
+        admission=None,
     ) -> Job:
         """Send to the persistent selection, without implicit session creation.
 
         Shared by interactive entry points; selection and job creation happen
         together under the conversation lock. Legacy programmatic submit keeps
         its existing auto-create contract until callers explicitly opt in.
+        An optional admission guard runs under that same lock before job creation.
         """
         return await self.submit(
-            conversation, text, create_session=False, delivery_namespace=delivery_namespace
+            conversation,
+            text,
+            create_session=False,
+            delivery_namespace=delivery_namespace,
+            admission=admission,
         )
 
     async def submit(

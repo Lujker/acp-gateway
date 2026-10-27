@@ -66,6 +66,7 @@ from acp_gateway.config import TelegramSettings
 from acp_gateway.connectors.diagnostics import computer_diagnostics
 from acp_gateway.core import GatewayError
 from acp_gateway.core.bus import ApprovalRequested, ApprovalResolved, JobFinished, JobProgress
+from acp_gateway.core.errors import SelectionChanged
 from acp_gateway.log import get_logger, redact_text, register_secret
 from acp_gateway.storage import Conversation, Job
 
@@ -1014,8 +1015,24 @@ class TelegramChannel(
         """One-shot button that sends a rejected text to the selected dialogue later."""
         if not text.strip() or text.startswith("/"):
             return []
+        try:
+            conversation = self._conversation(chat)
+            record = self.core.active_session(conversation)
+        except GatewayError:
+            return []
+        if record is None:
+            return []
         token = secrets.token_hex(8)
-        self._held_texts[chat] = {"token": token, "text": text, "expires": time.time() + 600}
+        self._held_texts[chat] = {
+            "token": token,
+            "text": text,
+            "expires": time.time() + 600,
+            "context": self._ui_context(chat),
+            "conversation": conversation,
+            "dialogue": record.id,
+            "sid": record.acp_session_id,
+            "created_at": record.created_at,
+        }
         return [[("✉ Отправить агенту", f"/send_held {token}")]]
 
     async def _send_held(self, chat, token):
@@ -1024,8 +1041,24 @@ class TelegramChannel(
             self._held_texts.pop(chat, None)
             raise GatewayError("Сохранённый текст устарел. Отправьте сообщение заново.")
         del self._held_texts[chat]
-        # The button is bound to the agent and dialogue selected when it was shown.
-        await self._command(chat, held["text"])
+
+        def admission():
+            if time.time() > held["expires"]:
+                raise GatewayError("Сохранённый текст устарел. Отправьте сообщение заново.")
+            if self._ui_context(chat) != held["context"]:
+                raise SelectionChanged("Диалог или агент изменился. Отправьте сообщение заново.")
+            current = self.core.active_session(held["conversation"])
+            if (
+                current is None
+                or current.id != held["dialogue"]
+                or current.acp_session_id != held["sid"]
+                or current.created_at != held["created_at"]
+            ):
+                raise SelectionChanged("Исходный диалог изменился. Отправьте сообщение заново.")
+
+        admission()
+        # Recheck after any wait for the conversation lock, before creating a job.
+        await self._command(chat, held["text"], admission=admission)
 
     def _rename_input(self, chat):
         return self.core.store.channel_state(self.namespace, f"rename_input:{chat}")
@@ -1098,7 +1131,7 @@ class TelegramChannel(
         await self._send(chat, text)
         return True
 
-    async def _command(self, chat: int, text: str):
+    async def _command(self, chat: int, text: str, *, admission=None):
         if await self._cwd_message(chat, text):
             return
         if await self._profiles(chat, text):
@@ -1610,7 +1643,12 @@ class TelegramChannel(
                 await self._recovery_panel(chat, active)
                 return
             try:
-                job = await self.core.submit_selected(conv, text, delivery_namespace=self.namespace)
+                job = await self.core.submit_selected(
+                    conv,
+                    text,
+                    delivery_namespace=self.namespace,
+                    **({"admission": admission} if admission is not None else {}),
+                )
             except SessionInterrupted:
                 current = self.core.active_session(conv)
                 if current is None:
