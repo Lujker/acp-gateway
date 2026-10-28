@@ -16,7 +16,13 @@ from uuid import UUID, uuid4
 from acp import PROTOCOL_VERSION
 
 from acp_gateway.adapters.managed_sessions import FencedBinding, InterruptedTurn
-from acp_gateway.agents.errors import AgentUnavailable
+from acp_gateway.adapters.runtime_inventory import (
+    RuntimeActivity,
+    inventory,
+    reap_idle,
+    wait_for_cleanup,
+)
+from acp_gateway.agents.errors import AgentUnavailable, ManagedCapacity
 from acp_gateway.connectors.policy import LocalAgentPolicy, LocalPolicyError
 
 if TYPE_CHECKING:
@@ -36,6 +42,7 @@ class ClaudeCodeAcpTransport:
     def __init__(self, settings: ClaudeCodeSettings, policy: LocalAgentPolicy, *, sessions=None):
         self.settings, self.policy = settings, policy
         self.sessions = sessions
+        self._activity = RuntimeActivity()
         self.closed = asyncio.Event()
         self._closing = None
         self._out = asyncio.Queue(MAX_EVENTS)
@@ -53,19 +60,35 @@ class ClaudeCodeAcpTransport:
         self.child_reservation = None
 
     @classmethod
-    async def open(cls, settings: ClaudeCodeSettings, policy: LocalAgentPolicy, *, sessions=None):
+    async def open(
+        cls,
+        settings: ClaudeCodeSettings,
+        policy: LocalAgentPolicy,
+        *,
+        sessions=None,
+        on_failed_cleanup=None,
+    ):
         stream = cls(settings, policy, sessions=sessions)
         try:
             stream._warm = await stream._spawn(policy.allowed_cwds[0])
             stream.process = stream._warm["process"]
             return stream
         except BaseException:
-            await stream.close()
+            try:
+                stream._schedule_close()
+                _, cancelled = await wait_for_cleanup(stream._closing)
+                if cancelled:
+                    raise asyncio.CancelledError
+            finally:
+                if on_failed_cleanup is not None and (
+                    stream.uncertain or stream.cleanup_unconfirmed
+                ):
+                    on_failed_cleanup(max(stream.uncertain, 1))
             raise
 
     async def _spawn(self, cwd, resume=None, *, session_id=None):
         if len(self._children) >= self.settings.max_sessions:
-            raise AgentUnavailable("managed Claude Code process capacity exceeded")
+            raise ManagedCapacity("managed Claude Code process capacity exceeded")
         release = self.child_reservation() if self.child_reservation is not None else None
         try:
             return await self._spawn_owned(cwd, resume, session_id=session_id)
@@ -257,6 +280,7 @@ class ClaudeCodeAcpTransport:
         try:
             if "method" not in message:
                 await self._permission_response(message)
+                self._activity.touch()
                 return
             clean = self.policy.prepare(message)
             if self.admission is not None:
@@ -266,6 +290,7 @@ class ClaudeCodeAcpTransport:
             rid = clean.get("id")
             if rid is None or rid in self._requests or len(self._requests) >= MAX_REQUESTS:
                 raise LocalPolicyError("unsupported or duplicate Claude Code ACP request")
+            self._activity.touch()
             self._requests[rid] = asyncio.create_task(self._request(clean))
         except Exception:
             await self.close()
@@ -436,6 +461,7 @@ class ClaudeCodeAcpTransport:
             self._schedule_close()
         finally:
             self._requests.pop(rid, None)
+            self._activity.touch()
 
     def _text(self, sid, text, *, work=False):
         if not isinstance(text, str):
@@ -864,13 +890,16 @@ class ClaudeCodeAcpTransport:
     async def _shutdown(self):
         stopped = False
         try:
-            await self._shutdown_children()
-            stopped = not self.cleanup_unconfirmed
-        finally:
-            if self.sessions is not None:
-                # Every owned process is proven stopped: idle dialogues are free again
-                # and unknown turns become explicitly resumable (never replayed).
-                self.sessions.close(confirmed=stopped, interrupted=stopped)
+            try:
+                await self._shutdown_children()
+                stopped = not self.cleanup_unconfirmed
+            finally:
+                if self.sessions is not None:
+                    self.sessions.close(confirmed=stopped, interrupted=stopped)
+        except BaseException:
+            # Publish uncertainty before the completed task can be pruned.
+            self.uncertain = max(self.uncertain, 1)
+            raise
 
     async def _shutdown_children(self):
         self._permissions.clear()
@@ -931,6 +960,9 @@ class ClaudeCodeProcessManager:
         self._streams = set()
         self._opening = 0
         self._spawning = 0
+        self._reaping = 0
+        self._reap_done = asyncio.Event()
+        self._reap_done.set()
         self._idle = asyncio.Event()
         self._idle.set()
         self._uncertain = 0
@@ -952,7 +984,7 @@ class ClaudeCodeProcessManager:
             self._opening + self._spawning + sum(len(s._children) for s in self._streams)
             >= self.settings.max_sessions
         ):
-            raise AgentUnavailable("managed Claude Code process capacity exceeded")
+            raise ManagedCapacity("managed Claude Code process capacity exceeded")
 
     def _reserve_child(self):
         self._capacity()
@@ -966,27 +998,38 @@ class ClaudeCodeProcessManager:
 
         return release
 
-    async def open(self):
+    async def open(self, *, on_failed_cleanup=None):
+        await self._reap_done.wait()
         self._capacity()
         self._opening += 1
         self._idle.clear()
         try:
+
+            def failed_cleanup(count):
+                self._record_failed_cleanup(count)
+                if on_failed_cleanup is not None:
+                    on_failed_cleanup(count)
+
             stream = await ClaudeCodeAcpTransport.open(
                 self.settings,
                 self.policy,
                 sessions=self.sessions.fork() if self.sessions is not None else None,
+                on_failed_cleanup=failed_cleanup,
             )
+            self._streams.add(stream)
             if self.maintenance_reserved:
                 await stream.close()
                 self.check_admission()
             stream.admission = self.check_admission
             stream.child_reservation = self._reserve_child
-            self._streams.add(stream)
             return stream
         finally:
             self._opening -= 1
             if not self._opening and not self._spawning:
                 self._idle.set()
+
+    def _record_failed_cleanup(self, count):
+        self._uncertain += count
 
     def maintenance_status(self):
         self._prune()
@@ -995,8 +1038,14 @@ class ClaudeCodeProcessManager:
             "pending_approvals": sum(len(s._permissions) for s in self._streams),
             "running_sessions": sum(len(s._turns) for s in self._streams),
             "uncertain_sessions": self._uncertain + sum(s.uncertain for s in self._streams),
-            "opening": self._opening + self._spawning,
+            "opening": self._opening + self._spawning + self._reaping,
         }
+
+    def runtime_inventory(self):
+        return inventory(self, "claude_code")
+
+    async def reap_idle(self):
+        await reap_idle(self)
 
     async def close(self):
         self.maintenance_reserved = True

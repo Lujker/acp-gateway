@@ -96,10 +96,17 @@ class Updates:
                 "",
                 f"{label}: {report.installed_version} ({report.manager}, {report.platform})",
             ]
+            if not report.can_update:
+                lines += ["Updater недоступен; подробности — в диагностике компьютера."]
             if target["newer_stable"]:
                 lines += ["Доступна более новая stable версия."]
             if target.get("artifact_state") == "unpublished":
                 lines += ["Артефакт этой stable версии для данного backend не опубликован."]
+                if report.manager == "uv" and report.source == "registry":
+                    lines += [
+                        "Сразу после выпуска возможна задержка или кэш PyPI; "
+                        "повторите проверку позже."
+                    ]
             elif target.get("artifact_state") == "unavailable":
                 lines += ["Доступность артефакта временно не удалось проверить."]
             if report.manager == "docker":
@@ -108,6 +115,15 @@ class Updates:
                 ]
             if report.platform == "darwin":
                 lines += ["Обновление macOS пока не поддерживается."]
+        if (
+            command == "/updates_check"
+            and latest
+            and not any(target.get("newer_stable") for target in inventory["targets"])
+        ):
+            lines += [
+                "Если релиз опубликован только что, PyPI может несколько минут "
+                "отдавать старые данные — повторите проверку позже."
+            ]
         lines += [
             "",
             "Updater подготавливается автоматически при обычной настройке/запуске. "
@@ -203,6 +219,13 @@ class Updates:
             ),
             "rolled_back": "Восстановлены предыдущий образ и база данных.",
             "worker_stopped": "Отдельный updater не запущен или недоступен.",
+            "activity_unknown": (
+                "Состояние активности не удалось подтвердить; проверьте коннектор на ПК."
+            ),
+            "activity_uncertain": "Есть работа с неизвестным исходом; проверьте её на ПК.",
+            "maintenance_reserved": "Коннектор зарезервирован для обслуживания.",
+            "agent_unsupported": "Один из агентов не поддерживает безопасную проверку активности.",
+            "connector_stopped": "Служба коннектора не запущена.",
         }
         target = "Диспетчер" if row["role"] == "dispatcher" else f"Компьютер {row['target']}"
         text = (
@@ -211,6 +234,48 @@ class Updates:
         )
         if row["reason"]:
             text += "\n" + reasons[row["reason"]]
+        if row["role"] == "connector" and row["reason"] in {
+            "busy",
+            "activity_uncertain",
+            "maintenance_reserved",
+            "agent_unsupported",
+        }:
+            try:
+                dispatcher = self.connector_dispatcher
+                computer = (
+                    next(
+                        (
+                            item
+                            for item in dispatcher.status()
+                            if item["computer_id"] == row["target"]
+                        ),
+                        None,
+                    )
+                    if dispatcher
+                    else None
+                )
+                if computer and computer.get("connected") and computer.get("runtime_diagnostics"):
+                    result = await asyncio.wait_for(
+                        dispatcher.runtime(row["target"], 1, action="diagnostics"), 2
+                    )
+                    if result.status == "ok" and result.diagnostics is not None:
+                        diag = result.diagnostics
+                        states = {
+                            "idle": "свободен",
+                            "busy": "занят",
+                            "uncertain": "исход работы неизвестен",
+                            "reserved": "зарезервирован",
+                            "unsupported": "есть неподдерживаемый агент",
+                            "unknown": "не подтверждено",
+                        }
+                        text += (
+                            f"\nТекущее состояние: {states[diag.maintenance]}; "
+                            f"задач {diag.running}, запросов {diag.requests}, "
+                            f"подтверждений {diag.approvals}, запусков/очисток {diag.opening}."
+                        )
+            except Exception as exc:
+                # A diagnostic is advisory and must not change the durable outcome.
+                self._log.warning("update activity unavailable", error_type=type(exc).__name__)
         rows = []
         if row["status"] == "awaiting_confirmation":
             text += (

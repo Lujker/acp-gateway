@@ -154,6 +154,162 @@ async def test_computers_are_snapshot_only_and_distinguish_disabled_and_offline(
     assert len(session.sent) == 1 and not server.log
 
 
+async def test_runtime_panel_pagination_and_legacy(telegram):
+    from acp_gateway.connectors.protocol import RuntimeResult, RuntimeSummary
+
+    _, channel, session, server = telegram
+    computer = {"computer_id": "work", "connected": True, "runtime_inventory": True}
+
+    async def runtime(cid, page, candidates):
+        assert cid == "work"
+        return RuntimeResult(
+            page=page,
+            pages=2,
+            profiles=[
+                RuntimeSummary(
+                    alias="code",
+                    kind="codex",
+                    environment="native",
+                    launchers=1,
+                    dialogues=2,
+                    turns=1,
+                    pending=1,
+                    approvals=0,
+                    opening=0,
+                    uncertain=False,
+                    closing=False,
+                    truncated=False,
+                    idle_seconds=42,
+                )
+            ],
+        )
+
+    channel.connector_dispatcher = SimpleNamespace(status=lambda: [computer], runtime=runtime)
+    await feed(channel, 1, "/runtimes work 1")
+    card = session.sent[-1]
+    assert "Процессы: 1" in card.text and "диалоги: 2" in card.text
+    assert "42 с" in card.text and not server.log
+    await click(channel, 2, card, button(card, "→").callback_data)
+    assert "2/2" in session.sent[-1].text
+    computer["runtime_inventory"] = False
+    await feed(channel, 3, "/runtimes work 1")
+    assert "не поддерживается" in session.sent[-1].text
+
+
+async def test_runtime_panel_matches_only_dialogues_owned_by_requesting_chat(telegram):
+    from acp_gateway.connectors.protocol import RuntimeResult
+
+    core, channel, session, _ = telegram
+    profile = SimpleNamespace(backend="connector", computer_id="work", alias="code", kind="codex")
+    core.agents["work/code"] = SimpleNamespace(
+        profile=profile, session_availability=lambda _: "attached"
+    )
+    own = core.store.add_session(
+        Conversation("telegram", str(OWNER), "work/code"), "own-id", "/work"
+    )
+    foreign = core.store.add_session(
+        Conversation("telegram", str(OTHER), "work/code"), "foreign-id", "/work"
+    )
+    core.store.set_session_title(own.id, "Own")
+    core.store.set_session_title(foreign.id, "Foreign")
+
+    async def runtime(cid, page, candidates):
+        assert [candidate.session_id for candidate in candidates] == ["own-id"]
+        return RuntimeResult(page=1, pages=1, profiles=[], matched=[0])
+
+    channel.connector_dispatcher = SimpleNamespace(
+        status=lambda: [
+            {
+                "computer_id": "work",
+                "connected": True,
+                "runtime_inventory": True,
+                "advertised_agents": ["code"],
+            }
+        ],
+        runtime=runtime,
+    )
+    try:
+        await feed(channel, 1, "/runtimes work 1")
+        assert f"#{own.id}" in session.sent[-1].text
+        assert "Own" in session.sent[-1].text and "Foreign" not in session.sent[-1].text
+    finally:
+        del core.agents["work/code"]
+
+
+async def test_diagnostic_panel_status_and_explicit_initialize(telegram):
+    from acp_gateway.connectors.protocol import ComputerDiagnostic, RuntimeResult
+
+    _, channel, session, server = telegram
+    channel.pairing = SimpleNamespace(owner=lambda actor: True)
+    calls = []
+
+    async def runtime(cid, page, *, action, alias):
+        calls.append((cid, action, alias))
+        return RuntimeResult(
+            page=1,
+            pages=1,
+            profiles=[],
+            diagnostics=ComputerDiagnostic(
+                version="0.2.8",
+                updater="worker_stopped",
+                maintenance="busy",
+                running=2,
+                requests=0,
+                approvals=1,
+                opening=0,
+                probe="ok" if alias else "not_run",
+                probe_alias=alias,
+            ),
+        )
+
+    channel.connector_dispatcher = SimpleNamespace(
+        status=lambda: [
+            {
+                "computer_id": "work",
+                "connected": True,
+                "runtime_diagnostics": True,
+                "advertised_agents": ["code"],
+            }
+        ],
+        runtime=runtime,
+    )
+    await feed(channel, 1, "/diagnostics work")
+    card = session.sent[-1]
+    assert "0.2.8" in card.text and "занят" in card.text and "updater не запущена" in card.text
+    assert calls == [("work", "diagnostics", None)]
+    await click(channel, 2, card, button(card, "Проверить code").callback_data)
+    assert "initialize выполнен" in session.sent[-1].text
+    assert calls[-1] == ("work", "initialize", "code")
+    assert not server.log
+
+
+async def test_diagnostic_initialize_requires_owner(telegram):
+    _, channel, session, _ = telegram
+    attempts = []
+
+    def refuse(actor):
+        raise ValueError("not owner")
+
+    async def runtime(*args, **kwargs):
+        attempts.append((args, kwargs))
+
+    channel.pairing = SimpleNamespace(owner=refuse)
+    channel.connector_dispatcher = SimpleNamespace(
+        status=lambda: [
+            {
+                "computer_id": "work",
+                "connected": True,
+                "runtime_diagnostics": True,
+                "advertised_agents": ["code"],
+            }
+        ],
+        runtime=runtime,
+    )
+    await feed(channel, 1, "/diagnostics work code")
+    assert "владельцу" in session.sent[-1].text
+    assert not attempts
+
+
 async def test_ui_label_redacts_before_truncating_secret(telegram):
     from acp_gateway.channels.telegram import _label
 

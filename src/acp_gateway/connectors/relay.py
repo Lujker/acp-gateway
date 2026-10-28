@@ -34,6 +34,9 @@ from acp_gateway.connectors.protocol import (
     ProtocolError,
     Resume,
     Resumed,
+    RuntimeRequest,
+    RuntimeResponse,
+    RuntimeResult,
     ShellRequest,
     ShellResponse,
     ShellResult,
@@ -345,6 +348,9 @@ class RelayPeer:
         profiles_handler=None,
         shell_operations=False,
         shell_handler=None,
+        runtime_inventory=False,
+        runtime_diagnostics=False,
+        runtime_handler=None,
         stream_resume=False,
         parking: StreamParking | None = None,
         on_park: Callable[[list[_Link]], None] | None = None,
@@ -364,6 +370,11 @@ class RelayPeer:
         self.shell_handler = shell_handler
         self.shell_requests = {}
         self.shell_workers = set()
+        self.runtime_inventory = runtime_inventory
+        self.runtime_diagnostics = runtime_diagnostics
+        self.runtime_handler = runtime_handler
+        self.runtime_requests = {}
+        self.runtime_workers = set()
         # Resume is opt-in per connection; old peers keep close-on-drop streams.
         self.stream_resume = stream_resume
         self.parking = parking  # computer side: streams this connection may reclaim
@@ -381,6 +392,7 @@ class RelayPeer:
         self.out_bytes = 0
         self.out_controls = 0
         self.tasks: set[asyncio.Task] = set()
+        self.local_workers: set[asyncio.Task] = set()
         self.failures: dict[str, dict] = {}
 
     def record_failure(self, alias, code):
@@ -454,6 +466,9 @@ class RelayPeer:
         for pending in self.update_requests.values():
             if not pending.done():
                 pending.set_exception(ConnectionError("computer disconnected"))
+        for pending in self.runtime_requests.values():
+            if not pending.done():
+                pending.set_exception(ConnectionError("computer disconnected"))
         for _, pending in self.shell_requests.values():
             if not pending.done():
                 pending.set_exception(
@@ -473,6 +488,7 @@ class RelayPeer:
                 task = getattr(link, "task", None)
                 if task is not None:
                     self.tasks.discard(task)
+                    self.local_workers.discard(task)
                 parked.append(link)
             else:
                 self.stop(stream_id)
@@ -542,6 +558,35 @@ class RelayPeer:
     async def _read(self):
         async for payload in self.connection:
             frame = decode_frame(payload)
+            if isinstance(frame, (RuntimeRequest, RuntimeResponse)):
+                if not self.runtime_inventory or frame.epoch != self.epoch:
+                    raise ProtocolError("unnegotiated runtime inventory or invalid epoch")
+                if isinstance(frame, RuntimeResponse):
+                    if self.local_factory is not None:
+                        raise ProtocolError("unexpected runtime inventory response")
+                    pending = self.runtime_requests.get(frame.request)
+                    if pending is not None and not pending.done():
+                        pending.set_result(frame.result)
+                else:
+                    if self.local_factory is None:
+                        raise ProtocolError("invalid runtime inventory direction")
+                    if frame.action not in {None, "inventory"} and not self.runtime_diagnostics:
+                        raise ProtocolError("unnegotiated diagnostic request")
+                    if len(self.runtime_workers) >= 4:
+                        await self.send(
+                            RuntimeResponse(
+                                epoch=self.epoch,
+                                request=frame.request,
+                                result=RuntimeResult(status="busy", page=1, pages=1, profiles=[]),
+                            )
+                        )
+                        continue
+                    task = asyncio.create_task(self._report_runtime(frame))
+                    self.tasks.add(task)
+                    self.runtime_workers.add(task)
+                    task.add_done_callback(self.tasks.discard)
+                    task.add_done_callback(self.runtime_workers.discard)
+                continue
             if isinstance(frame, (ShellRequest, ShellResponse)):
                 if not self.shell_operations or frame.epoch != self.epoch:
                     raise ProtocolError("unnegotiated shell operations or invalid epoch")
@@ -666,7 +711,7 @@ class RelayPeer:
                     raise ProtocolError("invalid stream open")
                 if (
                     frame.alias not in self.aliases
-                    or len(self.tasks) >= MAX_STREAMS
+                    or len(self.local_workers) >= MAX_STREAMS
                     or len(self.seen) >= MAX_STREAM_IDS
                 ):
                     await self.send(Close(**route, code="access_denied"))
@@ -677,7 +722,9 @@ class RelayPeer:
                 task = asyncio.create_task(self._local(frame.stream, stream))
                 stream.task = task
                 self.tasks.add(task)
+                self.local_workers.add(task)
                 task.add_done_callback(self.tasks.discard)
+                task.add_done_callback(self.local_workers.discard)
                 continue
             if isinstance(frame, Close) and frame.stream in self.resuming:
                 # The computer no longer has this stream (e.g. it restarted): fail fast.
@@ -762,7 +809,9 @@ class RelayPeer:
         link.acked(frame.received)
         self.streams[frame.stream] = link
         self.tasks.add(link.task)
+        self.local_workers.add(link.task)
         link.task.add_done_callback(self.tasks.discard)
+        link.task.add_done_callback(self.local_workers.discard)
         self._spawn_replay(link, resumed=True)
 
     async def _resumed(self, frame, route):
@@ -823,6 +872,54 @@ class RelayPeer:
                 pending.cancel()
             elif not pending.cancelled():
                 pending.exception()
+
+    async def runtime(self, frame, *, timeout=5):
+        if self.local_factory is not None or not self.runtime_inventory:
+            raise AgentUnavailable("runtime inventory unsupported; upgrade connector locally")
+        if frame.action not in {None, "inventory"} and not self.runtime_diagnostics:
+            raise AgentUnavailable("diagnostics unsupported; upgrade connector locally")
+        if len(self.runtime_requests) >= 4 or frame.request in self.runtime_requests:
+            raise AgentUnavailable("runtime inventory busy")
+        pending = asyncio.get_running_loop().create_future()
+        self.runtime_requests[frame.request] = pending
+        try:
+            budget = (
+                30
+                if frame.action == "initialize"
+                else 15
+                if frame.action == "diagnostics"
+                else timeout
+            )
+            async with asyncio.timeout(budget):
+                await self.send(frame.model_copy(update={"epoch": self.epoch}))
+                return await pending
+        finally:
+            self.runtime_requests.pop(frame.request, None)
+            if not pending.done():
+                pending.cancel()
+            elif not pending.cancelled():
+                pending.exception()
+
+    async def _report_runtime(self, request):
+        try:
+            result = self.runtime_handler(request) if self.runtime_handler else None
+            if hasattr(result, "__await__"):
+                result = await result
+            if not isinstance(result, RuntimeResult):
+                raise ValueError("invalid runtime inventory")
+            if not self.runtime_diagnostics:
+                # The older inventory schema forbids fields introduced with diagnostics.
+                result = result.model_copy(
+                    update={
+                        "profiles": [
+                            p.model_copy(update={"idle_timeout": None}) for p in result.profiles
+                        ]
+                    }
+                )
+        except Exception as exc:
+            get_logger(__name__).warning("runtime inventory unavailable", error=type(exc).__name__)
+            result = RuntimeResult(status="unavailable", page=1, pages=1, profiles=[])
+        await self.send(RuntimeResponse(epoch=self.epoch, request=request.request, result=result))
 
     async def _operate_shell(self, request):
         result = ShellResult(operation=request.operation, state="refused", reason="disabled")
@@ -912,6 +1009,14 @@ class RelayPeer:
         try:
             if self.update_handler is not None:
                 result = await asyncio.to_thread(self.update_handler, request)
+            if not self.runtime_diagnostics and result.reason in {
+                "activity_unknown",
+                "activity_uncertain",
+                "maintenance_reserved",
+                "agent_unsupported",
+                "connector_stopped",
+            }:
+                result = result.model_copy(update={"reason": "busy"})
             await self.send(
                 UpdateResponse(epoch=self.epoch, request=request.request, result=result)
             )

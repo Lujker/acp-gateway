@@ -91,6 +91,7 @@ def test_unrelated_success_result_cannot_complete_operation(native, row, monkeyp
 
 @pytest.mark.parametrize("kind", ["timeout", "lost_result"])
 def test_uncertain_native_handoff_never_reports_known_failure(native, row, monkeypatch, kind):
+    monkeypatch.setattr(worker, "connector_preflight", lambda _: "")
     monkeypatch.setattr(
         worker,
         "version_info",
@@ -104,6 +105,96 @@ def test_uncertain_native_handoff_never_reports_known_failure(native, row, monke
 
     monkeypatch.setattr(worker, "uv_update", fail)
     assert worker.execute(native, row) == ("unknown", "unknown")
+
+
+@pytest.mark.parametrize(
+    "patch,expected",
+    [
+        ({"state": "stopped"}, "connector_stopped"),
+        ({"state": "unknown"}, "activity_unknown"),
+        ({"running_sessions": 2}, "busy"),
+        ({"uncertain_sessions": 1}, "activity_uncertain"),
+        ({"reserved": True}, "maintenance_reserved"),
+        ({"unsupported_agents": 1}, "agent_unsupported"),
+        ({}, ""),
+    ],
+)
+def test_connector_preflight_returns_only_safe_codes(native, monkeypatch, patch, expected):
+    status = {
+        "state": "running",
+        "reserved": False,
+        "pending_requests": 0,
+        "pending_approvals": 0,
+        "running_sessions": 0,
+        "uncertain_sessions": 0,
+        "opening": 0,
+        "unsupported_agents": 0,
+    }
+    status.update(patch)
+    monkeypatch.setattr(worker, "cli", lambda *args, **kwargs: json.dumps(status))
+    assert worker.connector_preflight(native) == expected
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        "not json",
+        "{}",
+        '{"state":"running","reserved":false,"running_sessions":true}',
+        '{"state":"running","reserved":false,"running_sessions":-1}',
+    ],
+)
+def test_connector_preflight_rejects_malformed_activity(native, monkeypatch, payload):
+    monkeypatch.setattr(worker, "cli", lambda *args, **kwargs: payload)
+    assert worker.connector_preflight(native) == "activity_unknown"
+
+
+def test_execute_refuses_failed_preflight_without_handoff(native, row, monkeypatch):
+    native["role"] = row["role"] = "connector"
+    monkeypatch.setattr(
+        worker,
+        "version_info",
+        lambda _: {"version": "0.2.0", "manager": "uv", "source": "registry"},
+    )
+    monkeypatch.setattr(worker, "connector_preflight", lambda _: "activity_uncertain")
+    monkeypatch.setattr(worker, "uv_update", lambda *_: pytest.fail("unexpected handoff"))
+    assert worker.execute(native, row) == ("failed", "activity_uncertain")
+
+
+@pytest.mark.parametrize(
+    "change",
+    [
+        {},
+        {"reserved": True},
+        {"unsupported_agents": 1},
+        {"running_sessions": 1},
+        {"uncertain_sessions": 1},
+        {"running_sessions": 1, "uncertain_sessions": 1},
+    ],
+)
+def test_worker_and_maintenance_activity_classification_agree(native, monkeypatch, change):
+    from acp_gateway.connectors.maintenance import activity_reason
+
+    status = {
+        "state": "running",
+        "reserved": False,
+        "pending_requests": 0,
+        "pending_approvals": 0,
+        "running_sessions": 0,
+        "uncertain_sessions": 0,
+        "opening": 0,
+        "unsupported_agents": 0,
+    }
+    status.update(change)
+    monkeypatch.setattr(worker, "cli", lambda *args, **kwargs: json.dumps(status))
+    expected = {
+        "idle": "",
+        "reserved": "maintenance_reserved",
+        "unsupported": "agent_unsupported",
+        "busy": "busy",
+        "uncertain": "activity_uncertain",
+    }
+    assert worker.connector_preflight(native) == expected[activity_reason(status)]
 
 
 @pytest.fixture

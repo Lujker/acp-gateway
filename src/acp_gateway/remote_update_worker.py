@@ -216,6 +216,45 @@ def uv_update(policy, row):
     return "unknown", "unknown"
 
 
+def connector_preflight(policy):
+    """Read the live, instance-fenced activity record; never forward raw output."""
+    try:
+        status = json.loads(
+            cli(policy, "maintenance", "--role", "connector", "status", capture=True)
+        )
+        if not isinstance(status, dict):
+            return "activity_unknown"
+        if status.get("state") == "stopped":
+            return "connector_stopped"
+        fields = (
+            "pending_requests",
+            "pending_approvals",
+            "running_sessions",
+            "uncertain_sessions",
+            "opening",
+            "unsupported_agents",
+        )
+        if (
+            status.get("state") != "running"
+            or any(type(status.get(k)) is not int or status[k] < 0 for k in fields)
+            or type(status.get("reserved")) is not bool
+        ):
+            return "activity_unknown"
+        if status["reserved"]:
+            return "maintenance_reserved"
+        if status["unsupported_agents"]:
+            return "agent_unsupported"
+        if any(
+            status[key] for key in fields if key not in {"uncertain_sessions", "unsupported_agents"}
+        ):
+            return "busy"
+        if status["uncertain_sessions"]:
+            return "activity_uncertain"
+        return ""
+    except (OSError, ValueError, TypeError, subprocess.SubprocessError):
+        return "activity_unknown"
+
+
 def image_override(policy, image):
     if not isinstance(image, str) or not IMAGE.fullmatch(image):
         raise ValueError("Image pin must be immutable")
@@ -392,6 +431,10 @@ def execute(policy, row):
         "registry",
     ):
         return "failed", "unsupported"
+    if policy["backend"] == "uv" and policy["role"] == "connector":
+        reason = connector_preflight(policy)
+        if reason:
+            return "failed", reason
     try:
         return uv_update(policy, row) if policy["backend"] == "uv" else docker_update(policy, row)
     except (subprocess.TimeoutExpired, RecoveryUnknown):

@@ -63,6 +63,7 @@ def test_setup_offers_two_separate_profiles(kind, tmp_path):
     assert work[kind]["mode"] == "work"
     assert safe["alias"] != work["alias"]
     assert work[kind]["turn_timeout"] == 3600
+    assert "idle_timeout" not in safe[kind] and "idle_timeout" not in work[kind]
 
 
 @pytest.mark.parametrize("kind", ["codex", "claude_code"])

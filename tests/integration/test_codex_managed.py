@@ -8,6 +8,7 @@ import signal
 import sys
 from pathlib import Path
 from types import SimpleNamespace
+from uuid import uuid4
 
 import pytest
 
@@ -560,6 +561,116 @@ async def test_connector_reservation_blocks_new_work_on_existing_managed_stream(
         assert not [f for f in calls(tmp_path) if f.get("method") == "turn/start"]
     finally:
         await client.close()
+        await manager.close()
+
+
+async def test_idle_cleanup_resumes_same_owned_thread_without_replaying_prompt(peer, tmp_path):
+    local = peer(idle_timeout=1)
+    policy = local_policies(AppConfig(Settings(agents=[local.profile]), SecretStore(), None, None))[
+        "code"
+    ]
+    manager = CodexProcessManager(local.profile.codex, policy, sessions=local.managed_sessions())
+    client = AgentClient(local.profile, pin_dir=tmp_path, transport_factory=manager.open)
+    try:
+        sid = await client.new_session()
+        assert (await client.ask(sid, "hello")).text == "Hello world"
+        stream = next(iter(manager._streams))
+        async with asyncio.timeout(2):
+            while stream._requests or not stream._out.empty() or not stream._events.empty():
+                await asyncio.sleep(0.01)
+        stream._activity.last_activity -= 2
+        await manager.reap_idle()
+        assert stream.process.returncode is not None
+        assert not manager._streams
+        assert (await client.ask(sid, "hello")).text == "Hello world"
+        native = calls(tmp_path)
+        assert [f["method"] for f in native if f.get("method") == "thread/resume"] == [
+            "thread/resume"
+        ]
+        turns = [f for f in native if f.get("method") == "turn/start"]
+        assert [f["params"]["input"][0]["text"] for f in turns] == ["hello", "hello"]
+    finally:
+        await client.close()
+        await manager.close()
+
+
+async def test_idle_cleanup_keeps_shared_codex_process_with_busy_thread(peer, tmp_path):
+    local = peer("parallel-hold", turn_timeout=10, idle_timeout=1)
+    policy = local_policies(AppConfig(Settings(agents=[local.profile]), SecretStore(), None, None))[
+        "code"
+    ]
+    manager = CodexProcessManager(local.profile.codex, policy, sessions=local.managed_sessions())
+    client = AgentClient(local.profile, pin_dir=tmp_path, transport_factory=manager.open)
+    task = None
+    try:
+        first, second = await client.new_session(), await client.new_session()
+        task = asyncio.create_task(client.ask(first, "hello"))
+        async with asyncio.timeout(5):
+            while not manager.maintenance_status()["running_sessions"]:
+                await asyncio.sleep(0.01)
+        stream = next(iter(manager._streams))
+        stream._activity.last_activity -= 2
+        await manager.reap_idle()
+        assert not stream.closed.is_set()
+        assert set(stream._sessions) == {first, second}
+        assert stream.process.returncode is None
+        await client.cancel(first)
+        await task
+    finally:
+        if task is not None and not task.done():
+            task.cancel()
+            await asyncio.gather(task, return_exceptions=True)
+        await client.close()
+        await manager.close()
+
+
+async def test_remote_diagnostic_only_initializes_native_agent(peer, tmp_path):
+    from acp_gateway.connectors.computer_diagnostics import ComputerDiagnostics
+    from acp_gateway.connectors.maintenance import ConnectorMaintenance
+    from acp_gateway.connectors.protocol import RuntimeRequest
+
+    local = peer()
+    policy = local_policies(AppConfig(Settings(agents=[local.profile]), SecretStore(), None, None))[
+        "code"
+    ]
+    manager = CodexProcessManager(local.profile.codex, policy, sessions=local.managed_sessions())
+    maintenance = ConnectorMaintenance([local.profile], {"code": manager})
+    config = SimpleNamespace(
+        settings=SimpleNamespace(
+            agents=[local.profile],
+            updates=SimpleNamespace(enabled=True),
+            resolved_data_dir=lambda: tmp_path,
+        )
+    )
+    report = SimpleNamespace(
+        can_update=True,
+        platform="linux",
+        manager="uv",
+        source="registry",
+        installed_version="0.2.8",
+    )
+    diagnostics = ComputerDiagnostics(
+        config,
+        maintenance,
+        SimpleNamespace(report=lambda: report),
+        {"code": local},
+        lambda alias: manager.open(),
+    )
+    maintenance.services.append(diagnostics)
+    try:
+        result = await diagnostics.request(
+            RuntimeRequest(epoch=uuid4(), request=uuid4(), action="initialize", alias="code")
+        )
+        assert result.diagnostics.probe == "ok"
+        assert result.diagnostics.updater == "ready"
+        assert result.diagnostics.maintenance == "idle"
+        methods = [frame.get("method") for frame in calls(tmp_path)]
+        assert "initialize" in methods
+        assert not any(
+            method in {"thread/start", "thread/resume", "turn/start"} for method in methods
+        )
+        assert manager.maintenance_status()["opening"] == 0
+    finally:
         await manager.close()
 
 

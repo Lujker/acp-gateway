@@ -71,6 +71,99 @@ class Welcome(_Frame):
     agent_discovery: Literal[1] | None = None
     stream_resume: Literal[1] | None = None
     shell_operations: Literal[1] | None = None
+    runtime_inventory: Literal[1] | None = None
+    runtime_diagnostics: Literal[1] | None = None
+
+
+class RuntimeSessionRef(_Model):
+    alias: AgentAlias
+    session_id: Annotated[str, Field(min_length=1, max_length=128)]
+
+
+class RuntimeRequest(_Frame):
+    type: Literal["runtime_inventory"] = "runtime_inventory"
+    epoch: UUID
+    request: UUID
+    page: Annotated[int, Field(ge=1, le=13)] = 1
+    candidates: Annotated[list[RuntimeSessionRef], Field(max_length=32)] = Field(
+        default_factory=list
+    )
+    action: Literal["inventory", "diagnostics", "initialize"] | None = None
+    alias: AgentAlias | None = None
+
+    @model_validator(mode="after")
+    def diagnostic_fields(self):
+        if (self.action == "initialize") != (self.alias is not None):
+            raise ValueError("initialize requires one profile")
+        if self.action not in {None, "inventory"} and self.candidates:
+            raise ValueError("diagnostics cannot carry dialogue identities")
+        return self
+
+
+class RuntimeSummary(_Model):
+    alias: AgentAlias
+    kind: Literal["codex", "claude_code"]
+    environment: Literal["native", "wsl"]
+    launchers: Annotated[int, Field(ge=0, le=1024)]
+    dialogues: Annotated[int, Field(ge=0, le=32768)]
+    turns: Annotated[int, Field(ge=0, le=32768)]
+    pending: Annotated[int, Field(ge=0, le=32768)]
+    approvals: Annotated[int, Field(ge=0, le=32768)]
+    opening: Annotated[int, Field(ge=0, le=1024)]
+    uncertain: bool
+    closing: bool
+    truncated: bool
+    idle_seconds: Annotated[int, Field(ge=0, le=86400)] | None = None
+    idle_timeout: Annotated[int, Field(ge=0, le=86400)] | None = None
+
+
+class RuntimeResult(_Model):
+    status: Literal["ok", "busy", "unavailable"] = "ok"
+    page: Annotated[int, Field(ge=1, le=13)]
+    pages: Annotated[int, Field(ge=1, le=13)]
+    profiles: Annotated[list[RuntimeSummary], Field(max_length=8)]
+    matched: Annotated[list[Annotated[int, Field(ge=0, lt=32)]], Field(max_length=32)] = Field(
+        default_factory=list
+    )
+    diagnostics: "ComputerDiagnostic | None" = None
+
+    @model_validator(mode="after")
+    def coherent_page(self):
+        if self.page > self.pages or (self.status != "ok" and self.profiles):
+            raise ValueError("invalid runtime inventory page")
+        if len({profile.alias for profile in self.profiles}) != len(self.profiles):
+            raise ValueError("duplicate runtime profile")
+        if len(set(self.matched)) != len(self.matched) or (self.status != "ok" and self.matched):
+            raise ValueError("invalid runtime matches")
+        return self
+
+
+class ComputerDiagnostic(_Model):
+    version: Annotated[str, Field(pattern=r"^[0-9A-Za-z.+!-]{1,64}$")]
+    updater: Literal[
+        "ready",
+        "disabled",
+        "unsupported",
+        "worker_stopped",
+        "not_provisioned",
+        "heartbeat_stale",
+        "scope_mismatch",
+        "unknown",
+    ]
+    maintenance: Literal["idle", "busy", "uncertain", "reserved", "unsupported", "unknown"]
+    running: Annotated[int, Field(ge=0, le=32768)]
+    requests: Annotated[int, Field(ge=0, le=32768)]
+    approvals: Annotated[int, Field(ge=0, le=32768)]
+    opening: Annotated[int, Field(ge=0, le=32768)]
+    probe: Literal["not_run", "ok", "failed", "busy", "unavailable", "cleanup_unknown"]
+    probe_alias: AgentAlias | None = None
+
+
+class RuntimeResponse(_Frame):
+    type: Literal["runtime_inventory_result"] = "runtime_inventory_result"
+    epoch: UUID
+    request: UUID
+    result: RuntimeResult
 
 
 class ProfileSpec(_Model):
@@ -275,6 +368,11 @@ class UpdateOperation(_Model):
         "unknown",
         "rolled_back",
         "worker_stopped",
+        "activity_unknown",
+        "activity_uncertain",
+        "maintenance_reserved",
+        "agent_unsupported",
+        "connector_stopped",
     ] = ""
 
 
@@ -383,6 +481,8 @@ ControlFrame = (
     | ProfilesResponse
     | ShellRequest
     | ShellResponse
+    | RuntimeRequest
+    | RuntimeResponse
 )
 _ADAPTER = TypeAdapter(Annotated[ControlFrame, Field(discriminator="type")])
 

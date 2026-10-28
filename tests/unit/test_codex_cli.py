@@ -9,7 +9,13 @@ import pytest
 from acp_gateway.cli.doctor import collect
 from acp_gateway.cli.main import _cmd_config_check
 from acp_gateway.cli.wizard import _agent, _profiles
-from acp_gateway.config import AgentProfile, AppConfig, SecretStore, Settings
+from acp_gateway.config import (
+    AgentProfile,
+    AppConfig,
+    SecretStore,
+    Settings,
+    omit_default_idle_timeout,
+)
 
 
 def config(tmp_path):
@@ -30,7 +36,8 @@ def test_wizard_preserves_manual_codex_connector_profile(tmp_path):
     original = dict(raw["agents"][0])
     prompts = SimpleNamespace(choice=lambda *args: "keep")
     _profiles(prompts, raw, {}, "connector")
-    assert raw["agents"] == [original]
+    # The default idle timeout is left out so older installations can read it.
+    assert raw["agents"] == [omit_default_idle_timeout(original)]
 
 
 class Answers:

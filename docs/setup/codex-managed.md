@@ -51,6 +51,7 @@ agents:
       sandbox: read-only
       request_timeout: 30
       turn_timeout: 600
+      idle_timeout: 1800  # connector only; 0 disables idle cleanup
       # model: an-explicit-model-id
 ```
 
@@ -69,6 +70,16 @@ before replacing the selected profile. Local and connector profiles retain local
 Codex configuration; routed profiles keep credentials/executable settings off the
 server. `agents install`, `agents serve` and `agents probe` do not gain Codex support;
 use the ordinary configuration check and doctor instead:
+
+For outgoing connectors, `idle_timeout` is an integer number of seconds from 0
+to 86400. The default is 1800; 0 disables cleanup. Cleanup stops an entire idle
+owned app-server, never an individual thread while another thread is active.
+Owned dialogues resume on the next request without replaying an earlier prompt.
+An unconfirmed stop keeps its existing safety fence. Direct local gateway
+transports are not covered by this connector policy.
+Generated profiles omit the default timeout for compatibility with older
+versions. If a non-default `idle_timeout` was configured, remove that key
+before rolling back to a version that does not support it.
 
 ```sh
 uv run --frozen acpgw --config /path/to/test-config.yaml --env-file /path/to/test.env agents configure

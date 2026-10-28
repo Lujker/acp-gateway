@@ -1,7 +1,9 @@
 """Read-only dispatcher dashboards, scoped to the requesting private chat."""
 
 # ruff: noqa: RUF001
+from acp_gateway.agents.errors import AgentUnavailable
 from acp_gateway.connectors.diagnostics import computer_diagnostics
+from acp_gateway.connectors.protocol import ProtocolError, RuntimeSessionRef
 from acp_gateway.core import GatewayError
 from acp_gateway.log import redact_text
 
@@ -42,6 +44,12 @@ def state(job):
 
 class Dashboard:
     async def _dashboard(self, chat, command, argument):
+        if command == "/diagnostics":
+            await self._diagnostic_panel(chat, argument)
+            return True
+        if command == "/runtimes":
+            await self._runtime_panel(chat, argument)
+            return True
         if command == "/work":
             await self._work_panel(chat, argument)
             return True
@@ -283,6 +291,8 @@ class Dashboard:
                 lines.append("Агенты пока не обнаружены.")
             if computer.get("agent_discovery"):
                 rows.append([("Добавить агента", f"/profiles {cid} discover")])
+            rows.append([("⚙ Процессы агентов", f"/runtimes {cid} 1")])
+            rows.append([("🩺 Диагностика", f"/diagnostics {cid}")])
             rows += [
                 [("Настроить профили", f"/profiles {cid}")],
                 [("↻ Обновить", f"/computers id {cid}"), ("← Компьютеры", "/computers")],
@@ -317,6 +327,208 @@ class Dashboard:
                 [("↻ Обновить", f"/computers {page}")],
                 *self._back_rows(),
             ]
+        await self._panel(chat, "\n".join(lines), rows)
+
+    async def _runtime_panel(self, chat, argument):
+        parts = argument.split()
+        if (
+            len(parts) != 2
+            or len(parts[1]) > 2
+            or not parts[1].isascii()
+            or not parts[1].isdigit()
+            or not 1 <= int(parts[1]) <= 13
+        ):
+            raise GatewayError("Используйте /runtimes COMPUTER_ID PAGE.")
+        cid, page = parts[0], int(parts[1])
+        if self.connector_dispatcher is None:
+            raise GatewayError("Подключение компьютеров не настроено.")
+        computer = next(
+            (c for c in self.connector_dispatcher.status() if c["computer_id"] == cid), None
+        )
+        if computer is None:
+            raise GatewayError("Компьютер не найден.")
+        rows = [[("← Компьютер", f"/computers id {cid}")], *self._back_rows()]
+        if not computer["connected"]:
+            await self._panel(chat, "Компьютер не подключён.", rows)
+            return
+        if not computer.get("runtime_inventory"):
+            await self._panel(
+                chat, "Инвентаризация не поддерживается этой версией коннектора.", rows
+            )
+            return
+        owned = []
+        for dialogue in self.core.store.recent_sessions("telegram", str(chat), 50):
+            client = self.core.agents.get(dialogue.conversation.agent)
+            if (
+                client
+                and client.profile.backend == "connector"
+                and client.profile.computer_id == cid
+                and client.profile.alias in computer.get("advertised_agents", [])
+                and 0 < len(dialogue.acp_session_id) <= 128
+            ):
+                owned.append(
+                    (
+                        dialogue,
+                        RuntimeSessionRef(
+                            alias=client.profile.alias, session_id=dialogue.acp_session_id
+                        ),
+                    )
+                )
+            if len(owned) == 32:
+                break
+        try:
+            result = await self.connector_dispatcher.runtime(cid, page, [ref for _, ref in owned])
+        except (AgentUnavailable, ConnectionError, TimeoutError, ProtocolError):
+            await self._panel(chat, "Сведения о процессах сейчас недоступны.", rows)
+            return
+        if result.status != "ok":
+            await self._panel(chat, "Сведения о процессах сейчас недоступны.", rows)
+            return
+        lines = [f"Процессы агентов · {label(cid)} · {result.page}/{result.pages}"]
+        for profile in result.profiles:
+            suffix = " · список транспортов ограничен" if profile.truncated else ""
+            lines.append(
+                f"{label(profile.alias)} · {agent_kind(profile.kind)} · "
+                f"{profile.environment}{suffix}\n"
+                f"Процессы: {profile.launchers} · диалоги: {profile.dialogues} · "
+                f"задачи: {profile.turns}\n"
+                f"Запросы: {profile.pending} · подтверждения: {profile.approvals} · "
+                f"запуск/очистка: {profile.opening}"
+            )
+            if profile.uncertain or profile.closing:
+                lines.append("⚠ Есть неопределённость или процесс завершается.")
+            if profile.idle_seconds is not None:
+                lines.append(f"Последняя активность: не менее {profile.idle_seconds} с назад.")
+            if profile.idle_timeout is not None:
+                lines.append(
+                    "Автоочистка выключена."
+                    if profile.idle_timeout == 0
+                    else f"Автоочистка: после {profile.idle_timeout} с простоя."
+                )
+            if profile.kind == "claude_code":
+                lines.append("Claude: очистка всего транспорта, когда все диалоги простаивают.")
+        if not result.profiles:
+            lines.append("Управляемые Codex/Claude профили не настроены.")
+        if result.matched:
+            lines.append("Открытые диалоги этого чата (до 32 из 50 последних):")
+            for index in result.matched:
+                dialogue = owned[index][0]
+                title = self.core.store.channel_state(
+                    "dialogue_display_titles",
+                    self.core._dialogue_title_key(dialogue),
+                    dialogue.title,
+                )
+                lines.append(f"#{dialogue.id} · {label(title or 'Без названия', 45)}")
+        lines.append("Только процессы коннектора; системные процессы не учитываются.")
+        nav = []
+        if result.page > 1:
+            nav.append(("←", f"/runtimes {cid} {result.page - 1}"))
+        if result.page < result.pages:
+            nav.append(("→", f"/runtimes {cid} {result.page + 1}"))
+        if nav:
+            rows.insert(0, nav)
+        rows.insert(0, [("↻ Обновить", f"/runtimes {cid} {result.page}")])
+        await self._panel(chat, "\n\n".join(lines), rows)
+
+    async def _diagnostic_panel(self, chat, argument):
+        parts = argument.split()
+        if len(parts) not in {1, 2, 3}:
+            raise GatewayError("Используйте /diagnostics COMPUTER_ID [AGENT | page N].")
+        cid = parts[0]
+        alias = parts[1] if len(parts) == 2 else None
+        if len(parts) == 3:
+            if (
+                parts[1] != "page"
+                or not parts[2].isascii()
+                or not parts[2].isdigit()
+                or len(parts[2]) > 2
+            ):
+                raise GatewayError("Выберите страницу диагностики.")
+            page = int(parts[2])
+        else:
+            page = 1
+        if self.connector_dispatcher is None:
+            raise GatewayError("Подключение компьютеров не настроено.")
+        computer = next(
+            (c for c in self.connector_dispatcher.status() if c["computer_id"] == cid), None
+        )
+        if computer is None:
+            raise GatewayError("Компьютер не найден.")
+        agents = computer.get("advertised_agents", [])
+        pages = max(1, (len(agents) + 7) // 8)
+        if not 1 <= page <= pages:
+            raise GatewayError("Страница диагностики недоступна.")
+        rows = [[("← Компьютер", f"/computers id {cid}")], *self._back_rows()]
+        if not computer["connected"]:
+            await self._panel(chat, "Компьютер не подключён.", rows)
+            return
+        if not computer.get("runtime_diagnostics"):
+            await self._panel(chat, "Диагностика не поддерживается этой версией коннектора.", rows)
+            return
+        if alias is not None and alias not in computer.get("advertised_agents", []):
+            raise GatewayError("Агент не объявлен этим компьютером.")
+        if alias is not None:
+            self._profile_owner(chat)
+        try:
+            result = await self.connector_dispatcher.runtime(
+                cid, 1, action="initialize" if alias else "diagnostics", alias=alias
+            )
+        except (AgentUnavailable, ConnectionError, TimeoutError, ProtocolError):
+            await self._panel(chat, "Диагностика временно недоступна.", rows)
+            return
+        if result.status != "ok" or result.diagnostics is None:
+            await self._panel(chat, "Диагностика временно недоступна.", rows)
+            return
+        diag = result.diagnostics
+        activity = {
+            "idle": "свободен",
+            "busy": "занят",
+            "uncertain": "исход работы неизвестен",
+            "reserved": "зарезервирован",
+            "unsupported": "есть неподдерживаемый агент",
+            "unknown": "не подтверждена",
+        }
+        updater = {
+            "ready": "готов",
+            "disabled": "отключён",
+            "unsupported": "способ установки не поддерживается",
+            "worker_stopped": "служба updater не запущена",
+            "not_provisioned": "updater ещё не подготовлен",
+            "heartbeat_stale": "нет актуального heartbeat updater",
+            "scope_mismatch": "updater настроен для другой установки",
+            "unknown": "неизвестно",
+        }
+        lines = [
+            f"Диагностика ПК · {label(cid)}",
+            f"Версия: {label(diag.version)}",
+            f"Активность: {activity[diag.maintenance]}",
+            f"Задачи: {diag.running} · запросы: {diag.requests} · "
+            f"подтверждения: {diag.approvals} · запуск: {diag.opening}",
+            f"Updater: {updater[diag.updater]}",
+        ]
+        if alias:
+            probes = {
+                "ok": "initialize выполнен",
+                "failed": "initialize не выполнен",
+                "busy": "ПК занят обслуживанием или другой проверкой",
+                "unavailable": "профиль недоступен",
+                "cleanup_unknown": "остановка проверочного процесса не подтверждена",
+                "not_run": "не выполнялась",
+            }
+            lines.append(f"{label(alias)}: {probes[diag.probe]}.")
+        lines.append(
+            "Проверка агента только инициализирует соединение: диалог и модель не запускаются."
+        )
+        for name in reversed(agents[(page - 1) * 8 : page * 8]):
+            rows.insert(0, [(f"Проверить {label(name, 35)}", f"/diagnostics {cid} {name}")])
+        nav = []
+        if page > 1:
+            nav.append(("←", f"/diagnostics {cid} page {page - 1}"))
+        if page < pages:
+            nav.append(("→", f"/diagnostics {cid} page {page + 1}"))
+        if nav:
+            rows.insert(0, nav)
+        rows.insert(0, [("↻ Обновить", f"/diagnostics {cid} page {page}")])
         await self._panel(chat, "\n".join(lines), rows)
 
     @staticmethod

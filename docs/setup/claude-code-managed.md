@@ -61,6 +61,7 @@ agents:
       mode: safe  # work selects native automatic permissions and user settings
       request_timeout: 30
       turn_timeout: 600
+      idle_timeout: 1800  # connector only; 0 disables idle cleanup
       max_turns: 16
       max_sessions: 8
       # model: an-explicit-model-id
@@ -77,6 +78,14 @@ conversation. The native CLI's own limit semantics apply. `max_sessions` bounds
 owned CLI processes, including a prewarmed initialize-only child; it is not a
 limit on discovered disk history. Request timeout: >0 and <=300 seconds; turn
 timeout: >0 and <=3600; max_turns: 1..100; max_sessions: 1..32.
+For outgoing connectors, `idle_timeout` is an integer from 0 to 86400 seconds;
+0 disables cleanup. The default is 1800. Cleanup stops a whole idle transport
+only when all its children and requests are idle. Owned dialogues resume on the
+next request without replaying an earlier prompt; an unconfirmed stop keeps its
+safety fence. Direct local gateway transports are not covered by this policy.
+Generated profiles omit the default timeout for compatibility with older
+versions. If a non-default `idle_timeout` was configured, remove that key
+before rolling back to a version that does not support it.
 
 ```sh
 uv run --frozen acpgw --config /path/to/test-config.yaml --env-file /path/to/test.env agents configure

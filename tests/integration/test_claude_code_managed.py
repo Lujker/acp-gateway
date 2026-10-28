@@ -794,6 +794,100 @@ async def test_empty_claude_can_reconnect_then_resume_real_history(peer, tmp_pat
         await third.close()
 
 
+async def test_idle_cleanup_resumes_claude_history_without_replaying(peer, tmp_path):
+    from acp_gateway.adapters.managed_sessions import ManagedSessions
+
+    profile = AgentProfile(
+        alias="claude",
+        kind="claude_code",
+        backend="claude_code",
+        default_cwd=str(tmp_path),
+        claude_code={"executable": sys.executable},
+    )
+    manager = await peer(
+        manager=True, sessions=ManagedSessions(tmp_path / "bindings", profile), idle_timeout=1
+    )
+    try:
+        first = await manager.open()
+        await initialize(first)
+        created, _ = await request(first, 2, "session/new", cwd=str(tmp_path))
+        sid = created["result"]["sessionId"]
+        await request(
+            first, 3, "session/prompt", sessionId=sid, prompt=[{"type": "text", "text": "first"}]
+        )
+        async with asyncio.timeout(2):
+            while first._requests or not first._out.empty():
+                await asyncio.sleep(0.01)
+        first._activity.last_activity -= 2
+        processes = [child["process"] for child in first._children.values()]
+        await manager.reap_idle()
+        assert all(process.returncode is not None for process in processes)
+        second = await manager.open()
+        await initialize(second)
+        await request(second, 2, "session/load", sessionId=sid, cwd=str(tmp_path))
+        _, frames = await request(
+            second, 3, "session/prompt", sessionId=sid, prompt=[{"type": "text", "text": "second"}]
+        )
+        text = "".join(
+            f.get("params", {}).get("update", {}).get("content", {}).get("text", "") for f in frames
+        )
+        assert text == "first|second"
+        users = [f["frame"] for f in calls(tmp_path) if f["frame"].get("type") == "user"]
+        assert len(users) == 2
+    finally:
+        await manager.close()
+
+
+async def test_remote_claude_probe_initializes_without_creating_a_dialogue(peer, tmp_path):
+    from uuid import uuid4
+
+    from acp_gateway.connectors.computer_diagnostics import ComputerDiagnostics
+    from acp_gateway.connectors.maintenance import ConnectorMaintenance
+    from acp_gateway.connectors.protocol import RuntimeRequest
+
+    manager = await peer(manager=True)
+    profile = AgentProfile(
+        alias="claude", kind="claude_code", backend="claude_code", default_cwd=str(tmp_path)
+    )
+    maintenance = ConnectorMaintenance([profile], {"claude": manager})
+    config = SimpleNamespace(
+        settings=SimpleNamespace(
+            agents=[profile],
+            updates=SimpleNamespace(enabled=True),
+            resolved_data_dir=lambda: tmp_path,
+        )
+    )
+    report = SimpleNamespace(
+        can_update=True,
+        platform="linux",
+        manager="uv",
+        source="registry",
+        installed_version="0.2.8",
+    )
+    diagnostics = ComputerDiagnostics(
+        config,
+        maintenance,
+        SimpleNamespace(report=lambda: report),
+        {},
+        lambda alias, diagnostic_failure=None: manager.open(on_failed_cleanup=diagnostic_failure),
+    )
+    maintenance.services.append(diagnostics)
+    try:
+        result = await diagnostics.request(
+            RuntimeRequest(epoch=uuid4(), request=uuid4(), action="initialize", alias="claude")
+        )
+        assert result.diagnostics.probe == "ok"
+        frames = [item["frame"] for item in calls(tmp_path)]
+        assert any(
+            frame.get("type") == "control_request"
+            and frame.get("request", {}).get("subtype") == "initialize"
+            for frame in frames
+        )
+        assert not any(frame.get("type") == "user" for frame in frames)
+    finally:
+        await manager.close()
+
+
 async def test_legacy_missing_claude_history_returns_error_without_fresh_session(peer, tmp_path):
     from uuid import uuid4
 

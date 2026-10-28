@@ -208,8 +208,11 @@ class LocalProfiles:
                 # Recheck after awaits; never overwrite a concurrent local edit.
                 if path.read_bytes() != original or time.time() > request.expires:
                     return ProfilesResult(status="stale")
+                from acp_gateway.config import omit_default_idle_timeout
+
                 raw["agents"] = [
-                    p.model_dump(mode="json", exclude_none=True) for p in profiles.values()
+                    omit_default_idle_timeout(p.model_dump(mode="json", exclude_none=True))
+                    for p in profiles.values()
                 ]
                 raw.setdefault("connector", {})["profile_operation"] = identity
                 content = yaml.safe_dump(raw, sort_keys=False, allow_unicode=True).encode()

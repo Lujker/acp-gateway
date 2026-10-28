@@ -146,6 +146,114 @@ def test_same_operation_id_with_changed_parameters_is_rejected(operations):
     assert len(spool.unfinished()) == 1
 
 
+def test_updater_readiness_distinguishes_absent_stale_and_wrong_scope(operations):
+    service, spool, _ = operations
+    assert service.local.readiness("uv") == "ready"
+    spool.set_worker(
+        {
+            "published": time.time() - 30,
+            "role": "dispatcher",
+            "target": "dispatcher",
+            "backend": "uv",
+        }
+    )
+    assert service.local.readiness("uv") == "heartbeat_stale"
+    spool.set_worker(
+        {"published": time.time(), "role": "connector", "target": "other", "backend": "uv"}
+    )
+    assert service.local.readiness("uv") == "scope_mismatch"
+    spool.set_worker({"published": 0})
+    assert service.local.readiness("uv") == "worker_stopped"
+
+
+@pytest.mark.parametrize(
+    "activity,reason",
+    [
+        ({"uncertain_sessions": 1}, "activity_uncertain"),
+        ({"reserved": True}, "maintenance_reserved"),
+        ({"unsupported_agents": 1}, "agent_unsupported"),
+        (None, "activity_unknown"),
+    ],
+)
+def test_local_admission_persists_sanitized_reason_without_replay(operations, activity, reason):
+    service, spool, _ = operations
+    service.local.idle_check = lambda: False
+    service.local.activity_status = lambda: activity
+    request = UpdateRequest(
+        epoch=uuid4(),
+        request=uuid4(),
+        operation=uuid4(),
+        action="execute",
+        actor="owner",
+        target_version="0.3.0",
+        current_version="0.2.0",
+        expires=float(time.time() + 60),
+    )
+    result = service.local.request(request)
+    assert (result.status, result.reason) == ("failed", reason)
+    service.local.idle_check = lambda: True
+    assert service.local.request(request).reason == reason
+    assert not spool.unfinished()
+
+
+def test_activity_check_failure_is_a_durable_safe_refusal(operations):
+    service, spool, _ = operations
+
+    def failed():
+        raise RuntimeError("private detail")
+
+    service.local.idle_check = failed
+    request = UpdateRequest(
+        epoch=uuid4(),
+        request=uuid4(),
+        operation=uuid4(),
+        action="execute",
+        actor="owner",
+        target_version="0.3.0",
+        current_version="0.2.0",
+        expires=float(time.time() + 60),
+    )
+    result = service.local.request(request)
+    assert (result.status, result.reason) == ("failed", "activity_unknown")
+    assert not spool.unfinished()
+
+
+@pytest.mark.parametrize(
+    "supports_diagnostics,expected", [(False, "busy"), (True, "activity_uncertain")]
+)
+async def test_legacy_update_peer_receives_compatible_reason(supports_diagnostics, expected):
+    from acp_gateway.connectors.relay import RelayPeer
+
+    operation = uuid4()
+    request = UpdateRequest(
+        epoch=uuid4(),
+        request=uuid4(),
+        operation=operation,
+        action="execute",
+        actor="owner",
+        target_version="0.3.0",
+        current_version="0.2.0",
+        expires=float(time.time() + 60),
+    )
+    peer = RelayPeer(
+        None,
+        request.epoch,
+        [],
+        update_handler=lambda _: UpdateOperation(
+            operation=operation, status="failed", reason="activity_uncertain"
+        ),
+        runtime_diagnostics=supports_diagnostics,
+    )
+    sent = []
+
+    async def send(frame):
+        sent.append(frame)
+
+    peer.send = send
+    await peer._operate_update(request)
+    assert sent[0].result.reason == expected
+
+
 def test_busy_denial_does_not_become_an_implicit_queue_later(operations):
     service, spool, _ = operations
     request = UpdateRequest(

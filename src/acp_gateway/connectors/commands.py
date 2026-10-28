@@ -70,9 +70,10 @@ def run(config, args):
             role="connector",
             target=launch.computer_id,
             idle_check=lambda: can_reserve(maintenance.status()),
+            activity_status=maintenance.status,
         )
 
-        async def local_factory(alias):
+        async def local_factory(alias, *, diagnostic_failure=None):
             maintenance.check_admission()
             if clients[alias].profile.backend == "claude_code":
                 from acp_gateway.adapters.claude_code import ClaudeCodeProcessManager
@@ -83,7 +84,10 @@ def run(config, args):
                         policies[alias],
                         sessions=clients[alias].managed_sessions(),
                     )
-                return PolicyTransport(await managers[alias].open(), policies[alias])
+                return PolicyTransport(
+                    await managers[alias].open(on_failed_cleanup=diagnostic_failure),
+                    policies[alias],
+                )
             if clients[alias].profile.backend == "codex":
                 from acp_gateway.adapters.codex import CodexProcessManager
 
@@ -123,6 +127,11 @@ def run(config, args):
             except Exception:
                 get_logger(__name__).exception("updater provisioning failed")
 
+        from acp_gateway.connectors.computer_diagnostics import ComputerDiagnostics
+
+        diagnostics = ComputerDiagnostics(config, maintenance, updates, clients, local_factory)
+        maintenance.services.append(diagnostics)
+
         async def connect(instance):
             loop = asyncio.get_running_loop()
             task = asyncio.current_task()
@@ -154,6 +163,13 @@ def run(config, args):
             async def shell_request(request):
                 return await shell_service().request(request)
 
+            async def runtime_request(request):
+                if request.action not in {None, "inventory"}:
+                    return await diagnostics.request(request)
+                return connector_inventory(
+                    config.settings.agents, managers, request.page, request.candidates
+                )
+
             # Recover pending shell fences before publishing activity, even when
             # its original profile was removed. New profiles can enable it lazily.
             if (directory / "shell-operations.db").exists() or any(
@@ -173,6 +189,9 @@ def run(config, args):
                 loop.add_signal_handler(signal.SIGTERM, terminate)
             watcher = asyncio.create_task(watch_stop(directory, instance, terminate))
             activity = asyncio.create_task(watch(directory, instance, maintenance))
+            from acp_gateway.adapters.runtime_inventory import connector_inventory, watch_idle
+
+            idle_cleanup = asyncio.create_task(watch_idle(managers))
             provisioning = asyncio.create_task(ensure_updater())
             try:
                 await run_connector(
@@ -187,12 +206,16 @@ def run(config, args):
                         profiles.request if config.settings.connector.remote_profiles else None
                     ),
                     shell_handler=shell_request,
+                    runtime_handler=runtime_request,
                 )
             except asyncio.CancelledError:
                 if not stopping:
                     raise
                 get_logger(__name__).info("computer connector stopped")
             finally:
+                idle_cleanup.cancel()
+                with suppress(asyncio.CancelledError):
+                    await idle_cleanup
                 provisioning.cancel()
                 with suppress(asyncio.CancelledError):
                     await provisioning

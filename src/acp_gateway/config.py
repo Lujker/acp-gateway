@@ -174,12 +174,25 @@ class WslSettings(_Section):
         return [_wsl_path(value) for value in values]
 
 
+def omit_default_idle_timeout(profile):
+    """Keep generated profiles readable by pre-idle-timeout installations."""
+    profile = dict(profile)
+    for kind in ("codex", "claude_code"):
+        settings = profile.get(kind)
+        if isinstance(settings, dict) and settings.get("idle_timeout") == 1800:
+            settings = dict(settings)
+            settings.pop("idle_timeout")
+            profile[kind] = settings
+    return profile
+
+
 class CodexSettings(_Section):
     mode: Literal["safe", "work"] = "safe"
     wsl: WslSettings | None = None
     executable: str = Field(default="codex", min_length=1, max_length=4096)
     model: str | None = Field(default=None, min_length=1, max_length=128)
     sandbox: Literal["read-only", "workspace-write"] = "read-only"
+    idle_timeout: int = Field(default=1800, ge=0, le=86400, strict=True)
 
     @model_validator(mode="before")
     @classmethod
@@ -232,6 +245,7 @@ class ClaudeCodeSettings(_Section):
     model: str | None = Field(default=None, min_length=1, max_length=128)
     request_timeout: float = Field(default=30, gt=0, le=300, allow_inf_nan=False)
     turn_timeout: float = Field(default=600, gt=0, le=3600, allow_inf_nan=False)
+    idle_timeout: int = Field(default=1800, ge=0, le=86400, strict=True)
 
     max_turns: int = Field(default=16, ge=1, le=100)
     max_sessions: int = Field(default=8, ge=1, le=32)

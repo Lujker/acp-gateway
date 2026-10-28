@@ -44,6 +44,74 @@ async def test_menu_versions_and_explicit_check_are_read_only(telegram):
     assert not server.log
 
 
+@pytest.mark.parametrize("latest,published", [("0.2.0", True), ("0.3.0", False)])
+async def test_manual_update_check_explains_pypi_cache_and_updater(telegram, latest, published):
+    _, channel, session, _ = telegram
+    channel.update_inventory = UpdateInventory(
+        local_report=lambda: report("uv"),
+        release_lookup=lambda: Version(latest),
+        package_lookup=lambda version: published,
+    )
+    await feed(channel, 1, "/updates_check")
+    text = "\n".join(message.text for message in session.sent)
+    assert "PyPI" in text and "повторите проверку позже" in text
+    assert "Updater недоступен" in text
+
+
+@pytest.mark.parametrize("case", ["new", "old", "timeout"])
+async def test_failed_update_details_respect_capability_and_timeout(telegram, case):
+    import asyncio
+
+    from test_telegram import OWNER
+
+    from acp_gateway.connectors.protocol import ComputerDiagnostic, RuntimeResult
+
+    _, channel, session, _ = telegram
+    calls = []
+
+    async def runtime(*args, **kwargs):
+        calls.append(1)
+        if case == "timeout":
+            await asyncio.sleep(3)
+        return RuntimeResult(
+            page=1,
+            pages=1,
+            profiles=[],
+            diagnostics=ComputerDiagnostic(
+                version="0.2.8",
+                updater="ready",
+                maintenance="uncertain",
+                running=0,
+                requests=0,
+                approvals=0,
+                opening=0,
+                probe="not_run",
+            ),
+        )
+
+    channel.connector_dispatcher = SimpleNamespace(
+        status=lambda: [
+            {"computer_id": "work", "connected": True, "runtime_diagnostics": case != "old"}
+        ],
+        runtime=runtime,
+    )
+    row = {
+        "role": "connector",
+        "target": "work",
+        "current_version": "0.2.7",
+        "version": "0.2.8",
+        "status": "failed",
+        "id": "abc",
+        "reason": "activity_uncertain",
+    }
+    await channel._update_operation_panel(OWNER, row)
+    assert bool(calls) is (case != "old")
+    if case == "new":
+        assert "Текущее состояние: исход работы неизвестен" in session.sent[-1].text
+    else:
+        assert "Текущее состояние" not in session.sent[-1].text
+
+
 async def test_unauthorized_chat_cannot_discover_versions_or_check_releases(telegram):
     _, channel, session, _ = telegram
     channel.update_inventory = UpdateInventory(

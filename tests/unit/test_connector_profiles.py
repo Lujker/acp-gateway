@@ -82,6 +82,8 @@ async def test_add_preserves_executable_env_and_makes_backup(local):
         == original
     )
     assert "third" in local.clients and "third" in local.policies
+    saved = yaml.safe_load(local.config.config_path.read_text())
+    assert all("idle_timeout" not in agent["codex"] for agent in saved["agents"])
 
 
 @pytest.mark.asyncio

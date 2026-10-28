@@ -18,35 +18,45 @@ def public_operation(row):
 
 
 class LocalUpdates:
-    def __init__(self, config, *, role, target, idle_check=None):
+    def __init__(self, config, *, role, target, idle_check=None, activity_status=None):
         self.config, self.role, self.target = config, role, target
         self.idle_check = idle_check
+        self.activity_status = activity_status
         root = config.settings.updates.spool_dir or (
             config.settings.resolved_data_dir() / "update-spool"
         )
         self.path = root / "operations.db"
 
-    def available(self, backend=None):
-        if not self.config.settings.updates.enabled or not self.path.is_file():
-            return False
+    def readiness(self, backend=None):
+        if not self.config.settings.updates.enabled:
+            return "disabled"
+        if not self.path.is_file():
+            return "not_provisioned"
         journal = None
         try:
             journal = Journal(self.path)
             worker = journal.worker()
-            return bool(
-                isinstance(worker, dict)
-                and worker.get("role") == self.role
-                and worker.get("target") == self.target
-                and worker.get("backend") in {"uv", "docker"}
-                and (backend is None or worker.get("backend") == backend)
-                and type(worker.get("published")) in {int, float}
-                and 0 <= time.time() - worker.get("published", 0) <= 10
-            )
+            if not isinstance(worker, dict) or not worker.get("published"):
+                return "worker_stopped"
+            if (
+                worker.get("role") != self.role
+                or worker.get("target") != self.target
+                or worker.get("backend") not in {"uv", "docker"}
+                or (backend is not None and worker.get("backend") != backend)
+            ):
+                return "scope_mismatch"
+            published = worker.get("published")
+            if type(published) not in {int, float} or not 0 <= time.time() - published <= 10:
+                return "heartbeat_stale"
+            return "ready"
         except (OSError, ValueError, sqlite3.Error):
-            return False
+            return "unknown"
         finally:
             if journal is not None:
                 journal.close()
+
+    def available(self, backend=None):
+        return self.readiness(backend) == "ready"
 
     def report(self):
         report = installation_report(role=self.role)
@@ -107,10 +117,31 @@ class LocalUpdates:
                 reason = "expired"
             elif not self.available():
                 reason = "worker_stopped"
-            elif self.idle_check is not None and not self.idle_check():
-                reason = "busy"
-            elif not self.version_allowed(request.target_version):
-                reason = "version_not_allowed"
+            else:
+                if self.idle_check is not None:
+                    try:
+                        idle = self.idle_check()
+                    except Exception:
+                        reason = "activity_unknown"
+                    else:
+                        if not idle:
+                            reason = "busy"
+                            if self.activity_status is not None:
+                                from acp_gateway.connectors.maintenance import (
+                                    activity_reason,
+                                )
+
+                                try:
+                                    reason = {
+                                        "uncertain": "activity_uncertain",
+                                        "reserved": "maintenance_reserved",
+                                        "unsupported": "agent_unsupported",
+                                        "unknown": "activity_unknown",
+                                    }.get(activity_reason(self.activity_status()), "busy")
+                                except Exception:
+                                    reason = "activity_unknown"
+                if not reason and not self.version_allowed(request.target_version):
+                    reason = "version_not_allowed"
             try:
                 row = journal.create(
                     key=request.operation,

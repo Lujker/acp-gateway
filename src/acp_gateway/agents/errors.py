@@ -11,6 +11,10 @@ class AgentUnavailable(AgentError):
     """The agent cannot be reached (connection refused, timeout, TLS failure)."""
 
 
+class ManagedCapacity(AgentUnavailable):
+    """An owned managed process limit prevents another launch."""
+
+
 class AuthenticationFailed(AgentError):
     """The agent rejected the shared secret."""
 

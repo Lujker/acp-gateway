@@ -637,7 +637,9 @@ def _profiles(prompts, raw, values, role, *, allow_empty=False):
             "A computer connector needs local ACP, Hermes, Codex or Claude Code profiles; "
             "choose replace to change role"
         )
-    raw["agents"] = agents
+    from acp_gateway.config import omit_default_idle_timeout
+
+    raw["agents"] = [omit_default_idle_timeout(agent) for agent in agents]
     if any(a.get("backend") == "connector" for a in agents):
         raw.setdefault("connector", {})["enabled"] = True
 

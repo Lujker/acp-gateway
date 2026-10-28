@@ -66,6 +66,8 @@ is created automatically. Older direct/disabled bindings retain their refusal ru
 | `/approval REQUEST_ID [PAGE]` | Complete pending request input by page |
 | `/switch ID [PAGE]` | Activate a session owned by this chat and selected agent |
 | `/computers [PAGE]`, `/computers id ID` | Enrolled PCs, link/ACP readiness and agent selection |
+| `/runtimes COMPUTER_ID PAGE` | Connector-owned managed process counts, also accessible from the computer card |
+| `/diagnostics COMPUTER_ID` | Connector version, activity and updater readiness; select an agent for initialize-only check |
 | `/jobs [active] [before ID]` | This chat's task history, 10 per page |
 | `/job JOB_ID` | Exact task, refresh, saved result and delivery |
 | `/status` | PC link, agent readiness and this chat's running jobs |
@@ -139,6 +141,26 @@ It distinguishes an online PC from an ACP agent that has not been checked yet.
 A ready agent is reported only when both the PC connection and ACP client are
 ready. Optional inactive CLI approvers are omitted; MCP is described as serving,
 since its HTTP interface does not imply a persistent client connection.
+
+The computer card's **Процессы агентов** button requests a bounded, read-only
+snapshot from that connector. It reports aggregate owned launcher, loaded
+dialogue, turn, request and approval counts per Codex or Claude profile, with
+closing and uncertainty indicators. To show this chat's open dialogues, the
+dispatcher checks up to 32 candidates among its 50 most recent owned records;
+the connector returns matching positions, and names come from the dispatcher's
+own records. Other chats' dialogue identities and names are not displayed. This
+is not a list of system processes. The request does not start an agent or extend
+its idle timeout. An older connector reports the feature as unsupported.
+
+The computer card's **Диагностика** shows fixed activity counts and updater
+readiness. The connection owner can select an advertised agent to run a bounded ACP initialize-only
+check: no session, prompt, model call or dispatcher-supplied command. The check
+occupies maintenance admission until its owned transport has stopped; an
+unverified cleanup remains uncertain. A successful initialize does not prove
+that an account or model is usable. Update refusals show fixed, sanitized reason
+codes; publication and PyPI cache delays can temporarily hide a new artifact.
+Updater readiness in this diagnostic is cached for up to 30 seconds; update
+admission checks the current state independently.
 
 
 Dialogue cards show the saved title (or “Без названия”), last activity in UTC,

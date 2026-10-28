@@ -17,6 +17,7 @@ from uuid import uuid4
 from acp import PROTOCOL_VERSION
 
 from acp_gateway.adapters.managed_sessions import FencedBinding, InterruptedTurn
+from acp_gateway.adapters.runtime_inventory import RuntimeActivity, inventory, reap_idle
 from acp_gateway.agents.errors import AgentUnavailable
 from acp_gateway.config import CodexSettings
 from acp_gateway.connectors.policy import LocalAgentPolicy, LocalPolicyError
@@ -59,6 +60,7 @@ class CodexAcpTransport:
     ):
         self.process, self.settings, self.policy = process, settings, policy
         self.sessions = sessions
+        self._activity = RuntimeActivity()
         self.closed = asyncio.Event()
         self._closing: asyncio.Task | None = None
         self._out: asyncio.Queue = asyncio.Queue(MAX_EVENTS)
@@ -216,6 +218,7 @@ class CodexAcpTransport:
         try:
             if "method" not in message:
                 await self._permission_response(message)
+                self._activity.touch()
                 return
             clean = self.policy.prepare(message)
             if self.admission is not None:
@@ -225,6 +228,7 @@ class CodexAcpTransport:
             rid = clean.get("id")
             if rid is None or rid in self._requests or len(self._requests) >= MAX_REQUESTS:
                 raise LocalPolicyError("unsupported or duplicate Codex ACP request")
+            self._activity.touch()
             self._requests[rid] = asyncio.create_task(self._request(clean))
         except Exception:
             await self.close()
@@ -384,6 +388,7 @@ class CodexAcpTransport:
             self._schedule_close("request failed", exc)
         finally:
             self._requests.pop(rid, None)
+            self._activity.touch()
 
     async def _prompt(self, params):
         sid = params["sessionId"]
@@ -766,14 +771,17 @@ class CodexAcpTransport:
     async def _shutdown(self):
         stopped = False
         try:
-            await self._shutdown_process()
-            stopped = not self.cleanup_unconfirmed
-        finally:
-            if self.sessions is not None:
-                # The app-server is proven stopped: idle threads are free again and a
-                # turn with an unknown outcome becomes explicitly resumable (never
-                # replayed). Without that proof every binding stays fenced.
-                self.sessions.close(confirmed=stopped, interrupted=stopped)
+            try:
+                await self._shutdown_process()
+                stopped = not self.cleanup_unconfirmed
+            finally:
+                if self.sessions is not None:
+                    # Keep bindings fenced unless process cleanup is confirmed.
+                    self.sessions.close(confirmed=stopped, interrupted=stopped)
+        except BaseException:
+            # Publish uncertainty before the completed task can be pruned.
+            self.uncertain = max(self.uncertain, 1)
+            raise
 
     async def _shutdown_process(self):
         self._permissions.clear()
@@ -819,6 +827,9 @@ class CodexProcessManager:
         self.maintenance_reserved = False
         self._streams: set[CodexAcpTransport] = set()
         self._opening = 0
+        self._reaping = 0
+        self._reap_done = asyncio.Event()
+        self._reap_done.set()
         self._uncertain = 0
 
     def check_admission(self):
@@ -832,6 +843,7 @@ class CodexProcessManager:
                 self._streams.remove(stream)
 
     async def open(self):
+        await self._reap_done.wait()
         self.check_admission()
         self._prune()
         if len(self._streams) + self._opening >= MAX_REQUESTS:
@@ -856,8 +868,14 @@ class CodexProcessManager:
             "pending_approvals": sum(len(s._permissions) for s in self._streams),
             "running_sessions": sum(len(s._turns) for s in self._streams),
             "uncertain_sessions": self._uncertain + sum(s.uncertain for s in self._streams),
-            "opening": self._opening,
+            "opening": self._opening + self._reaping,
         }
+
+    def runtime_inventory(self):
+        return inventory(self, "codex")
+
+    async def reap_idle(self):
+        await reap_idle(self)
 
     async def close(self):
         self.maintenance_reserved = True

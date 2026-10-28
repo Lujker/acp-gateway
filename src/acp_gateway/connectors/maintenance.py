@@ -59,6 +59,20 @@ def can_reserve(status, *, restart_uncertain=False):
     return not status.get("uncertain_sessions", 0) or restart_uncertain
 
 
+def activity_reason(status):
+    if not isinstance(status, dict):
+        return "unknown"
+    if status.get("reserved"):
+        return "reserved"
+    if status.get("unsupported_agents"):
+        return "unsupported"
+    if any(status.get(key, 0) for key in FIELDS if key != "uncertain_sessions"):
+        return "busy"
+    if status.get("uncertain_sessions"):
+        return "uncertain"
+    return "idle" if can_reserve(status) else "unknown"
+
+
 class ConnectorMaintenance:
     def __init__(self, profiles, managers):
         self.profiles, self.managers = profiles, managers

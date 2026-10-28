@@ -5,7 +5,13 @@ from types import SimpleNamespace
 import pytest
 
 from acp_gateway.cli import doctor
-from acp_gateway.config import AgentProfile, AppConfig, SecretStore, Settings
+from acp_gateway.config import (
+    AgentProfile,
+    AppConfig,
+    SecretStore,
+    Settings,
+    omit_default_idle_timeout,
+)
 
 
 def configured(tmp_path, backend):
@@ -166,7 +172,8 @@ def test_wizard_wsl_roundtrip_preserves_identity_and_limits(tmp_path, monkeypatc
         {},
         "connector",
     )
-    assert raw["agents"] == [old]
+    # The default idle timeout is left out so older installations can read it.
+    assert raw["agents"] == [omit_default_idle_timeout(old)]
     output = capsys.readouterr().out
     assert "target-side" in output and "Ubuntu-22.04" in output and "alice" in output
 

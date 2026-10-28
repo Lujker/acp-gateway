@@ -33,6 +33,7 @@ from acp_gateway.connectors.protocol import (
     Ping,
     ProfilesRequest,
     ProtocolError,
+    RuntimeRequest,
     ShellRequest,
     Welcome,
     decode_frame,
@@ -110,6 +111,12 @@ class ControlDispatcher:
             row["update_inventory"] = bool(row["connected"] and registration.relay.update_inventory)
             row["agent_discovery"] = bool(row["connected"] and registration.relay.agent_discovery)
             row["shell_operations"] = bool(row["connected"] and registration.relay.shell_operations)
+            row["runtime_inventory"] = bool(
+                row["connected"] and getattr(registration.relay, "runtime_inventory", False)
+            )
+            row["runtime_diagnostics"] = bool(
+                row["connected"] and getattr(registration.relay, "runtime_diagnostics", False)
+            )
             row["advertised_agents"] = (
                 [a.alias for a in registration.agents] if row["connected"] else []
             )
@@ -196,6 +203,43 @@ class ControlDispatcher:
             raise AgentUnavailable("computer connection changed; inspect shell operation")
         return result
 
+    async def runtime(
+        self, computer_id: str, page: int, candidates=(), *, action="inventory", alias=None
+    ):
+        registration = await self._authorized_registration(computer_id)
+        advertised = {agent.alias: agent.kind for agent in registration.agents}
+        if any(candidate.alias not in advertised for candidate in candidates):
+            raise AgentUnavailable("runtime profile is not advertised")
+        if alias is not None and alias not in advertised:
+            raise AgentUnavailable("diagnostic profile is not advertised")
+        result = await registration.relay.runtime(
+            RuntimeRequest(
+                epoch=registration.connection_id,
+                request=uuid4(),
+                page=page,
+                candidates=list(candidates),
+                action=None if action == "inventory" else action,
+                alias=alias,
+            )
+        )
+        if await self._authorized_registration(computer_id) is not registration:
+            raise AgentUnavailable("computer connection changed")
+        if any(
+            profile.alias not in advertised
+            or (advertised[profile.alias] is not None and advertised[profile.alias] != profile.kind)
+            for profile in result.profiles
+        ):
+            raise ProtocolError("runtime inventory contains unadvertised profile")
+        if any(index >= len(candidates) for index in result.matched):
+            raise ProtocolError("runtime inventory contains invalid match")
+        if (
+            result.status == "ok"
+            and action != "inventory"
+            and (result.diagnostics is None or result.diagnostics.probe_alias != alias)
+        ):
+            raise ProtocolError("invalid diagnostic result")
+        return result
+
     async def _authorized_registration(self, computer_id):
         registration = self.active.get(computer_id)
         if registration is None or registration.relay is None:
@@ -257,6 +301,10 @@ class ControlDispatcher:
             )
             stream_resume = request.headers.get("X-ACP-Stream-Resume") == "1"
             shell_operations = request.headers.get("X-ACP-Shell-Operations") == "1"
+            runtime_inventory = request.headers.get("X-ACP-Runtime-Inventory") == "1"
+            runtime_diagnostics = (
+                runtime_inventory and request.headers.get("X-ACP-Diagnostics") == "1"
+            )
         except MultipleValuesError:
             return connection.respond(401, "Unauthorized\n")
         if not authorization.startswith("Bearer "):
@@ -276,6 +324,8 @@ class ControlDispatcher:
         connection.update_operations = update_operations
         connection.stream_resume = stream_resume
         connection.shell_operations = shell_operations
+        connection.runtime_inventory = runtime_inventory
+        connection.runtime_diagnostics = runtime_diagnostics
         return None
 
     async def _watch_grant(self, registration):
@@ -320,6 +370,8 @@ class ControlDispatcher:
                 agent_profiles=getattr(connection, "agent_profiles", False),
                 agent_discovery=getattr(connection, "agent_discovery", False),
                 shell_operations=getattr(connection, "shell_operations", False),
+                runtime_inventory=getattr(connection, "runtime_inventory", False),
+                runtime_diagnostics=getattr(connection, "runtime_diagnostics", False),
                 stream_resume=stream_resume,
                 on_park=lambda links, r=registration: self._park(r, links),
             )
@@ -350,6 +402,8 @@ class ControlDispatcher:
                         agent_discovery=1 if registration.relay.agent_discovery else None,
                         stream_resume=1 if registration.relay.stream_resume else None,
                         shell_operations=1 if registration.relay.shell_operations else None,
+                        runtime_inventory=1 if registration.relay.runtime_inventory else None,
+                        runtime_diagnostics=1 if registration.relay.runtime_diagnostics else None,
                     )
                 )
             )
@@ -491,6 +545,8 @@ async def connect_control(
     agent_discovery=False,
     stream_resume=False,
     shell_operations=False,
+    runtime_inventory=False,
+    runtime_diagnostics=False,
 ):
     parts = validate_url(url)
     if fingerprint is not None and parts.scheme != "wss":
@@ -521,6 +577,8 @@ async def connect_control(
                 **({"X-ACP-Agent-Discovery": "1"} if agent_discovery else {}),
                 **({"X-ACP-Stream-Resume": "1"} if stream_resume else {}),
                 **({"X-ACP-Shell-Operations": "1"} if shell_operations else {}),
+                **({"X-ACP-Runtime-Inventory": "1"} if runtime_inventory else {}),
+                **({"X-ACP-Diagnostics": "1"} if runtime_diagnostics else {}),
             },
             ssl=tls,
             proxy=None,
@@ -574,6 +632,12 @@ async def connect_control(
             raise ProtocolError("unsolicited stream resume negotiation")
         if welcome.shell_operations is not None and not shell_operations:
             raise ProtocolError("unsolicited shell negotiation")
+        if welcome.runtime_inventory is not None and not runtime_inventory:
+            raise ProtocolError("unsolicited runtime inventory negotiation")
+        if welcome.runtime_diagnostics is not None and not (
+            runtime_diagnostics and welcome.runtime_inventory
+        ):
+            raise ProtocolError("unsolicited diagnostic negotiation")
         return connection, welcome
     except BaseException as exc:
         close_code = connection.close_code
@@ -601,6 +665,7 @@ async def run_connector(
     update_handler=None,
     profiles_handler=None,
     shell_handler=None,
+    runtime_handler=None,
 ):
     delays = (1, 2, 5, 10, 30)
     attempt = 0
@@ -619,6 +684,7 @@ async def run_connector(
                     update_handler=update_handler,
                     profiles_handler=profiles_handler,
                     shell_handler=shell_handler,
+                    runtime_handler=runtime_handler,
                     parking=parking,
                 )
             except ConnectorUnavailable as exc:
@@ -649,6 +715,7 @@ async def _run_connection(
     update_handler=None,
     profiles_handler=None,
     shell_handler=None,
+    runtime_handler=None,
     parking: StreamParking | None = None,
 ):
     connection, welcome = await connect_control(
@@ -662,6 +729,8 @@ async def _run_connection(
         agent_discovery=profiles_handler is not None,
         stream_resume=parking is not None,
         shell_operations=shell_handler is not None,
+        runtime_inventory=runtime_handler is not None,
+        runtime_diagnostics=runtime_handler is not None,
     )
     stream_resume = parking is not None and welcome.stream_resume == 1
     if parking is not None:
@@ -693,6 +762,9 @@ async def _run_connection(
             profiles_handler=profiles_handler,
             shell_operations=welcome.shell_operations == 1,
             shell_handler=shell_handler,
+            runtime_inventory=welcome.runtime_inventory == 1,
+            runtime_diagnostics=welcome.runtime_diagnostics == 1,
+            runtime_handler=runtime_handler,
             stream_resume=stream_resume,
             parking=parking if stream_resume else None,
             on_park=parking.park if stream_resume else None,
