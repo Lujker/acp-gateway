@@ -2,7 +2,7 @@
 
 [Documentation](README.md) · [Roadmap and current queue](../road-map.md)
 
-Snapshot: **2026-10-27**. Stable is **0.2.8**, published to GitHub, PyPI and GHCR.
+Snapshot: **2026-10-27**. Stable was **0.2.8**, published to GitHub, PyPI and GHCR. The architecture direction changed on **2026-10-29**; deployments were not checked during that discussion. [Owner decisions](plans/p4.20-paperclip-direction.ru.md).
 
 ## Versions and deployment
 
@@ -50,18 +50,9 @@ No new deployed model/drop/resume scenarios were run during this documentation u
 
 ## Next development
 
-1. **P4.19 operational improvements:** visible message destination, PC diagnostics,
-   useful updater refusal reasons, Docker host companion setup, Git update policy,
-   idle agent process management and release automation. Existing ACL/CI fixes are
-   shipped; acceptance alone is no longer an active task. Owner-approved order:
-   2 → 7 → 3+4 → 6 → 5 → 8. Telegram source work now includes destination
-   footers, compact dialogue pagination, saved new prompts/history/status and
-   cwd actions within adapter policy. This is not a new release or deployment.
-   [Per-item progress and restart checkpoint](plans/p4.19-progress.ru.md).
-2. Documentation cleanup: shorten roadmap and old journals while preserving references.
-3. **P4.13 4a:** list native chats and continue an existing closed chat by selection/ID.
-4. **P4.13 4b:** research shared access to an already open CLI/Desktop chat, then decide.
-5. Decide between VK and multi-user after the P4.13 work.
+1. **Finish and verify P4.19 first.** Consult the actual Git state and [checkpoint](plans/p4.19-progress.ru.md); release and deployment require separate authorization. Previously closed acceptance is not automatically reopened.
+2. After P4.19, research **P4.20**: ACP Gateway remains independent, with optional Paperclip integration and its SSH execution path. The first proposed vertical slice observes Home-wsl from Telegram without changing SSH. See the [owner decisions and boundaries](plans/p4.20-paperclip-direction.ru.md).
+3. Direct ACP sessions and prior planned improvements remain; their later priority is not yet decided. Channels become connectors and PC programs become nodes, with compatibility and migration to be designed.
 
 The [roadmap queue](../road-map.md#9-очередь-дальнейшей-разработки) is canonical.
 
